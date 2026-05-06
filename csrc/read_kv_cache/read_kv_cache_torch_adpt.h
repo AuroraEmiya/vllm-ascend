@@ -136,7 +136,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> read_kv_cache_pre(const at::Tenso
 
 inline void read_kv_cache(const at::Tensor& key_cache_out, const at::Tensor& key_out, const at::Tensor& group_len,
                            const at::Tensor& group_key_idx, const at::Tensor& group_key_cache_idx, int64_t block_size) {
-  EXEC_NPU_CMD(aclnnReadKVCache, key_out, key_cache_out, group_len, group_key_idx, group_key_cache_idx, block_size);
+  EXEC_NPU_CMD(aclnnReadKVCache, key_cache_out, key_out, group_len, group_key_idx, group_key_cache_idx, block_size);
 }
 
 }  // namespace vllm_ascend
