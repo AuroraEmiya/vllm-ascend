@@ -42,7 +42,9 @@
 #include "moe_combine_normal/moe_combine_normal_torch_adpt.h"
 #include "moe_gating_top_k/moe_gating_top_k_torch_adpt.h"
 #include "moe_init_routing_custom/moe_init_routing_custom_torch_adpt.h"
+#include "read_kv_cache/read_kv_cache_torch_adpt.h"
 #include "store_kv_block/store_kv_block_torch_adpt.h"
+// #include "store_kv_decode/store_kv_decode_torch_adpt.h"
 #include "sparse_flash_attention/sparse_flash_attention_torch_adpt.h"
 #include "lightning_indexer_quant/lightning_indexer_quant_torch_adpt.h"
 #include "causal_conv1d_v310/causal_conv1d_310_torch_adpt.h"
@@ -1292,6 +1294,22 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "Tensor group_key_cache_idx, int block_size=0) -> ()"
     );
     ops.impl("store_kv_block", torch::kPrivateUse1, &vllm_ascend::store_kv_block);
+    // read_kv_cache     
+    ops.def(
+        "read_kv_cache_pre(Tensor slot_mapping_npu, int[] slot_mapping_list =[], int block_size=0)"
+        " -> (Tensor group_len, Tensor group_key_idx, Tensor group_key_cache_idx)"
+    );
+    ops.impl("read_kv_cache_pre", torch::kPrivateUse1, &vllm_ascend::read_kv_cache_pre);
+    ops.def(
+        "read_kv_cache(Tensor key_cache_out, Tensor key_out, Tensor group_len, Tensor group_key_idx, "
+        "Tensor group_key_cache_idx, int block_size=0) -> ()"
+    );
+    ops.impl("read_kv_cache", torch::kPrivateUse1, &vllm_ascend::read_kv_cache);
+
+    // ops.def(
+    //     "store_kv_decode(Tensor key_in, Tensor key_cache_in, Tensor slot_mapping, int block_size=0) -> ()"
+    // );
+    // ops.impl("store_kv_decode", torch::kPrivateUse1, &vllm_ascend::store_kv_decode);
 
 }
 #endif
