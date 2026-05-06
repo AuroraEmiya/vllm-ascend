@@ -712,27 +712,31 @@ void read_kv_cache(
     return;
 
 } 
-// at::Tensor read_kv_cache(
-//     const at::Tensor &key_cache_out,
-//     const at::Tensor &slot_mapping,
-//     int64_t block_size)
-// {
-//     c10::SmallVector<int64_t, 8> out_shape;
-//     out_shape.push_back(slot_mapping.size(0));
-//     for (int64_t i = 2; i < key_cache_in.dim(); ++i) {
-//         out_shape.push_back(key_cache_in.size(i));
-//     }
-//     return at::empty(out_shape, key_cache_in.options());
-// }
 
-// void store_kv_decode(
-//     const at::Tensor &key_in,
-//     const at::Tensor &key_cache_in,
-//     const at::Tensor &slot_mapping,
-//     int64_t block_size)
-// {
-//     return;
-// }
+std::tuple<at::Tensor, at::Tensor, at::Tensor> store_kv_decode_pre(
+    const at::Tensor &slot_mapping_npu,
+    at::IntArrayRef slot_mapping_list,
+    int64_t block_size)
+{
+    auto s_size = slot_mapping_npu.sizes();
+    at::Tensor group_len = at::empty({s_size[0]}, slot_mapping_npu.options());
+    at::Tensor group_key_idx = at::empty({s_size[0]}, slot_mapping_npu.options());
+    at::Tensor group_key_cache_idx = at::empty({s_size[0]}, slot_mapping_npu.options());
+    return std::tuple<at::Tensor, at::Tensor, at::Tensor>(group_len, group_key_idx, group_key_cache_idx);
+
+}
+
+void store_kv_decode(
+    const at::Tensor &key_in,
+    const at::Tensor &key_cache_in,
+    const at::Tensor &group_len,
+    const at::Tensor &group_key_idx,
+    const at::Tensor &group_key_cache_idx,
+    int64_t block_size)
+{
+    return;
+
+} 
 } // namespace meta
 } // namespace vllm_ascend
 
@@ -811,6 +815,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("read_kv_cache_pre", &vllm_ascend::meta::read_kv_cache_pre);
     ops.impl("read_kv_cache", &vllm_ascend::meta::read_kv_cache);
     // ops.impl("store_kv_decode", &vllm_ascend::meta::store_kv_decode);
+    ops.impl("store_kv_decode_pre",&vllm_ascend::meta::store_kv_decode_pre);
+    ops.impl("store_kv_decode",&vllm_ascend::meta::store_kv_decode);
 }
 }
 #endif

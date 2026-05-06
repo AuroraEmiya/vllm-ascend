@@ -1306,10 +1306,17 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     );
     ops.impl("read_kv_cache", torch::kPrivateUse1, &vllm_ascend::read_kv_cache);
 
-    // ops.def(
-    //     "store_kv_decode(Tensor key_in, Tensor key_cache_in, Tensor slot_mapping, int block_size=0) -> ()"
-    // );
-    // ops.impl("store_kv_decode", torch::kPrivateUse1, &vllm_ascend::store_kv_decode);
+    // store kv decode
+    ops.def(
+        "store_kv_decode_pre(Tensor slot_mapping_npu, int[] slot_mapping_list =[], int block_size=0)"
+        " -> (Tensor group_len, Tensor group_key_idx, Tensor group_key_cache_idx)"
+    );
+    ops.impl("store_kv_decode_pre", torch::kPrivateUse1, &vllm_ascend::store_kv_decode_pre);
 
+    ops.def(
+        "store_kv_decode(Tensor key_in, Tensor key_cache_in, Tensor group_len, Tensor group_key_idx, "
+        "Tensor group_key_cache_idx, int block_size=0) -> ()"
+    );
+    ops.impl("store_kv_decode", torch::kPrivateUse1, &vllm_ascend::store_kv_decode);
 }
 #endif
