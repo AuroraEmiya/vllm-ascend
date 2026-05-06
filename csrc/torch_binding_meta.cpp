@@ -688,6 +688,19 @@ void store_kv_block(
     return;
 
 } 
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor> read_kv_cache_pre(
+    const at::Tensor &slot_mapping_npu,
+    at::IntArrayRef slot_mapping_list,
+    int64_t block_size)
+{
+    auto s_size = slot_mapping_npu.sizes();
+    at::Tensor group_len = at::empty({s_size[0]}, slot_mapping_npu.options());
+    at::Tensor group_key_idx = at::empty({s_size[0]}, slot_mapping_npu.options());
+    at::Tensor group_key_cache_idx = at::empty({s_size[0]}, slot_mapping_npu.options());
+    return std::tuple<at::Tensor, at::Tensor, at::Tensor>(group_len, group_key_idx, group_key_cache_idx);
+
+}
 void read_kv_cache(
     const at::Tensor &key_cache_out,
     const at::Tensor &key_out,
@@ -795,7 +808,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("store_kv_block_pre", &vllm_ascend::meta::store_kv_block_pre);
     ops.impl("store_kv_block", &vllm_ascend::meta::store_kv_block);
     // read_kv_cache and read_kv_cache_pre
-    ops.impl("read_kv_cache_pre", &vllm_ascend::meta::read_kv_cache_pre)；
+    ops.impl("read_kv_cache_pre", &vllm_ascend::meta::read_kv_cache_pre);
     ops.impl("read_kv_cache", &vllm_ascend::meta::read_kv_cache);
     // ops.impl("store_kv_decode", &vllm_ascend::meta::store_kv_decode);
 }

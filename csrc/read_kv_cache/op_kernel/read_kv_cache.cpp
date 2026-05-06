@@ -21,7 +21,7 @@
 #include "read_kv_cache.h"
 
 extern "C" __global__ __aicore__ void read_kv_cache(
-    GM_ADDR keyOut, GM_ADDR keyCacheOut, GM_ADDR groupLen, GM_ADDR groupKeyIdx, GM_ADDR groupKeyCacheIdx, GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR keyCacheOut, GM_ADDR keyOut, GM_ADDR groupLen, GM_ADDR groupKeyIdx, GM_ADDR groupKeyCacheIdx, GM_ADDR workspace, GM_ADDR tiling)
 {
     AscendC::TPipe pipe;
     REGISTER_TILING_DEFAULT(ReadKVCache::ReadKVCacheTilingData);

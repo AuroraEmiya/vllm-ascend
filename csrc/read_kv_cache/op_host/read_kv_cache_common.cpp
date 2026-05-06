@@ -118,7 +118,7 @@ ge::graphStatus ReadKVCacheCommonTiling::DoCommonTiling()
     params.blockTableSize =  blockSize;
 
     uint32_t typeByte = 0;
-    auto xDataType = context_->GetInputDesc(DIM_0)->GetDataType();
+    auto xDataType = context_->GetInputDesc(DIM_1)->GetDataType();
     if (xDataType == ge::DataType::DT_INT8) {
         typeByte = sizeof(int8_t);
         params.tilingKey = 1;
