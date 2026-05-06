@@ -785,7 +785,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("store_kv_block_pre", &vllm_ascend::meta::store_kv_block_pre);
     ops.impl("store_kv_block", &vllm_ascend::meta::store_kv_block);
     // read_kv_cache and read_kv_cache_pre
-    ops.impl("read_kv_cache", &vllm_ascend::meta::read_kv_cache)
+    ops.impl("read_kv_cache_pre", &vllm_ascend::meta::read_kv_cache_pre)；
     ops.impl("read_kv_cache", &vllm_ascend::meta::read_kv_cache);
     // ops.impl("store_kv_decode", &vllm_ascend::meta::store_kv_decode);
 }
