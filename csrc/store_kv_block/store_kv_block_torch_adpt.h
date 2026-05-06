@@ -26,8 +26,8 @@
 namespace vllm_ascend {
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> store_kv_block_pre(const at::Tensor& slot_mapping_npu,
-                                                                         at::IntArrayRef slot_mapping_list,
-                                                                         int64_t block_size) {
+                                                                  at::IntArrayRef slot_mapping_list,
+                                                                  int64_t block_size) {
   // slot_mapping_list #slotmap[i]存放key的位置信息
   const int64_t slot_mapping_len = slot_mapping_list.size();
 

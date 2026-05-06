@@ -69,7 +69,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> store_kv_decode_pre(const at::Ten
       key_idx.resize(new_size, 0);
       key_cache_idx.resize(new_size, 0);
     }
-  
+  }
 
   at::Tensor group_len =
       at::empty({idx_groups}, at::TensorOptions(slot_mapping_npu.options().device()).dtype(torch::kInt32));

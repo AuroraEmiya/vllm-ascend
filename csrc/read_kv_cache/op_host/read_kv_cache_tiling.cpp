@@ -22,33 +22,28 @@
 #include <chrono>
 namespace optiling {
 
-
 static ge::graphStatus ReadKVCacheTilingFunc(gert::TilingContext* context) {
+  std::string op_type(context->GetNodeType());
+  ge::graphStatus ret;
 
-    std::string op_type(context->GetNodeType());
-    ge::graphStatus ret;
-    
-    if (op_type == "ReadKVCache") {
-         ReadKVCacheCommonTiling ReadKVCacheCommonTiling(context);
-        ret = ReadKVCacheCommonTiling.DoTiling();
-    }else {
-        printf("[ZTLOG] no  ReadKVCacheCommonTiling\n");
-        return ge::GRAPH_FAILED;
-    }
-    return ret;
-
+  if (op_type == "ReadKVCache") {
+    ReadKVCacheCommonTiling ReadKVCacheCommonTiling(context);
+    ret = ReadKVCacheCommonTiling.DoTiling();
+  } else {
+    printf("[ZTLOG] no  ReadKVCacheCommonTiling\n");
+    return ge::GRAPH_FAILED;
+  }
+  return ret;
 }
 
 struct Tiling4ReadKVCacheCompileInfo {
-    uint32_t coreNum;
-    uint64_t ubSizePlatForm;
-    uint32_t sysWorkspaceSize;
+  uint32_t coreNum;
+  uint64_t ubSizePlatForm;
+  uint32_t sysWorkspaceSize;
 };
-static ge::graphStatus TilingParseForReadKVCache(gert::TilingParseContext* context) {
-    return ge::GRAPH_SUCCESS;
-}
+static ge::graphStatus TilingParseForReadKVCache(gert::TilingParseContext* context) { return ge::GRAPH_SUCCESS; }
 
 IMPL_OP_OPTILING(ReadKVCache)
     .Tiling(ReadKVCacheTilingFunc)
-    .TilingParse<Tiling4ReadKVCacheCompileInfo>(TilingParseForReadKVCache);//?
-} // namespace optiling
+    .TilingParse<Tiling4ReadKVCacheCompileInfo>(TilingParseForReadKVCache);  //?
+}  // namespace optiling

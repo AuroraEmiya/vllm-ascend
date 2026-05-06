@@ -44,7 +44,7 @@
 #include "moe_init_routing_custom/moe_init_routing_custom_torch_adpt.h"
 #include "read_kv_cache/read_kv_cache_torch_adpt.h"
 #include "store_kv_block/store_kv_block_torch_adpt.h"
-// #include "store_kv_decode/store_kv_decode_torch_adpt.h"
+#include "store_kv_decode/store_kv_decode_torch_adpt.h"
 #include "sparse_flash_attention/sparse_flash_attention_torch_adpt.h"
 #include "lightning_indexer_quant/lightning_indexer_quant_torch_adpt.h"
 #include "causal_conv1d_v310/causal_conv1d_310_torch_adpt.h"
