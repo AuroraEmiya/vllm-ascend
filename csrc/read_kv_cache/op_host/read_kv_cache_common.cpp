@@ -19,13 +19,13 @@
  * \brief
  */
 #include "exe_graph/runtime/extended_kernel_context.h"
-#include "store_kv_block_common.h"
+#include "read_kv_cache_common.h"
 #include <chrono>
 
 #include <cstdint>
 namespace optiling {
 
-void StoreKVBlockCommonTiling::PrintTilingData()
+void ReadKVCacheCommonTiling::PrintTilingData()
 {
     std::cout<<context_->GetNodeName()<<" Start WriteCacheByGroupListTilingData printing"<<std::endl;
     std::cout<<"params.blockTableSize "<< params.blockTableSize<<std::endl;
@@ -40,7 +40,7 @@ void StoreKVBlockCommonTiling::PrintTilingData()
 
 }
 
-void StoreKVBlockCommonTiling::SetTiling()
+void ReadKVCacheCommonTiling::SetTiling()
 {
     if (params.blockTableSize<=0) printf("[ZTLOG] params.blockTableSize<=0  \n");
     else tilingData_.set_blockTableSize(params.blockTableSize);
@@ -76,7 +76,7 @@ void StoreKVBlockCommonTiling::SetTiling()
     
 }
 
-ge::graphStatus StoreKVBlockCommonTiling::GetPlatformInfo()
+ge::graphStatus ReadKVCacheCommonTiling::GetPlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
@@ -90,12 +90,12 @@ ge::graphStatus StoreKVBlockCommonTiling::GetPlatformInfo()
 }
 
 
-ge::graphStatus StoreKVBlockCommonTiling::DoCommonTiling()
+ge::graphStatus ReadKVCacheCommonTiling::DoCommonTiling()
 {
     auto kShape = context_->GetInputShape(DIM_1);
     auto kDimNum=kShape->GetStorageShape().GetDimNum();
     if (kDimNum<2||kDimNum>7){
-        printf("[ERROR] StoreKVBlock Input kDimNum dim < 2 || kDimNum>7");
+        printf("[ERROR] ReadKVCache Input kDimNum dim < 2 || kDimNum>7");
     }else {
         for (int i = 0; i < kDimNum; i++){
             if(i==0) params.numTokens = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i));
@@ -107,7 +107,7 @@ ge::graphStatus StoreKVBlockCommonTiling::DoCommonTiling()
     auto kCacheShape = context_->GetInputShape(DIM_0);
     auto kCacheDimNum=kCacheShape->GetStorageShape().GetDimNum();
     if (kCacheDimNum<2||kCacheDimNum>7){
-        printf("[ERROR] StoreKVBlock Input kCacheDimNum < 2 ");
+        printf("[ERROR] ReadKVCache Input kCacheDimNum < 2 ");
     }else {
         params.numCache = kCacheShape->GetStorageShape().GetDim(0)* kCacheShape->GetStorageShape().GetDim(1);
     }
@@ -150,7 +150,7 @@ ge::graphStatus StoreKVBlockCommonTiling::DoCommonTiling()
 
 }
 
-ge::graphStatus StoreKVBlockCommonTiling::DoTiling()
+ge::graphStatus ReadKVCacheCommonTiling::DoTiling()
 {
 
     auto ret = GetPlatformInfo();

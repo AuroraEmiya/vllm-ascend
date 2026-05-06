@@ -688,19 +688,29 @@ void store_kv_block(
     return;
 
 } 
-
-at::Tensor read_kv_cache(
-    const at::Tensor &key_cache_in,
-    const at::Tensor &slot_mapping,
+void read_kv_cache(
+    const at::Tensor &key_cache_out,
+    const at::Tensor &key_out,
+    const at::Tensor &group_len,
+    const at::Tensor &group_key_idx,
+    const at::Tensor &group_key_cache_idx,
     int64_t block_size)
 {
-    c10::SmallVector<int64_t, 8> out_shape;
-    out_shape.push_back(slot_mapping.size(0));
-    for (int64_t i = 2; i < key_cache_in.dim(); ++i) {
-        out_shape.push_back(key_cache_in.size(i));
-    }
-    return at::empty(out_shape, key_cache_in.options());
-}
+    return;
+
+} 
+// at::Tensor read_kv_cache(
+//     const at::Tensor &key_cache_out,
+//     const at::Tensor &slot_mapping,
+//     int64_t block_size)
+// {
+//     c10::SmallVector<int64_t, 8> out_shape;
+//     out_shape.push_back(slot_mapping.size(0));
+//     for (int64_t i = 2; i < key_cache_in.dim(); ++i) {
+//         out_shape.push_back(key_cache_in.size(i));
+//     }
+//     return at::empty(out_shape, key_cache_in.options());
+// }
 
 // void store_kv_decode(
 //     const at::Tensor &key_in,
