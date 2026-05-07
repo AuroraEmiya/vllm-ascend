@@ -80,7 +80,7 @@ ge::graphStatus StoreKVDecodeCommonTiling::DoCommonTiling() {
   if (kDimNum < 2 || kDimNum > 7) {
     printf("[ERROR] StoreKVDecode Input kDimNum < 2 || kDimNum>7");
   } else {
-     params.numTokens = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(0);
+     params.numTokens = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(0));
      uint32_t token_size = 1;
     for (int i = 1; i < kDimNum; i++) {
       int get_shape = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i));

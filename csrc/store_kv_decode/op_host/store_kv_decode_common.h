@@ -56,6 +56,7 @@ struct  StoreKVDecodeParams {
     uint32_t numTokens{0};
     uint32_t tokenSize{1};
     uint32_t tilingKey{0};
+    uint32_t coreNum{0};
     uint64_t workspaceSize{0};
     uint64_t sysWorkspaceSize{0};
 };
