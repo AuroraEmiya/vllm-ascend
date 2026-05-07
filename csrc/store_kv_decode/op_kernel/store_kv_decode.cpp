@@ -15,13 +15,13 @@
  */
 
 /*!
- * \file reshape_and_cache.cpp
+ * \file store_kv_decode.cpp
  * \brief
  */
 #include "store_kv_decode.h"
 
 extern "C" __global__ __aicore__ void store_kv_decode(
-    GM_ADDR keyIn, GM_ADDR keyCacheIn, GM_ADDR groupLen, GM_ADDR groupKeyIdx, GM_ADDR groupKeyCacheIdx, GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR keyIn, GM_ADDR keyCacheIn, GM_ADDR slotMappingList, GM_ADDR workspace, GM_ADDR tiling)
 {
     AscendC::TPipe pipe;
     REGISTER_TILING_DEFAULT(StoreKVDecode::StoreKVDecodeTilingData);
@@ -30,14 +30,14 @@ extern "C" __global__ __aicore__ void store_kv_decode(
     if (TILING_KEY_IS(1)) {
         StoreKVDecode::StoreKVDecodeBase<uint8_t> op;
         op.Init( &pipe, &tilingData);
-        op.Process(keyIn,keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx);
+        op.Process(keyIn,keyCacheIn, slotMappingList);
     } else if (TILING_KEY_IS(2)) {
         StoreKVDecode::StoreKVDecodeBase<half> op;
         op.Init( &pipe, &tilingData);
-        op.Process(keyIn,keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx);
+        op.Process(keyIn,keyCacheIn, slotMappingList);
     } else if (TILING_KEY_IS(4)) {
         StoreKVDecode::StoreKVDecodeBase<int32_t> op;
         op.Init( &pipe, &tilingData);
-        op.Process(keyIn,keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx);
+        op.Process(keyIn,keyCacheIn, slotMappingList);
     }
 }

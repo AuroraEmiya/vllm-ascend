@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 /*!
- * \file reshape_and_cache_common.h
+ * \file store_kv_decode_common.h
  * \brief
  */
 
@@ -80,4 +80,4 @@ protected:
 };
 
 }
-#endif // ASCEND_OPS_RESHAPE_AND_CACHE_COMMON_H
+#endif // ASCEND_OPS_store_kv_decode_COMMON_H
