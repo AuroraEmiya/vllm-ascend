@@ -15,8 +15,8 @@
  */
 
 /*!
- * \file reshape_and_cache.cpp
- * \brief
+ * \file store_kv_decode.cpp
+ * \brief Store KV decode op definition.
  */
 #include "register/op_def_registry.h"
 
@@ -36,25 +36,12 @@ class StoreKVDecode : public OpDef {
         .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .AutoContiguous();
-    this->Input("groupLen")
+    this->Input("slotMappingList")
         .ParamType(REQUIRED)
-        .DataType({ge::DT_INT32 , ge::DT_INT32 , ge::DT_INT32 })
+        .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
         .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .AutoContiguous();
-    this->Input("groupKeyIdx")
-        .ParamType(REQUIRED)
-        .DataType({ge::DT_INT32 , ge::DT_INT32 , ge::DT_INT32 })
-        .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-        .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-        .AutoContiguous();
-    this->Input("groupKeyCacheIdx")
-        .ParamType(REQUIRED)
-        .DataType({ge::DT_INT32 , ge::DT_INT32 , ge::DT_INT32 })
-        .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-        .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-        .AutoContiguous();
-    this->Attr("blockSize").Int();
     this->AICore().AddConfig("ascend910b");
     this->AICore().AddConfig("ascend910_93");
   }

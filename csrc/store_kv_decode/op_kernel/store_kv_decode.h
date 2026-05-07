@@ -23,110 +23,83 @@
 #define ASCEND_STORE_KV_DECODE_H
 
 #include "kernel_operator.h"
+#include <cstdint>
 
 namespace StoreKVDecode {
 using namespace AscendC;
 
-
 #ifndef STORE_KV_DECODE_TILING_DATA_H_
-#define STORE_KV_DECODE_TILING_DATA_H_
-struct StoreKVDecodeTilingData{
-    uint32_t blockTableSize;    
-    uint32_t typeByte;
-    uint32_t tokenSize;
-    uint32_t corePerNum;
-    uint32_t coreTail;
-    uint32_t numTokens;
-    uint32_t numCache;
-    uint32_t groupInfoLen;
-
+  #define STORE_KV_DECODE_TILING_DATA_H_
+struct StoreKVDecodeTilingData {
+  uint32_t tokenSize;
+  uint32_t numTokens;
+//   uint32_t maxBlockNum;
 };
 #endif
 template <typename T>
 class StoreKVDecodeBase {
-public:
+ public:
+  // tiling data
+  uint32_t tokenSize = 0;
+  uint32_t tokenByteSize = 0;
+  uint32_t numTokens = 0;
+  uint32_t maxBlockNum = 0;
+  // core data
+  uint32_t coreId = 0;
+  uint32_t blockNum = 0;
+  // Global tensor
+  AscendC::TPipe* pipeThis;
+  AscendC::LocalTensor<T> tokenLocal;
+  AscendC::GlobalTensor<T> keyInputGt;
+  AscendC::GlobalTensor<T> keyCacheIntputGt;
+  AscendC::GlobalTensor<int64_t> slotMappingListGt;
+  AscendC::TBuf<AscendC::TPosition::VECCALC> tokenBuf;
+  __aicore__ inline StoreKVDecodeBase() {}
 
-    uint32_t tokenSize = 0;
-    uint32_t tokenByteSize = 0;
-    uint32_t blockTableSize = 0;
-    uint32_t typeByte = 0;
-    uint32_t numTokens = 0;
-    uint32_t numCache = 0;
-    uint32_t groupInfoLen = 0;
+  //   __aicore__ inline uint32_t RoundUp(uint32_t x, uint32_t y = 16) { return y == 0 ? 0 : (x + y - 1) / y * y; }
 
-    uint32_t coreId = 0;
-    uint32_t coreTail = 0;
-    uint32_t corePerNum = 0;
-    uint32_t blockNum = 0;
-    AscendC::TPipe* pipeThis;
-    AscendC::LocalTensor<T> tokenLocal;
-    AscendC::GlobalTensor<T> keyInputGt;
-    AscendC::GlobalTensor<T> keyCacheIntputGt;
-    AscendC::GlobalTensor<uint32_t> groupLenGt;
-    AscendC::GlobalTensor<uint32_t> groupKeyIdxGt;
-    AscendC::GlobalTensor<uint32_t> groupKeyCacheIdxGt;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> tokenBuf;
-    __aicore__ inline StoreKVDecodeBase() {}
+  __aicore__ inline void Init(AscendC::TPipe* pipe, StoreKVDecodeTilingData* tilingData) {
+    pipeThis = pipe;
+    // tiling data
+    tokenSize = tilingData->tokenSize;
+    tokenByteSize = tokenSize * sizeof(T);
+    numTokens = tilingData->numTokens;
+    // maxBlockNum = tilingData->maxBlockNum;
+    // core data
+    coreId = AscendC::GetBlockIdx();
+    blockNum = AscendC::GetBlockNum();
+  }
+  __aicore__ inline void Process(GM_ADDR keyIn, GM_ADDR keyCacheIn, GM_ADDR slotMappingList) {
+    //test only
+    // if (coreId >= maxBlockNum) return;
+    
+    keyInputGt.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(keyIn));
+    keyCacheIntputGt.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(keyCacheIn));
+    slotMappingListGt.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(slotMappingList));
 
-    __aicore__ inline uint32_t RoundUp(uint32_t x, uint32_t y = 16)
-    {
-        return y == 0 ? 0 : (x + y - 1) / y * y;
+    pipeThis->InitBuffer(tokenBuf, tokenByteSize);
+    tokenLocal = tokenBuf.Get<T>();
+
+    AscendC::DataCopyExtParams copyParams{1, 0, 0, 0, 0};  // todo完整块长度
+    AscendC::DataCopyPadExtParams<T> padParams{false, 0, 0, 0};
+    for (uint32_t idx = coreId; idx < numTokens; idx += blockNum) {
+      int keyCacheInputIdx = slotMappingListGt.GetValue(idx) * tokenSize;
+
+      // invalid slotMappingList idx (-1)
+      if (keyCacheInputIdx < 0) continue;
+
+      uint32_t keyInputIdx = idx * tokenSize;
+      copyParams.blockLen = tokenByteSize;
+
+      DataCopyPad(tokenLocal, keyInputGt[keyInputIdx], copyParams, padParams);
+      AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1);
+      AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1);
+      DataCopyPad(keyCacheIntputGt[keyCacheInputIdx], tokenLocal, copyParams);
+      AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+      AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
     }
-
-    __aicore__ inline void Init( AscendC::TPipe *pipe, StoreKVDecodeTilingData *tilingData)
-    {
-        pipeThis = pipe;
-        typeByte = tilingData->typeByte;
-        tokenSize = tilingData->tokenSize;
-        tokenByteSize = tokenSize*typeByte;
-        blockTableSize = tilingData->blockTableSize;
-        numTokens = tilingData->numTokens;
-        numCache = tilingData->numCache;
-        groupInfoLen = tilingData->groupInfoLen;
-
-
-        coreId = AscendC::GetBlockIdx();
-        coreTail = tilingData->coreTail;
-        blockNum = AscendC::GetBlockNum();
-        if (coreId < coreTail){
-            corePerNum = tilingData->corePerNum+1;
-        }else {
-            corePerNum = tilingData->corePerNum;
-        }
-    }
-    __aicore__ inline void Process(GM_ADDR keyIn, GM_ADDR keyCacheIn, GM_ADDR groupLen, GM_ADDR groupKeyIdx, GM_ADDR groupKeyCacheIdx)
-    {
-        
-        keyInputGt.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(keyIn));
-        keyCacheIntputGt.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(keyCacheIn));
-        groupLenGt.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t*>(groupLen));
-        groupKeyIdxGt.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t*>(groupKeyIdx));
-        groupKeyCacheIdxGt.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t*>(groupKeyCacheIdx));
-
-        pipeThis->InitBuffer(tokenBuf,  blockTableSize*tokenByteSize);
-        tokenLocal = tokenBuf.Get<T>();
-
-        AscendC::DataCopyExtParams copyParams{1, 0,  0, 0, 0};//todo完整块长度
-        AscendC::DataCopyPadExtParams<T> padParams{false, 0, 0, 0};
-        for (uint32_t i = 0; i < corePerNum; i++) {
-            uint32_t idx = (coreId+i*blockNum);
-         
-            // if( groupLenGt.GetValue(idx)<= 0 || groupKeyIdxGt.GetValue(idx)<0 || groupKeyCacheIdxGt.GetValue(idx)<0){
-            //     continue;
-            // }
-           
-            copyParams.blockLen = groupLenGt.GetValue(idx)*tokenByteSize; 
-            DataCopyPad(tokenLocal, keyInputGt[ groupKeyIdxGt.GetValue(idx)*tokenSize], copyParams, padParams); 
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1);
-            DataCopyPad(keyCacheIntputGt[groupKeyCacheIdxGt.GetValue(idx)*tokenSize], tokenLocal, copyParams);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-        }
-
-    }
-
+  }
 };
-}
+}  // namespace StoreKVDecode
 
 #endif

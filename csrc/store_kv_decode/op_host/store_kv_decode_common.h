@@ -46,33 +46,18 @@ constexpr int32_t MAX_UB_USE_SIZE = 180 * 1024;
 
 
 BEGIN_TILING_DATA_DEF(StoreKVDecodeTilingData)
-    TILING_DATA_FIELD_DEF(uint32_t, blockTableSize);
-    TILING_DATA_FIELD_DEF(uint32_t, typeByte);
     TILING_DATA_FIELD_DEF(uint32_t, tokenSize);
-    TILING_DATA_FIELD_DEF(uint32_t, corePerNum);
-    TILING_DATA_FIELD_DEF(uint32_t, coreTail);
     TILING_DATA_FIELD_DEF(uint32_t, numTokens);
-    TILING_DATA_FIELD_DEF(uint32_t, numCache);
-    TILING_DATA_FIELD_DEF(uint32_t, groupInfoLen);
 END_TILING_DATA_DEF;
 REGISTER_TILING_DATA_CLASS(StoreKVDecode,  StoreKVDecodeTilingData)
 
 
 struct  StoreKVDecodeParams {
     uint32_t numTokens{0};
-    uint32_t numCache{0};
-    uint32_t numHeads{1};
-    uint32_t headSize[5]{1,1,1,1,1};
-    uint32_t blockTableSize{0};
-    uint32_t typeByte{0};
     uint32_t tokenSize{1};
     uint32_t tilingKey{0};
     uint64_t workspaceSize{0};
-    uint64_t groupInfoLen{0};
-    uint32_t corepernum{0};
-    uint32_t coretail{0};
     uint64_t sysWorkspaceSize{0};
-    uint32_t coreNum{0};
 };
 
 class StoreKVDecodeCommonTiling {

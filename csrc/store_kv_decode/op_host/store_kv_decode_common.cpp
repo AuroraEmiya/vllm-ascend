@@ -23,151 +23,113 @@
 #include <chrono>
 
 #include <cstdint>
+#include <cstdio>
 namespace optiling {
 
-void StoreKVDecodeCommonTiling::PrintTilingData()
-{
-    std::cout<<context_->GetNodeName()<<" Start WriteCacheByGroupListTilingData printing"<<std::endl;
-    std::cout<<"params.blockTableSize "<< params.blockTableSize<<std::endl;
-    std::cout<<"params.typeByte "<< params.typeByte<<std::endl;
-    std::cout<<"params.tokenSize "<< params.tokenSize<<std::endl;
-    std::cout<<"params.corepernum "<< params.corepernum<<std::endl;
-    std::cout<<"params.coretail "<< params.coretail<<std::endl;
-    std::cout<<"params.numTokens "<< params.numTokens<<std::endl;
-    std::cout<<"params.numCache "<< params.numCache<<std::endl;
-    std::cout<<"params.groupInfoLen "<< params.groupInfoLen<<std::endl;
-    std::cout<<context_->GetNodeName()<<" End WriteCacheByGroupListTilingData printing"<<std::endl;
-
+void StoreKVDecodeCommonTiling::PrintTilingData() {
+  std::cout << context_->GetNodeName() << " Start WriteStoreKVDecodeListTilingData printing" << std::endl;
+  std::cout << "params.tokenSize " << params.tokenSize << std::endl;
+  std::cout << "params.numTokens " << params.numTokens << std::endl;
+  //   std::cout << "params.numCache " << params.numCache << std::endl;
+  std::cout << context_->GetNodeName() << " End WriteStoreKVDecodeListTilingData printing" << std::endl;
 }
 
-void StoreKVDecodeCommonTiling::SetTiling()
-{
-    if (params.blockTableSize<=0) printf("[ZTLOG] params.blockTableSize<=0  \n");
-    else tilingData_.set_blockTableSize(params.blockTableSize);
-    if (params.typeByte<=0) printf("[ZTLOG] params.typeByte<=0 numTokens\n");
-    else  tilingData_.set_typeByte(params.typeByte);
+void StoreKVDecodeCommonTiling::SetTiling() {
+  if (params.tokenSize == 0)
+    printf("[LOG] params.tokenSize==0 \n");
+  else
+    tilingData_.set_tokenSize(params.tokenSize);
 
-    if (params.tokenSize<=0) printf("[ZTLOG] params.tokenSize<=0 \n");
-    else tilingData_.set_tokenSize(params.tokenSize);
-    
-    if (params.corepernum<=0 && params.coretail==0) printf("[ZTLOG] params.corepernum<=0 && params.coretail==0 \n");
-    else tilingData_.set_corePerNum(params.corepernum); 
-    
-    if (params.coretail>=48) printf("[ZTLOG] params.coretail>=48 \n");
-    else tilingData_.set_coreTail(params.coretail); 
-    
-    if (params.numTokens<=0) printf("[ZTLOG] params.numTokens<=0 \n");
-    else tilingData_.set_numTokens(params.numTokens); 
-        
-    if (params.numCache<=0) printf("[ZTLOG] params.numCache<=0 \n");
-    else tilingData_.set_numCache(params.numCache); 
+  if (params.numTokens <= 0)
+    printf("[LOG] params.numTokens<=0 \n");
+  else
+    tilingData_.set_numTokens(params.numTokens);
 
-    if (params.groupInfoLen<=0) printf("[ZTLOG] params.groupInfoLen<=0 \n");
-    else tilingData_.set_groupInfoLen(params.groupInfoLen); 
+  //   if (params.numCache <= 0)
+  //     printf("[ZTLOG] params.numCache<=0 \n");
+  //   else
+  //     tilingData_.set_numCache(params.numCache);
 
-    size_t* workspaceSize = context_->GetWorkspaceSizes(1);
-    *workspaceSize = params.workspaceSize + params.sysWorkspaceSize;
-    context_->SetTilingKey(params.tilingKey);
-    if (params.coreNum<=0) printf("[ZTLOG] params.coreNum<=0 \n");
-    else     context_->SetBlockDim(params.coreNum);
+  size_t* workspaceSize = context_->GetWorkspaceSizes(1);
+  *workspaceSize = params.workspaceSize + params.sysWorkspaceSize;
+  context_->SetTilingKey(params.tilingKey);
+  if (params.coreNum <= 0)
+    printf("[ZTLOG] params.coreNum<=0 \n");
+  else
+    context_->SetBlockDim(params.coreNum);
 
-    tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
-    context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
-    
+  tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
+  context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
 }
 
-ge::graphStatus StoreKVDecodeCommonTiling::GetPlatformInfo()
-{
-    auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
-    params.coreNum = ascendcPlatform.GetCoreNum();
-    OP_CHECK_IF((params.coreNum == 0),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Failed to get core num."),
-                    return ge::GRAPH_FAILED);
-    params.sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    return ge::GRAPH_SUCCESS;
+ge::graphStatus StoreKVDecodeCommonTiling::GetPlatformInfo() {
+  auto platformInfo = context_->GetPlatformInfo();
+  OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+  auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+  params.coreNum = ascendcPlatform.GetCoreNum();
+  OP_CHECK_IF((params.coreNum == 0),
+              VECTOR_INNER_ERR_REPORT_TILIING(context_->GetNodeName(), "Failed to get core num."),
+              return ge::GRAPH_FAILED);
+  params.sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+  return ge::GRAPH_SUCCESS;
 }
 
-
-ge::graphStatus StoreKVDecodeCommonTiling::DoCommonTiling()
-{
-    auto kShape = context_->GetInputShape(DIM_0);
-    auto kDimNum=kShape->GetStorageShape().GetDimNum();
-    if (kDimNum<2||kDimNum>7){
-        printf("[ERROR] StoreKVDecode Input kDimNum dim < 2 || kDimNum>7");
-    }else {
-        for (int i = 0; i < kDimNum; i++){
-            if(i==0) params.numTokens = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i));
-            else if (i==1) params.numHeads = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i));
-            else if(static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i))!=0)  params.headSize[i-2]=static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i));
-        }
+ge::graphStatus StoreKVDecodeCommonTiling::DoCommonTiling() {
+  auto kShape = context_->GetInputShape(DIM_0);
+  auto kDimNum = kShape->GetStorageShape().GetDimNum();
+  if (kDimNum < 2 || kDimNum > 7) {
+    printf("[ERROR] StoreKVDecode Input kDimNum < 2 || kDimNum>7");
+  } else {
+     params.numTokens = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(0);
+     uint32_t token_size = 1;
+    for (int i = 1; i < kDimNum; i++) {
+      int get_shape = static_cast<uint32_t>(kShape->GetStorageShape().GetDim(i));
+      if (get_shape <= 0) {
+        printf("[ERROR] Invalid shape dim value!\n");
+      } else {
+        token_size *= get_shape;
+      }
     }
+    params.tokenSize = token_size;
+  }
 
-    auto kCacheShape = context_->GetInputShape(DIM_1);
-    auto kCacheDimNum=kCacheShape->GetStorageShape().GetDimNum();
-    if (kCacheDimNum<2||kCacheDimNum>7){
-        printf("[ERROR] StoreKVDecode Input kCacheDimNum < 2 ");
-    }else {
-        params.numCache = kCacheShape->GetStorageShape().GetDim(0)* kCacheShape->GetStorageShape().GetDim(1);
-    }
+  auto kCacheShape = context_->GetInputShape(DIM_1);
+  auto kCacheDimNum = kCacheShape->GetStorageShape().GetDimNum();
+  if (kCacheDimNum < 2 || kCacheDimNum > 7) {
+    printf("[ERROR] StoreKVDecode Input kCacheDimNum < 2 ");
+  }  // else {
+  //     params.numCache = kCacheShape->GetStorageShape().GetDim(0) * kCacheShape->GetStorageShape().GetDim(1);
+  //   }
 
-    const int64_t* blockSizePtr = context_->GetAttrs()->GetInt(0);
-    uint32_t blockSize = static_cast<uint32_t>(* blockSizePtr);
-    params.tokenSize =  params.numHeads * params.headSize[0] * params.headSize[1] * params.headSize[2] * params.headSize[3] * params.headSize[4];
-    params.blockTableSize =  blockSize;
-
-    uint32_t typeByte = 0;
-    auto xDataType = context_->GetInputDesc(DIM_0)->GetDataType();
-    if (xDataType == ge::DataType::DT_INT8) {
-        typeByte = sizeof(int8_t);
-        params.tilingKey = 1;
-    } else if (xDataType == ge::DataType::DT_FLOAT16 || xDataType == ge::DataType::DT_BF16) {
-        typeByte = sizeof(uint16_t);
-        params.tilingKey = 2;
-    } else if (xDataType == ge::DataType::DT_INT32 || xDataType == ge::DataType::DT_UINT32) {
-        typeByte = sizeof(uint32_t);
-        params.tilingKey = 4;
-    } else {
-        OP_LOGE(context_->GetNodeName(), "Unsupported type.");
-        return ge::GRAPH_FAILED;
-    }
-
-    params.typeByte = typeByte;
-
-    auto groupInfoShape = context_->GetInputShape(DIM_2);
-    params.groupInfoLen =  static_cast<uint32_t>(groupInfoShape->GetStorageShape().GetDim(0));
-    params.corepernum = params.groupInfoLen/params.coreNum;
-    params.coretail= params.groupInfoLen%params.coreNum;
-    
-    uint32_t pageBlockEleSize = params.blockTableSize*params.tokenSize;
-    if( pageBlockEleSize > MAX_UB_USE_SIZE){
-        OP_LOGE(context_->GetNodeName(), "pageBlockEleSize > MaxUBSize");
-        std::cout<<context_->GetNodeName()<< "  pageBlockEleSize > MaxUBSize"<<std::endl;
-        return ge::GRAPH_FAILED;
-    }
-    return ge::GRAPH_SUCCESS;
-
+  auto xDataType = context_->GetInputDesc(DIM_0)->GetDataType();
+  if (xDataType == ge::DataType::DT_INT8) {
+    params.tilingKey = 1;
+  } else if (xDataType == ge::DataType::DT_FLOAT16 || xDataType == ge::DataType::DT_BF16) {
+    params.tilingKey = 2;
+  } else if (xDataType == ge::DataType::DT_INT32 || xDataType == ge::DataType::DT_UINT32) {
+    params.tilingKey = 4;
+  } else {
+    OP_LOGE(context_->GetNodeName(), "Unsupported type.");
+    return ge::GRAPH_FAILED;
+  }
+  return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus StoreKVDecodeCommonTiling::DoTiling()
-{
+ge::graphStatus StoreKVDecodeCommonTiling::DoTiling() {
+  auto ret = GetPlatformInfo();
+  if (ret != ge::GRAPH_SUCCESS) {
+    return ret;
+  }
 
-    auto ret = GetPlatformInfo();
-    if (ret != ge::GRAPH_SUCCESS) {
-        return ret;
-    }
+  ret = DoCommonTiling();
+  if (ret != ge::GRAPH_SUCCESS) {
+    return ret;
+  }
 
-    ret = DoCommonTiling();
-    if (ret != ge::GRAPH_SUCCESS) {
-        return ret;
-    }
+  SetTiling();
 
-    SetTiling();
-
-    // PrintTilingData();
-    return ge::GRAPH_SUCCESS;
+  // PrintTilingData();
+  return ge::GRAPH_SUCCESS;
 }
-    
 
-} // namespace optiling
+}  // namespace optiling
