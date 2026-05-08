@@ -24,11 +24,12 @@
 #include <vector>
 namespace vllm_ascend {
 
-inline void store_kv_decode(const at::Tensor& key_in, at::Tensor& key_cache_in, const at::Tensor slot_mapping_list) {
+inline void store_kv_decode(const at::Tensor& key_in, const at::Tensor& key_cache_in,
+                            const at::Tensor& slot_mapping_list) {
   // TORCH_CHECK(slot_mapping_list.scalar_type() == at::ScalarType::Long, "slot_mapping_list must be int64.");
-  // TORCH_CHECK(slot_mapping_list.device() == key_in.device(), "slot_mapping_list must be on the same device as key_in.");
-  // TORCH_CHECK(slot_mapping_list.numel() == key_in.size(0), "slot_mapping_list length must equal key_in.shape[0].");
-  // safty check
+  // TORCH_CHECK(slot_mapping_list.device() == key_in.device(), "slot_mapping_list must be on the same device as
+  // key_in."); TORCH_CHECK(slot_mapping_list.numel() == key_in.size(0), "slot_mapping_list length must equal
+  // key_in.shape[0]."); safty check
   //
   EXEC_NPU_CMD(aclnnStoreKVDecode, key_in, key_cache_in, slot_mapping_list);
 }
