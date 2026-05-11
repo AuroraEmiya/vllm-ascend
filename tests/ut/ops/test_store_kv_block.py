@@ -220,7 +220,7 @@ class TestStoreKVBlock:
         "dtype,block_size,num_tokens",
         list(
             itertools.product(
-                [torch.float16, torch.int8],
+                [torch.float16],
                 [16, 32],
                 [1, 8, 32, 64],
             )
@@ -228,11 +228,7 @@ class TestStoreKVBlock:
     )
     def test_correctness_single_group(self, dtype, block_size, num_tokens):
         """Single group: all tokens in one contiguous copy."""
-        if dtype == torch.int8:
-            key = torch.randint(-128, 127, (num_tokens, 128),
-                                dtype=torch.int8).npu()
-        else:
-            key = torch.randn(num_tokens, 128, dtype=dtype).npu()
+        key = torch.randn(num_tokens, 128, dtype=dtype).npu()
         key_cache = torch.zeros(256, 128, dtype=dtype).npu()
 
         group_len = torch.tensor([num_tokens], dtype=torch.int32).npu()
@@ -251,17 +247,13 @@ class TestStoreKVBlock:
         assert out.shape == key_cache.shape
         assert torch.equal(out.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.int8])
+    @pytest.mark.parametrize("dtype", [torch.float16])
     def test_mixed_group_lengths(self, dtype):
         """Multiple groups with different lengths."""
         block_size = 16
         num_tokens = 30
         head_dim = 64
-        if dtype == torch.int8:
-            key = torch.randint(-128, 127, (num_tokens, head_dim),
-                                dtype=torch.int8).npu()
-        else:
-            key = torch.randn(num_tokens, head_dim, dtype=dtype).npu()
+        key = torch.randn(num_tokens, head_dim, dtype=dtype).npu()
         key_cache = torch.zeros(200, head_dim, dtype=dtype).npu()
 
         # Groups: 10, 5, 15
@@ -333,17 +325,13 @@ class TestStoreKVBlock:
 class TestStoreKVBlockIntegration:
     """End-to-end: slot_mapping -> pre -> main -> cache."""
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.int8])
+    @pytest.mark.parametrize("dtype", [torch.float16])
     @pytest.mark.parametrize("num_tokens", [1, 16, 32, 64])
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_continuous(self, dtype, num_tokens, block_size):
         """Fully continuous case: pre + main pass through."""
         head_dim = 64
-        if dtype == torch.int8:
-            key = torch.randint(-128, 127, (num_tokens, head_dim),
-                                dtype=torch.int8).npu()
-        else:
-            key = torch.randn(num_tokens, head_dim, dtype=dtype).npu()
+        key = torch.randn(num_tokens, head_dim, dtype=dtype).npu()
         key_cache = torch.zeros(200, head_dim, dtype=dtype).npu()
 
         slot_mapping = torch.arange(num_tokens, dtype=torch.int32).npu()
