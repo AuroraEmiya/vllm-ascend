@@ -665,6 +665,33 @@ at::Tensor npu_lightning_indexer_quant_meta(
     return lightning_indexer_quant_output;
 }
 
+std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_store_kv_block_pre_meta(
+    const at::Tensor& slotMapping,
+    int64_t blockSize)
+{
+    int64_t numTokens = slotMapping.size(0);
+    int64_t maxGroups = numTokens;
+    auto opts = slotMapping.options().dtype(at::kInt).device(slotMapping.device());
+
+    at::Tensor groupLen = at::empty({maxGroups}, opts);
+    at::Tensor groupKeyIdx = at::empty({maxGroups}, opts);
+    at::Tensor groupKeyCacheIdx = at::empty({maxGroups}, opts);
+
+    return {groupLen, groupKeyIdx, groupKeyCacheIdx};
+}
+
+at::Tensor npu_store_kv_block_meta(
+    const at::Tensor& keyIn,
+    const at::Tensor& keyCacheIn,
+    const at::Tensor& groupLen,
+    const at::Tensor& groupKeyIdx,
+    const at::Tensor& groupKeyCacheIdx,
+    int64_t blockSize)
+{
+    at::Tensor output = at::empty(keyCacheIn.sizes(), keyCacheIn.options().dtype(keyCacheIn.dtype()).device(keyCacheIn.device()));
+    return output;
+}
+
 } // namespace meta
 } // namespace vllm_ascend
 
@@ -678,6 +705,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_causal_conv1d_310", &vllm_ascend::meta::npu_causal_conv1d_310_meta);
     // npu_recurrent_gated_delta_rule_310
     ops.impl("npu_recurrent_gated_delta_rule_310", &vllm_ascend::meta::npu_recurrent_gated_delta_rule_310_meta);
+    // StoreKVBlockPre meta
+    ops.impl("npu_store_kv_block_pre", &vllm_ascend::meta::npu_store_kv_block_pre_meta);
 }
 }
 #else
@@ -736,6 +765,10 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("moe_grouped_matmul", &vllm_ascend::meta::moe_grouped_matmul_meta);
     // Lightning indexer quant
     ops.impl("npu_lightning_indexer_quant", &vllm_ascend::meta::npu_lightning_indexer_quant_meta);
+    // StoreKVBlock meta
+    ops.impl("npu_store_kv_block", &vllm_ascend::meta::npu_store_kv_block_meta);
+    // StoreKVBlockPre meta
+    ops.impl("npu_store_kv_block_pre", &vllm_ascend::meta::npu_store_kv_block_pre_meta);
 }
 }
 #endif

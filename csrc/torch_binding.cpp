@@ -987,6 +987,104 @@ std::vector<at::Tensor> moe_grouped_matmul(
     return y;
 }
 
+std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_store_kv_block_pre(
+    const at::Tensor& slotMapping,
+    int64_t blockSize)
+{
+    TORCH_CHECK(slotMapping.dim() == 1, "slotMapping must be 1D");
+    TORCH_CHECK(slotMapping.dtype() == at::kInt, "slotMapping must be int32");
+    TORCH_CHECK(blockSize > 0, "blockSize must be positive");
+
+    int64_t numTokens = slotMapping.size(0);
+    at::Tensor slotCpu = slotMapping.to(at::kCPU).contiguous();
+    const int32_t* slotPtr = slotCpu.data_ptr<int32_t>();
+
+    std::vector<int32_t> groupLenVec;
+    std::vector<int32_t> groupKeyIdxVec;
+    std::vector<int32_t> groupKeyCacheIdxVec;
+
+    int64_t t = 0;
+    while (t < numTokens) {
+        int32_t slot = slotPtr[t];
+        if (slot < 0) {
+            t++;
+            continue;
+        }
+
+        int32_t srcStart = static_cast<int32_t>(t);
+        int32_t dstStart = slot;
+        int32_t groupLen = 1;
+
+        while (t + 1 < numTokens) {
+            int32_t nextSlot = slotPtr[t + 1];
+            if (nextSlot < 0) {
+                break;
+            }
+            if (nextSlot == slot + 1 && groupLen < static_cast<int32_t>(blockSize)) {
+                groupLen++;
+                slot = nextSlot;
+                t++;
+            } else {
+                break;
+            }
+        }
+
+        groupLenVec.push_back(groupLen);
+        groupKeyIdxVec.push_back(srcStart);
+        groupKeyCacheIdxVec.push_back(dstStart);
+        t++;
+    }
+
+    int64_t numGroups = static_cast<int64_t>(groupLenVec.size());
+    auto options = at::TensorOptions().dtype(at::kInt).device(slotMapping.device());
+
+    if (numGroups == 0) {
+        return {
+            at::empty({0}, options),
+            at::empty({0}, options),
+            at::empty({0}, options),
+        };
+    }
+
+    at::Tensor groupLenOut = at::from_blob(
+        const_cast<int32_t*>(groupLenVec.data()),
+        {numGroups}, at::TensorOptions().dtype(at::kInt).device(at::kCPU))
+        .to(slotMapping.device());
+    at::Tensor groupKeyIdxOut = at::from_blob(
+        const_cast<int32_t*>(groupKeyIdxVec.data()),
+        {numGroups}, at::TensorOptions().dtype(at::kInt).device(at::kCPU))
+        .to(slotMapping.device());
+    at::Tensor groupKeyCacheIdxOut = at::from_blob(
+        const_cast<int32_t*>(groupKeyCacheIdxVec.data()),
+        {numGroups}, at::TensorOptions().dtype(at::kInt).device(at::kCPU))
+        .to(slotMapping.device());
+
+    return {groupLenOut, groupKeyIdxOut, groupKeyCacheIdxOut};
+}
+
+at::Tensor npu_store_kv_block(
+    const at::Tensor& keyIn,
+    const at::Tensor& keyCacheIn,
+    const at::Tensor& groupLen,
+    const at::Tensor& groupKeyIdx,
+    const at::Tensor& groupKeyCacheIdx,
+    int64_t blockSize)
+{
+    TORCH_CHECK(keyIn.dim() == 2, "keyIn must be 2D [numTokens, headDim]");
+    TORCH_CHECK(keyCacheIn.dim() >= 2, "keyCacheIn must be at least 2D");
+    TORCH_CHECK(groupLen.dim() == 1, "groupLen must be 1D");
+    TORCH_CHECK(groupKeyIdx.dim() == 1, "groupKeyIdx must be 1D");
+    TORCH_CHECK(groupKeyCacheIdx.dim() == 1, "groupKeyCacheIdx must be 1D");
+    TORCH_CHECK(groupLen.dtype() == at::kInt, "groupLen must be int32");
+    TORCH_CHECK(groupKeyIdx.dtype() == at::kInt, "groupKeyIdx must be int32");
+    TORCH_CHECK(groupKeyCacheIdx.dtype() == at::kInt, "groupKeyCacheIdx must be int32");
+    TORCH_CHECK(blockSize > 0, "blockSize must be positive");
+
+    at::Tensor keyCacheOut = at::empty_like(keyCacheIn);
+    EXEC_NPU_CMD(aclnnStoreKVBlock, keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, keyCacheOut, blockSize);
+    return keyCacheOut;
+}
+
 } // namespace vllm_ascend
 
 #ifdef ASCEND_PLATFORM_310P
@@ -1020,6 +1118,13 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "                                   Tensor? num_accepted_tokens, "
         "                                   float scale_value=1.0) -> (Tensor output)");
     ops.impl("npu_recurrent_gated_delta_rule_310", torch::kPrivateUse1, &vllm_ascend::npu_recurrent_gated_delta_rule_310);
+
+    // StoreKVBlockPre — host-side grouping, works on all platforms
+    ops.def(
+        "npu_store_kv_block_pre(Tensor slotMapping, int blockSize) "
+        "-> (Tensor groupLen, Tensor groupKeyIdx, Tensor groupKeyCacheIdx)"
+    );
+    ops.impl("npu_store_kv_block_pre", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_block_pre);
 }
 #else
 // Pybind on other platform
@@ -1279,5 +1384,20 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "                            int sparse_count=2048, int sparse_mode=3) -> Tensor"
     );
     ops.impl("npu_lightning_indexer_quant", torch::kPrivateUse1, &vllm_ascend::npu_lightning_indexer_quant);
+
+    // StoreKVBlock — grouped KV cache store (P-stage)
+    ops.def(
+        "npu_store_kv_block(Tensor keyIn, Tensor keyCacheIn, "
+        "                   Tensor groupLen, Tensor groupKeyIdx, Tensor groupKeyCacheIdx, "
+        "                   int blockSize) -> Tensor"
+    );
+    ops.impl("npu_store_kv_block", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_block);
+
+    // StoreKVBlockPre — preprocess slot_mapping into grouped metadata
+    ops.def(
+        "npu_store_kv_block_pre(Tensor slotMapping, int blockSize) "
+        "-> (Tensor groupLen, Tensor groupKeyIdx, Tensor groupKeyCacheIdx)"
+    );
+    ops.impl("npu_store_kv_block_pre", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_block_pre);
 }
 #endif
