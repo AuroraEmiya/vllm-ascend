@@ -1081,7 +1081,7 @@ at::Tensor npu_store_kv_block(
     TORCH_CHECK(blockSize > 0, "blockSize must be positive");
 
     at::Tensor keyCacheOut = at::empty_like(keyCacheIn);
-    EXEC_NPU_CMD(aclnnStoreKVBlock, keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, keyCacheOut, blockSize);
+    EXEC_NPU_CMD(aclnnStoreKVBlock, keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, blockSize, keyCacheOut);
     return keyCacheOut;
 }
 
