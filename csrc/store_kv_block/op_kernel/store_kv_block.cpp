@@ -67,10 +67,9 @@ public:
             int32_t dstRow = groupDstGm_.GetValue(groupId);
 
             uint32_t dataBytes = static_cast<uint32_t>(groupLen) * rowBytes_;
-            uint32_t paddedBytes = RoundUp(dataBytes, ALIGN);
-            uint16_t blockCount = static_cast<uint16_t>(paddedBytes / ALIGN);
+            uint16_t byteCount = static_cast<uint16_t>(dataBytes);
 
-            AscendC::DataCopyParams copyParams = {1, blockCount, 0, 0};
+            AscendC::DataCopyParams copyParams = {1, byteCount, 0, 0};
             int64_t srcByteOffset = static_cast<int64_t>(srcRow) * rowBytes_;
             int64_t dstByteOffset = static_cast<int64_t>(dstRow) * rowBytes_;
 
