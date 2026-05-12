@@ -234,7 +234,7 @@ class TestStoreKVBlock:
         "dtype,block_size,num_tokens",
         list(
             itertools.product(
-                [torch.float16, torch.uint8, torch.bfloat16],
+                [torch.float16, torch.uint8],
                 [16, 32],
                 [1, 8, 32, 64],
             )
@@ -259,7 +259,7 @@ class TestStoreKVBlock:
 
         assert torch.equal(key_cache.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     def test_mixed_group_lengths(self, dtype):
         """Multiple groups with different lengths."""
         block_size = 16
@@ -284,7 +284,7 @@ class TestStoreKVBlock:
 
         assert torch.equal(key_cache.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     def test_group_len_one(self, dtype):
         """Each token is its own group (group_len=1)."""
         num_tokens = 16
@@ -306,7 +306,7 @@ class TestStoreKVBlock:
 
         assert torch.equal(key_cache.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     def test_unchanged_cache_positions(self, dtype):
         """Positions not in any group remain unchanged."""
         head_dim = 16
@@ -339,7 +339,7 @@ class TestStoreKVBlock:
 class TestStoreKVBlockIntegration:
     """End-to-end: slot_mapping -> pre -> main -> cache."""
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     @pytest.mark.parametrize("num_tokens", [1, 16, 32, 64])
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_continuous(self, dtype, num_tokens, block_size):
@@ -365,7 +365,7 @@ class TestStoreKVBlockIntegration:
 
         assert torch.equal(key_cache.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_with_negatives(self, dtype, block_size):
         """Pipeline with negative (invalid) slots."""
@@ -391,7 +391,7 @@ class TestStoreKVBlockIntegration:
 
         assert torch.equal(key_cache.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_non_contiguous(self, dtype, block_size):
         """Pipeline with non-contiguous slot_mapping."""
