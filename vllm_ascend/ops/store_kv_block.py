@@ -57,22 +57,19 @@ def store_kv_block(
     group_key_idx: torch.Tensor,
     group_key_cache_idx: torch.Tensor,
     block_size: int,
-) -> torch.Tensor:
-    """Copy KV data into KV cache using precomputed grouped metadata.
+) -> None:
+    """Copy KV data into KV cache in-place using precomputed grouped metadata.
 
     Each group g copies group_len[g] elements from key[group_key_idx[g]]
-    into key_cache[group_key_cache_idx[g]].
+    into key_cache[group_key_cache_idx[g]].  key_cache is modified in-place.
 
     Args:
         key:                KV input tensor   [num_tokens, head_dim] on NPU.
-        key_cache:          KV cache tensor   [...] on NPU.
+        key_cache:          KV cache tensor   [...] on NPU (mutated in-place).
         group_len:          Group lengths     [num_groups] int32 on NPU.
         group_key_idx:      Source starts     [num_groups] int32 on NPU.
         group_key_cache_idx: Destination starts [num_groups] int32 on NPU.
         block_size:         KV cache block size.
-
-    Returns:
-        Updated key cache tensor (same shape/dtype as key_cache).
     """
-    return torch.ops._C_ascend.npu_store_kv_block(
+    torch.ops._C_ascend.npu_store_kv_block(
         key, key_cache, group_len, group_key_idx, group_key_cache_idx, block_size)

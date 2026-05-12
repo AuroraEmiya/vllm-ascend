@@ -23,6 +23,18 @@ import torch
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _make_rand(shape, dtype):
+    """Create a random tensor of any supported dtype."""
+    if dtype in (torch.uint8, torch.int8):
+        return torch.randint(0, 128, shape, dtype=dtype)
+    return torch.randn(shape, dtype=dtype)
+
+
+# ============================================================================
 # Reference Implementations
 # ============================================================================
 
@@ -220,7 +232,7 @@ class TestStoreKVBlock:
         "dtype,block_size,num_tokens",
         list(
             itertools.product(
-                [torch.float16],
+                [torch.float16, torch.uint8, torch.bfloat16],
                 [16, 32],
                 [1, 8, 32, 64],
             )
@@ -228,14 +240,14 @@ class TestStoreKVBlock:
     )
     def test_correctness_single_group(self, dtype, block_size, num_tokens):
         """Single group: all tokens in one contiguous copy."""
-        key = torch.randn(num_tokens, 128, dtype=dtype).npu()
+        key = _make_rand((num_tokens, 128), dtype).npu()
         key_cache = torch.zeros(256, 128, dtype=dtype).npu()
 
         group_len = torch.tensor([num_tokens], dtype=torch.int32).npu()
         group_key_idx = torch.tensor([0], dtype=torch.int32).npu()
         group_key_cache_idx = torch.tensor([0], dtype=torch.int32).npu()
 
-        out = torch.ops._C_ascend.npu_store_kv_block(
+        torch.ops._C_ascend.npu_store_kv_block(
             key, key_cache, group_len, group_key_idx, group_key_cache_idx,
             block_size)
 
@@ -243,17 +255,15 @@ class TestStoreKVBlock:
             key.cpu(), key_cache.cpu(), group_len.cpu(),
             group_key_idx.cpu(), group_key_cache_idx.cpu())
 
-        assert out.dtype == key_cache.dtype
-        assert out.shape == key_cache.shape
-        assert torch.equal(out.cpu(), expected)
+        assert torch.equal(key_cache.cpu(), expected)
 
-    @pytest.mark.parametrize("dtype", [torch.float16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
     def test_mixed_group_lengths(self, dtype):
         """Multiple groups with different lengths."""
         block_size = 16
         num_tokens = 30
         head_dim = 64
-        key = torch.randn(num_tokens, head_dim, dtype=dtype).npu()
+        key = _make_rand((num_tokens, head_dim), dtype).npu()
         key_cache = torch.zeros(200, head_dim, dtype=dtype).npu()
 
         # Groups: 10, 5, 15
@@ -262,7 +272,7 @@ class TestStoreKVBlock:
         group_key_cache_idx = torch.tensor(
             [0, 30, 60], dtype=torch.int32).npu()
 
-        out = torch.ops._C_ascend.npu_store_kv_block(
+        torch.ops._C_ascend.npu_store_kv_block(
             key, key_cache, group_len, group_key_idx, group_key_cache_idx,
             block_size)
 
@@ -270,51 +280,53 @@ class TestStoreKVBlock:
             key.cpu(), key_cache.cpu(), group_len.cpu(),
             group_key_idx.cpu(), group_key_cache_idx.cpu())
 
-        assert torch.equal(out.cpu(), expected)
+        assert torch.equal(key_cache.cpu(), expected)
 
-    def test_group_len_one(self):
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    def test_group_len_one(self, dtype):
         """Each token is its own group (group_len=1)."""
         num_tokens = 16
         head_dim = 32
-        key = torch.randn(num_tokens, head_dim, dtype=torch.float16).npu()
-        key_cache = torch.zeros(100, head_dim, dtype=torch.float16).npu()
+        key = _make_rand((num_tokens, head_dim), dtype).npu()
+        key_cache = torch.zeros(100, head_dim, dtype=dtype).npu()
 
         group_len = torch.ones(num_tokens, dtype=torch.int32).npu()
         group_key_idx = torch.arange(num_tokens, dtype=torch.int32).npu()
         group_key_cache_idx = torch.arange(
             0, num_tokens * 3, 3, dtype=torch.int32).npu()
 
-        out = torch.ops._C_ascend.npu_store_kv_block(
-            key, key_cache, group_len, group_key_idx, group_key_cache_idx, 16)
-
         expected = reference_store_kv_block(
             key.cpu(), key_cache.cpu(), group_len.cpu(),
             group_key_idx.cpu(), group_key_cache_idx.cpu())
 
-        assert torch.equal(out.cpu(), expected)
+        torch.ops._C_ascend.npu_store_kv_block(
+            key, key_cache, group_len, group_key_idx, group_key_cache_idx, 16)
 
-    def test_unchanged_cache_positions(self):
+        assert torch.equal(key_cache.cpu(), expected)
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
+    def test_unchanged_cache_positions(self, dtype):
         """Positions not in any group remain unchanged."""
         head_dim = 16
-        key = torch.randn(4, head_dim, dtype=torch.float16).npu()
-        key_cache = torch.randn(20, head_dim, dtype=torch.float16).npu()
+        key = _make_rand((4, head_dim), dtype).npu()
+        key_cache = _make_rand((20, head_dim), dtype).npu()
         original = key_cache.clone()
 
         group_len = torch.tensor([2, 2], dtype=torch.int32).npu()
         group_key_idx = torch.tensor([0, 2], dtype=torch.int32).npu()
         group_key_cache_idx = torch.tensor([0, 5], dtype=torch.int32).npu()
 
-        out = torch.ops._C_ascend.npu_store_kv_block(
+        torch.ops._C_ascend.npu_store_kv_block(
             key, key_cache, group_len, group_key_idx, group_key_cache_idx, 16)
 
         # Positions 0-1 and 5-6 should be from key
         assert torch.equal(
-            out.cpu()[:2], key.cpu()[:2])
+            key_cache.cpu()[:2], key.cpu()[:2])
         assert torch.equal(
-            out.cpu()[5:7], key.cpu()[2:4])
+            key_cache.cpu()[5:7], key.cpu()[2:4])
         # Positions 2-4, 7-19 should be unchanged
-        assert torch.equal(out.cpu()[2:5], original.cpu()[2:5])
-        assert torch.equal(out.cpu()[7:], original.cpu()[7:])
+        assert torch.equal(key_cache.cpu()[2:5], original.cpu()[2:5])
+        assert torch.equal(key_cache.cpu()[7:], original.cpu()[7:])
 
 
 # ============================================================================
@@ -325,21 +337,19 @@ class TestStoreKVBlock:
 class TestStoreKVBlockIntegration:
     """End-to-end: slot_mapping -> pre -> main -> cache."""
 
-    @pytest.mark.parametrize("dtype", [torch.float16])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
     @pytest.mark.parametrize("num_tokens", [1, 16, 32, 64])
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_continuous(self, dtype, num_tokens, block_size):
         """Fully continuous case: pre + main pass through."""
         head_dim = 64
-        key = torch.randn(num_tokens, head_dim, dtype=dtype).npu()
+        key = _make_rand((num_tokens, head_dim), dtype).npu()
         key_cache = torch.zeros(200, head_dim, dtype=dtype).npu()
 
         slot_mapping = torch.arange(num_tokens, dtype=torch.int32).npu()
 
         gl, gki, gkci = torch.ops._C_ascend.npu_store_kv_block_pre(
             slot_mapping, block_size)
-        out = torch.ops._C_ascend.npu_store_kv_block(
-            key, key_cache, gl, gki, gkci, block_size)
 
         # Reference: token-by-token from slot_mapping
         expected = key_cache.cpu().clone()
@@ -348,14 +358,17 @@ class TestStoreKVBlockIntegration:
             if s >= 0:
                 expected[s] = key.cpu()[t]
 
-        assert torch.equal(out.cpu(), expected)
+        torch.ops._C_ascend.npu_store_kv_block(
+            key, key_cache, gl, gki, gkci, block_size)
 
-    @pytest.mark.parametrize("dtype", [torch.float16])
+        assert torch.equal(key_cache.cpu(), expected)
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_with_negatives(self, dtype, block_size):
         """Pipeline with negative (invalid) slots."""
         head_dim = 32
-        key = torch.randn(6, head_dim, dtype=dtype).npu()
+        key = _make_rand((6, head_dim), dtype).npu()
         key_cache = torch.zeros(20, head_dim, dtype=dtype).npu()
 
         # Tokens 0,1 valid; 2 invalid; 3,4 valid; 5 invalid
@@ -364,8 +377,6 @@ class TestStoreKVBlockIntegration:
 
         gl, gki, gkci = torch.ops._C_ascend.npu_store_kv_block_pre(
             slot_mapping, block_size)
-        out = torch.ops._C_ascend.npu_store_kv_block(
-            key, key_cache, gl, gki, gkci, block_size)
 
         expected = key_cache.cpu().clone()
         for t in range(6):
@@ -373,22 +384,24 @@ class TestStoreKVBlockIntegration:
             if s >= 0:
                 expected[s] = key.cpu()[t]
 
-        assert torch.equal(out.cpu(), expected)
+        torch.ops._C_ascend.npu_store_kv_block(
+            key, key_cache, gl, gki, gkci, block_size)
 
+        assert torch.equal(key_cache.cpu(), expected)
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8, torch.bfloat16])
     @pytest.mark.parametrize("block_size", [16])
-    def test_full_pipeline_non_contiguous(self, block_size):
+    def test_full_pipeline_non_contiguous(self, dtype, block_size):
         """Pipeline with non-contiguous slot_mapping."""
         head_dim = 16
-        key = torch.randn(5, head_dim, dtype=torch.float16).npu()
-        key_cache = torch.zeros(50, head_dim, dtype=torch.float16).npu()
+        key = _make_rand((5, head_dim), dtype).npu()
+        key_cache = torch.zeros(50, head_dim, dtype=dtype).npu()
 
         slot_mapping = torch.tensor(
             [0, 10, 20, 30, 40], dtype=torch.int32).npu()
 
         gl, gki, gkci = torch.ops._C_ascend.npu_store_kv_block_pre(
             slot_mapping, block_size)
-        out = torch.ops._C_ascend.npu_store_kv_block(
-            key, key_cache, gl, gki, gkci, block_size)
 
         # Each token is its own group
         assert gl.cpu().tolist() == [1, 1, 1, 1, 1]
@@ -399,7 +412,10 @@ class TestStoreKVBlockIntegration:
             s = int(slot_mapping[t].item())
             expected[s] = key.cpu()[t]
 
-        assert torch.equal(out.cpu(), expected)
+        torch.ops._C_ascend.npu_store_kv_block(
+            key, key_cache, gl, gki, gkci, block_size)
+
+        assert torch.equal(key_cache.cpu(), expected)
 
     def test_empty_slot_mapping(self):
         """Empty slot_mapping produces empty groups."""

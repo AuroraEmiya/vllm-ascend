@@ -1062,7 +1062,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_store_kv_block_pre(
     return {groupLenOut, groupKeyIdxOut, groupKeyCacheIdxOut};
 }
 
-at::Tensor npu_store_kv_block(
+void npu_store_kv_block(
     const at::Tensor& keyIn,
     const at::Tensor& keyCacheIn,
     const at::Tensor& groupLen,
@@ -1080,9 +1080,7 @@ at::Tensor npu_store_kv_block(
     TORCH_CHECK(groupKeyCacheIdx.dtype() == at::kInt, "groupKeyCacheIdx must be int32");
     TORCH_CHECK(blockSize > 0, "blockSize must be positive");
 
-    at::Tensor keyCacheOut = at::empty_like(keyCacheIn);
-    EXEC_NPU_CMD(aclnnStoreKVBlock, keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, blockSize, keyCacheOut);
-    return keyCacheOut;
+    EXEC_NPU_CMD(aclnnStoreKVBlock, keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, blockSize, keyCacheIn);
 }
 
 } // namespace vllm_ascend
@@ -1385,11 +1383,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     );
     ops.impl("npu_lightning_indexer_quant", torch::kPrivateUse1, &vllm_ascend::npu_lightning_indexer_quant);
 
-    // StoreKVBlock — grouped KV cache store (P-stage)
+    // StoreKVBlock — grouped KV cache store (P-stage, in-place on keyCacheIn)
     ops.def(
-        "npu_store_kv_block(Tensor keyIn, Tensor keyCacheIn, "
+        "npu_store_kv_block(Tensor keyIn, Tensor(a!) keyCacheIn, "
         "                   Tensor groupLen, Tensor groupKeyIdx, Tensor groupKeyCacheIdx, "
-        "                   int blockSize) -> Tensor"
+        "                   int blockSize) -> ()"
     );
     ops.impl("npu_store_kv_block", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_block);
 

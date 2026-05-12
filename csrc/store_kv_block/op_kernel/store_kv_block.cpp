@@ -1,13 +1,17 @@
 /**
  * @file store_kv_block.cpp
- * @brief StoreKVBlock AICore kernel - grouped KV cache store
+ * @brief StoreKVBlock AICore kernel — grouped KV cache store (in-place)
  *
- * Uses precomputed group metadata to copy KV data from keyIn into keyCache.
- * Each group g defines a contiguous copy:
- *   dst = keyCacheOut[groupKeyCacheIdx[g] : groupKeyCacheIdx[g] + groupLen[g]]
- *   src = keyIn[groupKeyIdx[g] : groupKeyIdx[g] + groupLen[g]]
+ * Copies row-contiguous segments from keyIn into keyCacheIn using precomputed
+ * group metadata.  keyCacheIn is mutated in-place; rows not covered by any
+ * group retain their original values.
  *
- * Multi-core: groups are distributed across cores by group count.
+ * Data flow (per group g):
+ *   src = keyIn        [ groupSrcIdx[g] : groupSrcIdx[g] + groupLen[g] ]
+ *   dst = keyCacheIn   [ groupDstIdx[g] : groupDstIdx[g] + groupLen[g] ]
+ *   Copy src rows → dst rows via UB bounce buffer.
+ *
+ * Multi-core: groups are distributed round-robin across active cores.
  */
 
 #include "kernel_utils.h"
@@ -17,99 +21,93 @@ using namespace AscendC;
 
 class StoreKVBlock {
 public:
-    __aicore__ inline StoreKVBlock(StoreKVBlockTilingData tilingData)
-        : numTokens_(tilingData.numTokens),
-          headDim_(tilingData.headDim),
-          numGroups_(tilingData.numGroups),
-          blockSize_(tilingData.blockSize),
-          coreNum_(tilingData.numCore)
-        {}
+    __aicore__ inline StoreKVBlock(StoreKVBlockTilingData tiling)
+        : rowBytes_(tiling.rowBytes),
+          maxGroupLen_(tiling.maxGroupLen),
+          groupCount_(tiling.groupCount),
+          coreCount_(tiling.coreCount)
+    {}
 
     __aicore__ inline void Init(GM_ADDR keyIn, GM_ADDR keyCacheIn,
-                                GM_ADDR groupLen, GM_ADDR groupKeyIdx,
-                                GM_ADDR groupKeyCacheIdx, GM_ADDR keyCacheOut)
+                                GM_ADDR groupLen, GM_ADDR groupSrcIdx,
+                                GM_ADDR groupDstIdx, GM_ADDR /*keyCacheOut*/)
     {
         AscendC::TPipe pipe;
-        pipe.InitBuffer(ubBuf_, RoundUp(blockSize_ * headDim_, ALIGN));
-        tmpTensor_ = ubBuf_.Get<uint8_t>();
-        keyInGm_.SetGlobalBuffer((__gm__ uint8_t *)keyIn);
-        keyCacheInGm_.SetGlobalBuffer((__gm__ uint8_t *)keyCacheIn);
-        keyCacheOutGm_.SetGlobalBuffer((__gm__ uint8_t *)keyCacheOut);
+        pipe.InitBuffer(ubBuf_, RoundUp(maxGroupLen_ * rowBytes_, ALIGN));
+        ubTensor_ = ubBuf_.Get<uint8_t>();
+
+        srcGm_.SetGlobalBuffer((__gm__ uint8_t *)keyIn);
+        cacheGm_.SetGlobalBuffer((__gm__ uint8_t *)keyCacheIn);
         groupLenGm_.SetGlobalBuffer((__gm__ int32_t *)groupLen);
-        groupKeyIdxGm_.SetGlobalBuffer((__gm__ int32_t *)groupKeyIdx);
-        groupKeyCacheIdxGm_.SetGlobalBuffer((__gm__ int32_t *)groupKeyCacheIdx);
+        groupSrcGm_.SetGlobalBuffer((__gm__ int32_t *)groupSrcIdx);
+        groupDstGm_.SetGlobalBuffer((__gm__ int32_t *)groupDstIdx);
     }
 
     __aicore__ inline void Process()
     {
-        uint32_t actualCoreNum = numGroups_ <= coreNum_ ? numGroups_ : coreNum_;
-        uint32_t groupsPerCore = numGroups_ / actualCoreNum;
-        uint32_t leftGroups = numGroups_ - groupsPerCore * actualCoreNum;
+        uint32_t activeCores = Min(groupCount_, coreCount_);
+        uint32_t basePerCore = groupCount_ / activeCores;
+        uint32_t remainder = groupCount_ - basePerCore * activeCores;
 
-        uint32_t blockIdx = GetBlockIdx();
-        uint32_t myNumGroups = blockIdx < leftGroups ? groupsPerCore + 1 : groupsPerCore;
-        uint32_t myStartGroup = blockIdx < leftGroups
-            ? (groupsPerCore * blockIdx + blockIdx)
-            : (groupsPerCore * blockIdx + leftGroups);
-
-        if (blockIdx >= actualCoreNum) {
+        uint32_t coreId = GetBlockIdx();
+        if (coreId >= activeCores) {
             return;
         }
 
-        for (uint32_t g = 0; g < myNumGroups; g++) {
-            uint32_t groupId = myStartGroup + g;
-            int32_t length = groupLenGm_.GetValue(groupId);
-            int32_t srcIdx = groupKeyIdxGm_.GetValue(groupId);
-            int32_t dstIdx = groupKeyCacheIdxGm_.GetValue(groupId);
+        uint32_t myGroupCount = basePerCore + (coreId < remainder ? 1 : 0);
+        uint32_t myStartGroup = basePerCore * coreId + Min(coreId, remainder);
 
-            if (length <= 0) {
+        for (uint32_t g = 0; g < myGroupCount; g++) {
+            uint32_t groupId = myStartGroup + g;
+            int32_t groupLen = groupLenGm_.GetValue(groupId);
+            if (groupLen <= 0) {
                 continue;
             }
+            int32_t srcRow = groupSrcGm_.GetValue(groupId);
+            int32_t dstRow = groupDstGm_.GetValue(groupId);
 
-            uint32_t copyBytes = static_cast<uint32_t>(length) * headDim_;
-            uint32_t alignedBytes = RoundUp(copyBytes, ALIGN);
-            uint16_t numBlocks = static_cast<uint16_t>(alignedBytes / ALIGN);
+            uint32_t dataBytes = static_cast<uint32_t>(groupLen) * rowBytes_;
+            uint32_t paddedBytes = RoundUp(dataBytes, ALIGN);
+            uint16_t blockCount = static_cast<uint16_t>(paddedBytes / ALIGN);
 
-            AscendC::DataCopyParams copyParams = {1, numBlocks, 0, 0};
-            int64_t srcByteOffset = static_cast<int64_t>(srcIdx) * headDim_;
-            int64_t dstByteOffset = static_cast<int64_t>(dstIdx) * headDim_;
+            AscendC::DataCopyParams copyParams = {1, blockCount, 0, 0};
+            int64_t srcByteOffset = static_cast<int64_t>(srcRow) * rowBytes_;
+            int64_t dstByteOffset = static_cast<int64_t>(dstRow) * rowBytes_;
 
-            DataCopy(tmpTensor_, keyInGm_[srcByteOffset], copyParams);
+            DataCopy(ubTensor_, srcGm_[srcByteOffset], copyParams);
             SetFlag<HardEvent::MTE2_MTE3>(EVENT_ID0);
             WaitFlag<HardEvent::MTE2_MTE3>(EVENT_ID0);
-            DataCopy(keyCacheOutGm_[dstByteOffset], tmpTensor_, copyParams);
+            DataCopy(cacheGm_[dstByteOffset], ubTensor_, copyParams);
             SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
             WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
         }
     }
 
 private:
-    GlobalTensor<uint8_t> keyInGm_;
-    GlobalTensor<uint8_t> keyCacheInGm_;
+    GlobalTensor<uint8_t> srcGm_;
+    GlobalTensor<uint8_t> cacheGm_;
     GlobalTensor<int32_t> groupLenGm_;
-    GlobalTensor<int32_t> groupKeyIdxGm_;
-    GlobalTensor<int32_t> groupKeyCacheIdxGm_;
-    GlobalTensor<uint8_t> keyCacheOutGm_;
+    GlobalTensor<int32_t> groupSrcGm_;
+    GlobalTensor<int32_t> groupDstGm_;
     TBuf<TPosition::VECCALC> ubBuf_;
-    LocalTensor<uint8_t> tmpTensor_;
+    LocalTensor<uint8_t> ubTensor_;
 
-    uint32_t numTokens_{0};
-    uint32_t headDim_{0};
-    uint32_t numGroups_{0};
-    uint32_t blockSize_{0};
-    uint32_t coreNum_{0};
+    uint32_t rowBytes_{0};
+    uint32_t maxGroupLen_{0};
+    uint32_t groupCount_{0};
+    uint32_t coreCount_{0};
 };
 
 extern "C" __global__ __aicore__ void store_kv_block(
     GM_ADDR keyIn, GM_ADDR keyCacheIn,
-    GM_ADDR groupLen, GM_ADDR groupKeyIdx,
-    GM_ADDR groupKeyCacheIdx, GM_ADDR keyCacheOut,
+    GM_ADDR groupLen, GM_ADDR groupSrcIdx,
+    GM_ADDR groupDstIdx, GM_ADDR keyCacheOut,
     GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     GET_TILING_DATA(tilingData, tiling);
 
     StoreKVBlock op(tilingData);
-    op.Init(keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, keyCacheOut);
+    op.Init(keyIn, keyCacheIn, groupLen, groupSrcIdx, groupDstIdx, keyCacheOut);
     op.Process();
 }

@@ -680,7 +680,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_store_kv_block_pre_meta(
     return {groupLen, groupKeyIdx, groupKeyCacheIdx};
 }
 
-at::Tensor npu_store_kv_block_meta(
+void npu_store_kv_block_meta(
     const at::Tensor& keyIn,
     const at::Tensor& keyCacheIn,
     const at::Tensor& groupLen,
@@ -688,8 +688,7 @@ at::Tensor npu_store_kv_block_meta(
     const at::Tensor& groupKeyCacheIdx,
     int64_t blockSize)
 {
-    at::Tensor output = at::empty(keyCacheIn.sizes(), keyCacheIn.options().dtype(keyCacheIn.dtype()).device(keyCacheIn.device()));
-    return output;
+    // In-place op: keyCacheIn is mutated, no output tensor needed.
 }
 
 } // namespace meta
