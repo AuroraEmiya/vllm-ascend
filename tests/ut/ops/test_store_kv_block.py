@@ -20,6 +20,8 @@ import itertools
 
 import pytest
 import torch
+import torch_npu
+import vllm_ascend.vllm_ascend_C
 
 
 # ============================================================================
