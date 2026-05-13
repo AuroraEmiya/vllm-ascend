@@ -309,7 +309,7 @@ class TestStoreKVBlock:
     @pytest.mark.parametrize("dtype", [torch.float16, torch.uint8])
     def test_unchanged_cache_positions(self, dtype):
         """Positions not in any group remain unchanged."""
-        head_dim = 16
+        head_dim = 32
         key = _make_rand((4, head_dim), dtype).npu()
         key_cache = _make_rand((20, head_dim), dtype).npu()
         original = key_cache.clone()
@@ -395,7 +395,7 @@ class TestStoreKVBlockIntegration:
     @pytest.mark.parametrize("block_size", [16])
     def test_full_pipeline_non_contiguous(self, dtype, block_size):
         """Pipeline with non-contiguous slot_mapping."""
-        head_dim = 16
+        head_dim = 32
         key = _make_rand((5, head_dim), dtype).npu()
         key_cache = torch.zeros(50, head_dim, dtype=dtype).npu()
 
