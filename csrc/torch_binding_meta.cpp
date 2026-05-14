@@ -699,6 +699,15 @@ void npu_store_kv_decode_meta(
     // In-place op: single-token decode, keyCacheIn mutated in-place.
 }
 
+void npu_store_kv_cache_meta(
+    const at::Tensor& keyIn,
+    const at::Tensor& keyCacheIn,
+    const at::Tensor& slotMapping,
+    int64_t blockSize)
+{
+    // In-place op: keyCacheIn mutated. Routes P/D stage internally.
+}
+
 } // namespace meta
 } // namespace vllm_ascend
 
@@ -716,6 +725,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_store_kv_block_pre", &vllm_ascend::meta::npu_store_kv_block_pre_meta);
     // StoreKVDecode meta
     ops.impl("npu_store_kv_decode", &vllm_ascend::meta::npu_store_kv_decode_meta);
+    // StoreKVCache meta (unified P+D)
+    ops.impl("npu_store_kv_cache", &vllm_ascend::meta::npu_store_kv_cache_meta);
 }
 }
 #else
@@ -780,6 +791,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_store_kv_block_pre", &vllm_ascend::meta::npu_store_kv_block_pre_meta);
     // StoreKVDecode meta
     ops.impl("npu_store_kv_decode", &vllm_ascend::meta::npu_store_kv_decode_meta);
+    // StoreKVCache meta (unified P+D)
+    ops.impl("npu_store_kv_cache", &vllm_ascend::meta::npu_store_kv_cache_meta);
 }
 }
 #endif

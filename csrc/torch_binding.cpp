@@ -46,6 +46,7 @@
 #include "lightning_indexer_quant/lightning_indexer_quant_torch_adpt.h"
 #include "causal_conv1d_v310/causal_conv1d_310_torch_adpt.h"
 #include "recurrent_gated_delta_rule_v310/recurrent_gated_delta_rule_310_torch_adpt.h"
+#include "store_kv_cache/store_kv_cache_torch_adpt.h"
 #include <c10/core/Device.h>
 #include <c10/core/Scalar.h>
 #include <c10/util/Exception.h>
@@ -1417,5 +1418,12 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "npu_store_kv_decode(Tensor keyIn, Tensor(a!) keyCacheIn, Tensor slotPos) -> ()"
     );
     ops.impl("npu_store_kv_decode", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_decode);
+
+    // StoreKVCache — unified KV cache store (auto-routes P-stage vs D-stage)
+    ops.def(
+        "npu_store_kv_cache(Tensor keyIn, Tensor(a!) keyCacheIn, "
+        "                   Tensor slotMapping, int blockSize) -> ()"
+    );
+    ops.impl("npu_store_kv_cache", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_cache);
 }
 #endif
