@@ -1071,8 +1071,8 @@ void npu_store_kv_block(
     const at::Tensor& groupKeyCacheIdx,
     int64_t blockSize)
 {
-    TORCH_CHECK(keyIn.dim() == 2, "keyIn must be 2D [numTokens, headDim]");
-    TORCH_CHECK(keyCacheIn.dim() >= 2, "keyCacheIn must be at least 2D");
+    TORCH_CHECK(keyIn.dim() >= 1, "keyIn must have at least 1 dimension");
+    TORCH_CHECK(keyCacheIn.dim() >= 1, "keyCacheIn must have at least 1 dimension");
     TORCH_CHECK(groupLen.dim() == 1, "groupLen must be 1D");
     TORCH_CHECK(groupKeyIdx.dim() == 1, "groupKeyIdx must be 1D");
     TORCH_CHECK(groupKeyCacheIdx.dim() == 1, "groupKeyCacheIdx must be 1D");
@@ -1089,9 +1089,9 @@ void npu_store_kv_decode(
     const at::Tensor& keyCacheIn,
     const at::Tensor& slotPos)
 {
-    TORCH_CHECK(keyIn.dim() == 2, "keyIn must be 2D [1, headDim]");
+    TORCH_CHECK(keyIn.dim() >= 1, "keyIn must have at least 1 dimension");
     TORCH_CHECK(keyIn.size(0) == 1, "keyIn must have exactly 1 token for decode");
-    TORCH_CHECK(keyCacheIn.dim() >= 2, "keyCacheIn must be at least 2D");
+    TORCH_CHECK(keyCacheIn.dim() >= 1, "keyCacheIn must have at least 1 dimension");
     TORCH_CHECK(slotPos.numel() == 1, "slotPos must be a scalar tensor");
     TORCH_CHECK(slotPos.dtype() == at::kInt, "slotPos must be int32");
 

@@ -13,8 +13,12 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
 {
     StoreKVDecodeTilingData tiling;
 
+    // rowElems = product of all dims after dim 0 (handles 2D..4D keyIn)
     auto keyShape = context->GetInputShape(0)->GetStorageShape();
-    uint32_t rowElems = static_cast<uint32_t>(keyShape.GetDim(1));
+    uint32_t rowElems = 1;
+    for (int i = 1; i < keyShape.GetDimNum(); i++) {
+        rowElems *= static_cast<uint32_t>(keyShape.GetDim(i));
+    }
 
     auto keyInDtype = context->GetInputDesc(0)->GetDataType();
     uint32_t elemBytes = (keyInDtype == ge::DT_FLOAT16 || keyInDtype == ge::DT_BF16) ? 2 : 1;

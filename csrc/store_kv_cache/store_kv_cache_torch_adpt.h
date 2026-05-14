@@ -23,8 +23,8 @@ namespace vllm_ascend {
 
 inline void npu_store_kv_cache(const at::Tensor& keyIn, const at::Tensor& keyCacheIn,
                                 const at::Tensor& slotMapping, int64_t blockSize) {
-    TORCH_CHECK(keyIn.dim() == 2, "keyIn must be 2D [numTokens, headDim]");
-    TORCH_CHECK(keyCacheIn.dim() >= 2, "keyCacheIn must be at least 2D");
+    TORCH_CHECK(keyIn.dim() >= 1, "keyIn must have at least 1 dimension");
+    TORCH_CHECK(keyCacheIn.dim() >= 1, "keyCacheIn must have at least 1 dimension");
     TORCH_CHECK(slotMapping.dim() == 1, "slotMapping must be 1D");
     TORCH_CHECK(slotMapping.size(0) == keyIn.size(0),
                 "slotMapping and keyIn must have same numTokens");

@@ -15,11 +15,14 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
 
     StoreKVBlockTilingData tiling;
 
-    // keyIn shape: [numTokens, rowElems] where rowElems = numHeads * headSize
+    // keyIn shape: [numTokens, ...] — rowElems = product of all dims after dim 0
     auto keyShape = context->GetInputShape(0)->GetStorageShape();
     auto groupLenShape = context->GetInputShape(2)->GetStorageShape();
 
-    uint32_t rowElems = static_cast<uint32_t>(keyShape.GetDim(1));
+    uint32_t rowElems = 1;
+    for (int i = 1; i < keyShape.GetDimNum(); i++) {
+        rowElems *= static_cast<uint32_t>(keyShape.GetDim(i));
+    }
     uint32_t groupCount = static_cast<uint32_t>(groupLenShape.GetDim(0));
     uint32_t coreCount = ascendcPlatform.GetCoreNumAiv();
 
