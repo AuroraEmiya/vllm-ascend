@@ -691,6 +691,14 @@ void npu_store_kv_block_meta(
     // In-place op: keyCacheIn is mutated, no output tensor needed.
 }
 
+void npu_store_kv_decode_meta(
+    const at::Tensor& keyIn,
+    const at::Tensor& keyCacheIn,
+    const at::Tensor& slotPos)
+{
+    // In-place op: single-token decode, keyCacheIn mutated in-place.
+}
+
 } // namespace meta
 } // namespace vllm_ascend
 
@@ -706,6 +714,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_recurrent_gated_delta_rule_310", &vllm_ascend::meta::npu_recurrent_gated_delta_rule_310_meta);
     // StoreKVBlockPre meta
     ops.impl("npu_store_kv_block_pre", &vllm_ascend::meta::npu_store_kv_block_pre_meta);
+    // StoreKVDecode meta
+    ops.impl("npu_store_kv_decode", &vllm_ascend::meta::npu_store_kv_decode_meta);
 }
 }
 #else
@@ -768,6 +778,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_store_kv_block", &vllm_ascend::meta::npu_store_kv_block_meta);
     // StoreKVBlockPre meta
     ops.impl("npu_store_kv_block_pre", &vllm_ascend::meta::npu_store_kv_block_pre_meta);
+    // StoreKVDecode meta
+    ops.impl("npu_store_kv_decode", &vllm_ascend::meta::npu_store_kv_decode_meta);
 }
 }
 #endif

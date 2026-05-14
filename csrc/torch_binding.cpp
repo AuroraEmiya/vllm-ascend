@@ -1083,6 +1083,20 @@ void npu_store_kv_block(
     EXEC_NPU_CMD(aclnnStoreKVBlock, keyIn, keyCacheIn, groupLen, groupKeyIdx, groupKeyCacheIdx, blockSize, keyCacheIn);
 }
 
+void npu_store_kv_decode(
+    const at::Tensor& keyIn,
+    const at::Tensor& keyCacheIn,
+    const at::Tensor& slotPos)
+{
+    TORCH_CHECK(keyIn.dim() == 2, "keyIn must be 2D [1, headDim]");
+    TORCH_CHECK(keyIn.size(0) == 1, "keyIn must have exactly 1 token for decode");
+    TORCH_CHECK(keyCacheIn.dim() >= 2, "keyCacheIn must be at least 2D");
+    TORCH_CHECK(slotPos.numel() == 1, "slotPos must be a scalar tensor");
+    TORCH_CHECK(slotPos.dtype() == at::kInt, "slotPos must be int32");
+
+    EXEC_NPU_CMD(aclnnStoreKVDecode, keyIn, keyCacheIn, slotPos, keyCacheIn);
+}
+
 } // namespace vllm_ascend
 
 #ifdef ASCEND_PLATFORM_310P
@@ -1397,5 +1411,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "-> (Tensor groupLen, Tensor groupKeyIdx, Tensor groupKeyCacheIdx)"
     );
     ops.impl("npu_store_kv_block_pre", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_block_pre);
+
+    // StoreKVDecode — single-token KV cache store (D-stage, in-place)
+    ops.def(
+        "npu_store_kv_decode(Tensor keyIn, Tensor(a!) keyCacheIn, Tensor slotPos) -> ()"
+    );
+    ops.impl("npu_store_kv_decode", torch::kPrivateUse1, &vllm_ascend::npu_store_kv_decode);
 }
 #endif
