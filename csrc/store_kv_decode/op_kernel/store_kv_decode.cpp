@@ -11,7 +11,7 @@
  *   Copy src → dst via UB bounce buffer.
  */
 
-#include "../store_kv_block/op_kernel/kernel_utils.h"
+#include "kernel_utils.h"
 
 constexpr int32_t ALIGN = 32;
 using namespace AscendC;

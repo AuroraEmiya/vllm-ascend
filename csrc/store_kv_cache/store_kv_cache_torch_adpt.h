@@ -87,7 +87,6 @@ inline void npu_store_kv_cache(const at::Tensor& keyIn, const at::Tensor& keyCac
         return;
     }
 
-    auto options = at::TensorOptions().dtype(at::kInt).device(slotMapping.device());
     at::Tensor groupLenOut = at::from_blob(
         const_cast<int32_t*>(groupLenVec.data()), {numGroups},
         at::TensorOptions().dtype(at::kInt).device(at::kCPU)).to(slotMapping.device());
