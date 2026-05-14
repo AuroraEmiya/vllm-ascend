@@ -17,6 +17,7 @@
 """Tests for store_kv_block and store_kv_block_pre operators."""
 
 import itertools
+import random
 
 import pytest
 import torch
@@ -428,3 +429,142 @@ class TestStoreKVBlockIntegration:
         assert gl.numel() == 0
         assert gki.numel() == 0
         assert gkci.numel() == 0
+
+
+# ============================================================================
+# Performance / Profiling Tests (for msprof)
+# ============================================================================
+
+
+class TestStoreKVBlockPerf:
+    """Long-sequence throughput tests suitable for msprof profiling.
+
+    Run with, e.g.:
+        pytest tests/ut/ops/test_store_kv_block.py::TestStoreKVBlockPerf -s
+    """
+
+    WARMUP = 3
+    REPEAT = 100
+
+    @pytest.mark.parametrize("num_tokens", [1024, 4096, 8192])
+    @pytest.mark.parametrize("block_size", [128])
+    @pytest.mark.parametrize("head_dim", [128])
+    @pytest.mark.parametrize("dtype", [torch.float16])
+    def test_prefill_continuous(self, dtype, block_size, head_dim, num_tokens):
+        """Fully-contiguous prefill: tokens 0..N-1 → slots 0..N-1."""
+        num_blocks = num_tokens // block_size + 16
+        total_slots = num_blocks * block_size
+
+        key = _make_rand((num_tokens, head_dim), dtype).npu()
+        key_cache = torch.zeros(total_slots, head_dim, dtype=dtype).npu()
+        slot_mapping = torch.arange(num_tokens, dtype=torch.int32).npu()
+
+        gl, gki, gkci = torch.ops._C_ascend.npu_store_kv_block_pre(
+            slot_mapping, block_size)
+
+        # warmup
+        for _ in range(self.WARMUP):
+            torch.ops._C_ascend.npu_store_kv_block(
+                key, key_cache, gl, gki, gkci, block_size)
+        torch.npu.synchronize()
+
+        start = torch.npu.Event(enable_timing=True)
+        end = torch.npu.Event(enable_timing=True)
+        start.record()
+        for _ in range(self.REPEAT):
+            torch.ops._C_ascend.npu_store_kv_block(
+                key, key_cache, gl, gki, gkci, block_size)
+        end.record()
+        torch.npu.synchronize()
+        elapsed_ms = start.elapsed_time(end) / self.REPEAT
+
+        # Verify correctness on final iteration
+        expected = key_cache.cpu().clone()
+        for t in range(num_tokens):
+            expected[t] = key.cpu()[t]
+        assert torch.equal(key_cache.cpu(), expected)
+        print(f"[cont] tokens={num_tokens:5d}  head_dim={head_dim:3d}  "
+              f"groups={gl.numel():4d}  avg={elapsed_ms:.3f} ms")
+
+    @pytest.mark.parametrize("num_tokens", [1024, 4096, 8192])
+    @pytest.mark.parametrize("block_size", [128])
+    @pytest.mark.parametrize("head_dim", [128])
+    @pytest.mark.parametrize("dtype", [torch.float16])
+    def test_prefill_gapped(self, dtype, block_size, head_dim, num_tokens):
+        """Gapped prefill: tokens scattered every other slot (worst grouping)."""
+        num_blocks = (num_tokens * 2) // block_size + 16
+        total_slots = num_blocks * block_size
+
+        key = _make_rand((num_tokens, head_dim), dtype).npu()
+        key_cache = torch.zeros(total_slots, head_dim, dtype=dtype).npu()
+        slot_mapping = torch.arange(0, num_tokens * 2, 2, dtype=torch.int32).npu()
+
+        gl, gki, gkci = torch.ops._C_ascend.npu_store_kv_block_pre(
+            slot_mapping, block_size)
+
+        # warmup
+        for _ in range(self.WARMUP):
+            torch.ops._C_ascend.npu_store_kv_block(
+                key, key_cache, gl, gki, gkci, block_size)
+        torch.npu.synchronize()
+
+        start = torch.npu.Event(enable_timing=True)
+        end = torch.npu.Event(enable_timing=True)
+        start.record()
+        for _ in range(self.REPEAT):
+            torch.ops._C_ascend.npu_store_kv_block(
+                key, key_cache, gl, gki, gkci, block_size)
+        end.record()
+        torch.npu.synchronize()
+        elapsed_ms = start.elapsed_time(end) / self.REPEAT
+
+        # Verify correctness on final iteration
+        expected = key_cache.cpu().clone()
+        for t in range(num_tokens):
+            expected[t * 2] = key.cpu()[t]
+        assert torch.equal(key_cache.cpu(), expected)
+        print(f"[gap] tokens={num_tokens:5d}  head_dim={head_dim:3d}  "
+              f"groups={gl.numel():4d}  avg={elapsed_ms:.3f} ms")
+
+    @pytest.mark.parametrize("num_tokens", [1024])
+    @pytest.mark.parametrize("block_size", [128])
+    @pytest.mark.parametrize("head_dim", [128, 256])
+    @pytest.mark.parametrize("dtype", [torch.float16])
+    def test_prefill_shuffled(self, dtype, block_size, head_dim, num_tokens):
+        """Shuffled slot_mapping: random destination order, group_len=1 per token."""
+        num_blocks = num_tokens // block_size + 16
+        total_slots = num_blocks * block_size
+
+        key = _make_rand((num_tokens, head_dim), dtype).npu()
+        key_cache = torch.zeros(total_slots, head_dim, dtype=dtype).npu()
+
+        slots = list(range(num_tokens))
+        random.shuffle(slots)
+        slot_mapping = torch.tensor(slots, dtype=torch.int32).npu()
+
+        gl, gki, gkci = torch.ops._C_ascend.npu_store_kv_block_pre(
+            slot_mapping, block_size)
+
+        # warmup
+        for _ in range(self.WARMUP):
+            torch.ops._C_ascend.npu_store_kv_block(
+                key, key_cache, gl, gki, gkci, block_size)
+        torch.npu.synchronize()
+
+        start = torch.npu.Event(enable_timing=True)
+        end = torch.npu.Event(enable_timing=True)
+        start.record()
+        for _ in range(self.REPEAT):
+            torch.ops._C_ascend.npu_store_kv_block(
+                key, key_cache, gl, gki, gkci, block_size)
+        end.record()
+        torch.npu.synchronize()
+        elapsed_ms = start.elapsed_time(end) / self.REPEAT
+
+        # Verify correctness on final iteration
+        expected = key_cache.cpu().clone()
+        for t, s in enumerate(slots):
+            expected[s] = key.cpu()[t]
+        assert torch.equal(key_cache.cpu(), expected)
+        print(f"[shuf] tokens={num_tokens:5d}  head_dim={head_dim:3d}  "
+              f"groups={gl.numel():4d}  avg={elapsed_ms:.3f} ms")
