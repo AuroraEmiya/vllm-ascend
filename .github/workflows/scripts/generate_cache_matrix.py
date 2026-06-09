@@ -27,6 +27,8 @@ except ImportError:
     print("pyyaml is required: pip install pyyaml", file=sys.stderr)
     sys.exit(1)
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 def warn(msg: str) -> None:
     print(f"::warning::{msg}", file=sys.stderr)
@@ -66,8 +68,9 @@ def os_type(df: str) -> str:
 
 def image_tag(df: str) -> str | None:
     """Read CANN image tag from a Dockerfile's FROM line."""
+    df_path = str(REPO_ROOT / df)
     try:
-        out = subprocess.check_output(["grep", "-m1", "^FROM", df], stderr=subprocess.DEVNULL).decode().strip()
+        out = subprocess.check_output(["grep", "-m1", "^FROM", df_path], stderr=subprocess.DEVNULL).decode().strip()
         return out.split(":")[-1]
     except (subprocess.CalledProcessError, FileNotFoundError, IndexError):
         return None
@@ -82,7 +85,7 @@ def main() -> None:
     # ── 1. discover Dockerfiles ──────────────────────────────────────────
     # Primary source: schedule_image_build_and_push.yaml
     dockerfiles: dict[str, bool] = {}
-    config_path = Path(".github/workflows/schedule_image_build_and_push.yaml")
+    config_path = REPO_ROOT / ".github/workflows/schedule_image_build_and_push.yaml"
     data = None
 
     if config_path.exists():
@@ -105,6 +108,7 @@ def main() -> None:
             "No Dockerfiles found in schedule_image_build_and_push.yaml; "
             "falling back to scanning root Dockerfile[suffix] pattern."
         )
+        os.chdir(str(REPO_ROOT))
         for f in sorted(glob("Dockerfile*")):
             if "buildwheel" not in f and ".github" not in f:
                 dockerfiles[f] = True

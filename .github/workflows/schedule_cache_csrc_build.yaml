@@ -18,9 +18,13 @@
 
 name: 'Cache csrc Build Directory'
 on:
+  push:
+    branches:
+      - main
   schedule:
     # UTC+8: 2am every day
     - cron: '0 18 * * *'
+  workflow_dispatch:
 
 defaults:
   run:
@@ -58,7 +62,7 @@ jobs:
         id: generate
         run: |
           pip install pyyaml
-          matrix=$(python3 generate_cache_matrix.py)
+          matrix=$(python3 .github/workflows/scripts/generate_cache_matrix.py)
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
 
   # -------------------------------------------------------------------------
