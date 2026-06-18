@@ -13,11 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//  #include "../aclnn_torch_adapter/op_api_common.h"
+
+// #include "../aclnn_torch_adapter/op_api_common.h"
 
 #ifndef STORE_KV_BLOCK_TORCH_ADPT_H
 #define STORE_KV_BLOCK_TORCH_ADPT_H
-#include <climits>  
+
+#include <algorithm>
+#include <cstdint>
+#include <tuple>
+#include <vector>
+
 namespace vllm_ascend {
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> store_kv_block_pre(
@@ -25,91 +31,108 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> store_kv_block_pre(
     at::IntArrayRef slot_mapping_list,
     int64_t block_size)
 {
+    int64_t slot_mapping_len = slot_mapping_list.size();
 
-    int64_t slot_mapping_len =  slot_mapping_list.size();
+    std::vector<int32_t> length;
+    std::vector<int32_t> key_idx;
+    std::vector<int32_t> key_cache_idx;
 
-    std::vector<int32_t> length(16, 0);
-    std::vector<int32_t> key_idx(16, 0);
-    std::vector<int32_t> key_cache_idx(16, 0);
-    int32_t idx_slotmap = 0;
-    int32_t idx_groups = 0;
+    length.reserve(16);
+    key_idx.reserve(16);
+    key_cache_idx.reserve(16);
+
+    int64_t idx_slotmap = 0;
 
     while (idx_slotmap < slot_mapping_len) {
+        int64_t current_idx = slot_mapping_list[idx_slotmap];
 
-        int32_t current_idx = slot_mapping_list[idx_slotmap];
-        if(current_idx <0){
+        if (current_idx < 0) {
             idx_slotmap++;
             continue;
         }
 
-        int32_t block_id = current_idx / block_size; 
-        int32_t y= current_idx % block_size;
+        int64_t block_offset = current_idx % block_size;
 
-        key_idx[idx_groups] = idx_slotmap;
-        key_cache_idx[idx_groups] = current_idx;    
+        int64_t max_group_len = std::min(
+            block_size - block_offset,
+            slot_mapping_len - idx_slotmap
+        );
 
-        int32_t j = idx_slotmap;
+        int64_t group_len = 1;
 
-        if(j+1 < slot_mapping_len &&slot_mapping_list[j+1]!=slot_mapping_list[j]+1 ) {
-            j++;
+        for (; group_len < max_group_len; ++group_len) {
+            int64_t prev_idx = slot_mapping_list[idx_slotmap + group_len - 1];
+            int64_t next_idx = slot_mapping_list[idx_slotmap + group_len];
 
-        }else{
-            int32_t idx_stride = std::min(block_size-y,slot_mapping_len-idx_slotmap)-1;
-            int32_t expected_last =  current_idx + idx_stride;
-            int32_t expected_last_idx = idx_slotmap + (expected_last-current_idx);
-
-            if (expected_last == slot_mapping_list[expected_last_idx]){
-                j = expected_last_idx+1;
-            }else{
-
-                while(j+1 < slot_mapping_len && slot_mapping_list[j] / block_size == block_id && slot_mapping_list[j+1] ==slot_mapping_list[j]+1) {
-                    j++;
-                }
+            if (next_idx < 0 || next_idx != prev_idx + 1) {
+                break;
             }
         }
 
-        length[idx_groups] = (j - idx_slotmap);
-        idx_slotmap = j;
-        idx_groups++;
+        length.emplace_back(static_cast<int32_t>(group_len));
+        key_idx.emplace_back(static_cast<int32_t>(idx_slotmap));
+        key_cache_idx.emplace_back(static_cast<int32_t>(current_idx));
 
-        if(idx_groups>=length.capacity()){
-            int32_t new_capacity = length.capacity() * 2;
-            length.reserve(new_capacity);
-            key_idx.reserve(new_capacity);
-            key_cache_idx.reserve(new_capacity);
-
-            for (int32_t k = idx_groups; k < new_capacity; ++k){
-                length.emplace_back(0);
-                key_idx.emplace_back(0);
-                key_cache_idx.emplace_back(0);
-            } 
-        }
+        idx_slotmap += group_len;
     }
 
-    at::Tensor group_len = at::empty({idx_groups},
+    int64_t idx_groups = static_cast<int64_t>(length.size());
+
+    at::Tensor group_len = at::empty(
+        {idx_groups},
         at::TensorOptions(slot_mapping_npu.options().device()).dtype(torch::kInt32)
-        );
-    void* group_len_addr = group_len.data_ptr();
+    );
 
-    at::Tensor group_key_idx = at::empty({idx_groups},
+    at::Tensor group_key_idx = at::empty(
+        {idx_groups},
         at::TensorOptions(slot_mapping_npu.options().device()).dtype(torch::kInt32)
-        );
-    void* group_key_idx_addr = group_key_idx.data_ptr();
-    
-    at::Tensor group_key_cache_idx = at::empty({idx_groups},
+    );
+
+    at::Tensor group_key_cache_idx = at::empty(
+        {idx_groups},
         at::TensorOptions(slot_mapping_npu.options().device()).dtype(torch::kInt32)
+    );
+
+    if (idx_groups > 0) {
+        uint32_t device_size = static_cast<uint32_t>(
+            idx_groups * static_cast<int64_t>(sizeof(int32_t))
         );
-    void* group_key_cache_idx_addr = group_key_cache_idx.data_ptr();
 
-    uint32_t device_size=idx_groups*sizeof(length[0]);
-    aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
-    aclrtMemcpyKind memcpy_type=ACL_MEMCPY_HOST_TO_DEVICE;
-    aclrtMemcpyAsync(group_len_addr, device_size, &length[0], device_size, ACL_MEMCPY_HOST_TO_DEVICE, stream); 
-    aclrtMemcpyAsync(group_key_idx_addr, device_size, &key_idx[0], device_size, ACL_MEMCPY_HOST_TO_DEVICE, stream);  
-    aclrtMemcpyAsync(group_key_cache_idx_addr, device_size, &key_cache_idx[0], device_size, ACL_MEMCPY_HOST_TO_DEVICE, stream);   
+        aclrtStream stream = c10_npu::getCurrentNPUStream().stream();
 
-    return std::tuple<at::Tensor, at::Tensor, at::Tensor>(group_len, group_key_idx, group_key_cache_idx);
+        aclrtMemcpyAsync(
+            group_len.data_ptr(),
+            device_size,
+            length.data(),
+            device_size,
+            ACL_MEMCPY_HOST_TO_DEVICE,
+            stream
+        );
 
+        aclrtMemcpyAsync(
+            group_key_idx.data_ptr(),
+            device_size,
+            key_idx.data(),
+            device_size,
+            ACL_MEMCPY_HOST_TO_DEVICE,
+            stream
+        );
+
+        aclrtMemcpyAsync(
+            group_key_cache_idx.data_ptr(),
+            device_size,
+            key_cache_idx.data(),
+            device_size,
+            ACL_MEMCPY_HOST_TO_DEVICE,
+            stream
+        );
+    }
+
+    return std::tuple<at::Tensor, at::Tensor, at::Tensor>(
+        group_len,
+        group_key_idx,
+        group_key_cache_idx
+    );
 }
 
 void store_kv_block(
@@ -120,10 +143,17 @@ void store_kv_block(
     const at::Tensor &group_key_cache_idx,
     int64_t block_size)
 {
-
-    EXEC_NPU_CMD(aclnnStoreKVBlock, key_in, key_cache_in,group_len, group_key_idx, group_key_cache_idx, block_size);
-    
-} 
-
+    EXEC_NPU_CMD(
+        aclnnStoreKVBlock,
+        key_in,
+        key_cache_in,
+        group_len,
+        group_key_idx,
+        group_key_cache_idx,
+        block_size
+    );
 }
-#endif
+
+}  // namespace vllm_ascend
+
+#endif  // STORE_KV_BLOCK_TORCH_ADPT_H
