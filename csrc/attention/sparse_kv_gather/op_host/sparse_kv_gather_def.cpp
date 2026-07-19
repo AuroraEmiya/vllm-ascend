@@ -10,51 +10,40 @@ class SparseKvGather : public OpDef {
 public:
     explicit SparseKvGather(const char *name) : OpDef(name)
     {
-        // ---- Required inputs ----
-        this->Input("sparse_indices")
-            .ParamType(REQUIRED)
-            .DataType({ge::DT_INT32})
-            .Format({ge::FORMAT_ND})
-            .AutoContiguous();
-
-        this->Input("key_nope")
+        // Paged KV cache: [num_blocks, 128, 1, feature_dim].
+        this->Input("paged_ctkv")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND})
             .AutoContiguous();
 
-        this->Input("key_rope")
+        this->Input("paged_kpe")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND})
             .AutoContiguous();
 
-        // ---- Optional inputs ----
+        // block_table[q, logical_block] -> physical block.
         this->Input("block_table")
-            .ParamType(OPTIONAL)
-            .DataType({ge::DT_INT32})
+            .ParamType(REQUIRED)
+            .DataType({ge::DT_INT32, ge::DT_INT64})
             .Format({ge::FORMAT_ND})
             .AutoContiguous();
 
-        this->Input("actual_seq_lengths_q")
-            .ParamType(OPTIONAL)
-            .DataType({ge::DT_INT32})
+        // Logical token positions, shape [num_actual, topk_n].
+        this->Input("topk_indices")
+            .ParamType(REQUIRED)
+            .DataType({ge::DT_INT32, ge::DT_INT64})
             .Format({ge::FORMAT_ND})
             .AutoContiguous();
 
-        this->Input("actual_seq_lengths_kv")
-            .ParamType(OPTIONAL)
-            .DataType({ge::DT_INT32})
-            .Format({ge::FORMAT_ND})
-            .AutoContiguous();
-
+        // Current logical token position for every query row.
         this->Input("cur_pos")
-            .ParamType(OPTIONAL)
-            .DataType({ge::DT_INT32})
+            .ParamType(REQUIRED)
+            .DataType({ge::DT_INT32, ge::DT_INT64})
             .Format({ge::FORMAT_ND})
             .AutoContiguous();
 
-        // ---- Outputs (separate CTKV / KPE, 3D structured) ----
         this->Output("out_ctkv")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
@@ -65,23 +54,21 @@ public:
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND});
 
-        // ---- Attributes ----
-        this->Attr("sparse_block_size").AttrType(OPTIONAL).Int(1);
-        this->Attr("layout_query").AttrType(OPTIONAL).String("BSND");
-        this->Attr("layout_kv").AttrType(OPTIONAL).String("PA_BSND");
+        // SFA paged cache currently fixes one page to 128 tokens.
+        this->Attr("block_size").AttrType(OPTIONAL).Int(128);
 
-        // ---- AICore config ----
-        OpAICoreConfig aicore_config;
-        aicore_config.DynamicCompileStaticFlag(true)
+        OpAICoreConfig aicoreConfig;
+        aicoreConfig.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(true)
             .DynamicRankSupportFlag(true)
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
-            .PrecisionReduceFlag(true);
-        this->AICore().AddConfig("ascend910b", aicore_config);
-        this->AICore().AddConfig("ascend910_93", aicore_config);
-        this->AICore().AddConfig("ascend950", aicore_config);
+            .PrecisionReduceFlag(false);
+        this->AICore().AddConfig("ascend910b", aicoreConfig);
+        this->AICore().AddConfig("ascend910_93", aicoreConfig);
+        this->AICore().AddConfig("ascend950", aicoreConfig);
     }
 };
+
 OP_ADD(SparseKvGather);
 }  // namespace ops

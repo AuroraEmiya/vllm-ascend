@@ -3,237 +3,275 @@
  * Licensed under CANN Open Software License Agreement Version 2.0.
  */
 
-#include <string>
-#include <algorithm>
 #include "sparse_kv_gather_tiling.h"
+
+#include <algorithm>
+#include <cinttypes>
+#include <limits>
+#include <string>
+
 #include "register/op_def_registry.h"
 
-using std::string;
-
-using namespace ge;
 namespace optiling {
+namespace {
 
-static const string OP_NAME_STR = "SparseKvGather";
+const std::string OP_NAME_STR = "SparseKvGather";
 
-static SKGLayout ParseLayoutStr(const char *s) {
-    string str(s);
-    if (str == "TND")      return SKGLayout::TND;
-    if (str == "PA_BSND")  return SKGLayout::PA_BSND;
-    return SKGLayout::BSND;
+bool IsCacheType(const ge::DataType dtype)
+{
+    return dtype == ge::DT_FLOAT16 || dtype == ge::DT_BF16;
 }
 
-// ===================== SKGInfoParser =====================
+bool IsIndexType(const ge::DataType dtype)
+{
+    return dtype == ge::DT_INT32 || dtype == ge::DT_INT64;
+}
 
-ge::graphStatus SKGInfoParser::GetInputs(SKGParamInfo &params) {
-    params.sparseIndicesDesc  = context_->GetInputDesc(SKG_SPARSE_INDICES_IDX);
-    params.sparseIndicesShape = context_->GetInputShape(SKG_SPARSE_INDICES_IDX);
-    params.keyNopeDesc        = context_->GetInputDesc(SKG_KEY_NOPE_IDX);
-    params.keyNopeShape       = context_->GetInputShape(SKG_KEY_NOPE_IDX);
-    params.keyRopeDesc        = context_->GetInputDesc(SKG_KEY_ROPE_IDX);
-    params.keyRopeShape       = context_->GetInputShape(SKG_KEY_ROPE_IDX);
+SKGIndexType ToIndexType(const ge::DataType dtype)
+{
+    return dtype == ge::DT_INT64 ? SKGIndexType::INT64 : SKGIndexType::INT32;
+}
 
-    params.blockTableTensor   = context_->GetOptionalInputTensor(SKG_BLOCK_TABLE_IDX);
-    params.blockTableDesc     = context_->GetOptionalInputDesc(SKG_BLOCK_TABLE_IDX);
-    params.actSeqLenQTensor   = context_->GetOptionalInputTensor(SKG_ACT_SEQLEN_Q_IDX);
-    params.actSeqLenQDesc     = context_->GetOptionalInputDesc(SKG_ACT_SEQLEN_Q_IDX);
-    params.actSeqLenKVTensor  = context_->GetOptionalInputTensor(SKG_ACT_SEQLEN_KV_IDX);
-    params.actSeqLenKVDesc    = context_->GetOptionalInputDesc(SKG_ACT_SEQLEN_KV_IDX);
-    params.curPosTensor       = context_->GetOptionalInputTensor(SKG_CUR_POS_IDX);
-    params.curPosDesc         = context_->GetOptionalInputDesc(SKG_CUR_POS_IDX);
-
-    if (params.sparseIndicesDesc == nullptr || params.keyNopeDesc == nullptr ||
-        params.keyRopeDesc == nullptr) {
-        OP_LOGE(OP_NAME_STR.c_str(),
-            "Required inputs (sparse_indices, key_nope, key_rope) must not be null.");
+ge::graphStatus CheckRank(const gert::StorageShape *shape, const uint32_t expectedRank,
+                          const char *tensorName)
+{
+    if (shape == nullptr) {
+        OP_LOGE(OP_NAME_STR.c_str(), "%s shape is null.", tensorName);
+        return ge::GRAPH_FAILED;
+    }
+    const auto rank = shape->GetStorageShape().GetDimNum();
+    if (rank != expectedRank) {
+        OP_LOGE(OP_NAME_STR.c_str(), "%s rank must be %u, got %u.",
+                tensorName, expectedRank, static_cast<uint32_t>(rank));
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus SKGInfoParser::GetAttrs(SKGParamInfo &params) {
-    auto attrs = context_->GetAttrs();
+bool IsPositiveUint32Dim(const int64_t dim)
+{
+    return dim > 0 && static_cast<uint64_t>(dim) <= std::numeric_limits<uint32_t>::max();
+}
+
+ge::graphStatus CheckExact3DShape(const gert::StorageShape *shape,
+                                  const uint32_t dim0,
+                                  const uint32_t dim1,
+                                  const uint32_t dim2,
+                                  const char *tensorName)
+{
+    if (CheckRank(shape, 3, tensorName) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    const auto &storageShape = shape->GetStorageShape();
+    if (storageShape.GetDim(0) != static_cast<int64_t>(dim0) ||
+        storageShape.GetDim(1) != static_cast<int64_t>(dim1) ||
+        storageShape.GetDim(2) != static_cast<int64_t>(dim2)) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "%s shape must be [%u, %u, %u], got [%ld, %ld, %ld].",
+                tensorName, dim0, dim1, dim2,
+                storageShape.GetDim(0), storageShape.GetDim(1), storageShape.GetDim(2));
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+}  // namespace
+
+ge::graphStatus SKGInfoParser::GetTensorInfo(SKGParamInfo &params) const
+{
+    params.pagedCtkvDesc = context_->GetInputDesc(SKG_PAGED_CTKV_IDX);
+    params.pagedCtkvShape = context_->GetInputShape(SKG_PAGED_CTKV_IDX);
+    params.pagedKpeDesc = context_->GetInputDesc(SKG_PAGED_KPE_IDX);
+    params.pagedKpeShape = context_->GetInputShape(SKG_PAGED_KPE_IDX);
+    params.blockTableDesc = context_->GetInputDesc(SKG_BLOCK_TABLE_IDX);
+    params.blockTableShape = context_->GetInputShape(SKG_BLOCK_TABLE_IDX);
+    params.topkIndicesDesc = context_->GetInputDesc(SKG_TOPK_INDICES_IDX);
+    params.topkIndicesShape = context_->GetInputShape(SKG_TOPK_INDICES_IDX);
+    params.curPosDesc = context_->GetInputDesc(SKG_CUR_POS_IDX);
+    params.curPosShape = context_->GetInputShape(SKG_CUR_POS_IDX);
+
+    params.outCtkvDesc = context_->GetOutputDesc(SKG_OUT_CTKV_IDX);
+    params.outCtkvShape = context_->GetOutputShape(SKG_OUT_CTKV_IDX);
+    params.outKpeDesc = context_->GetOutputDesc(SKG_OUT_KPE_IDX);
+    params.outKpeShape = context_->GetOutputShape(SKG_OUT_KPE_IDX);
+
+    if (params.pagedCtkvDesc == nullptr || params.pagedKpeDesc == nullptr ||
+        params.blockTableDesc == nullptr || params.topkIndicesDesc == nullptr ||
+        params.curPosDesc == nullptr || params.outCtkvDesc == nullptr ||
+        params.outKpeDesc == nullptr) {
+        OP_LOGE(OP_NAME_STR.c_str(), "Required input or output descriptor is null.");
+        return ge::GRAPH_FAILED;
+    }
+    if (params.pagedCtkvShape == nullptr || params.pagedKpeShape == nullptr ||
+        params.blockTableShape == nullptr || params.topkIndicesShape == nullptr ||
+        params.curPosShape == nullptr || params.outCtkvShape == nullptr ||
+        params.outKpeShape == nullptr) {
+        OP_LOGE(OP_NAME_STR.c_str(), "Required input or output shape is null.");
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus SKGInfoParser::GetAttrs(SKGParamInfo &params) const
+{
+    const auto attrs = context_->GetAttrs();
     if (attrs == nullptr) {
         OP_LOGE(OP_NAME_STR.c_str(), "Attributes are null.");
         return ge::GRAPH_FAILED;
     }
-    params.sparseBlockSize = attrs->GetAttrPointer<int64_t>(SKG_ATTR_SPARSE_BLOCK_SIZE);
-    params.layoutQuery     = attrs->GetStr(SKG_ATTR_LAYOUT_QUERY);
-    params.layoutKv        = attrs->GetStr(SKG_ATTR_LAYOUT_KV);
-
-    if (params.sparseBlockSize == nullptr || params.layoutQuery == nullptr ||
-        params.layoutKv == nullptr) {
-        OP_LOGE(OP_NAME_STR.c_str(), "Required attrs missing.");
+    params.blockSize = attrs->GetAttrPointer<int64_t>(SKG_ATTR_BLOCK_SIZE);
+    if (params.blockSize == nullptr) {
+        OP_LOGE(OP_NAME_STR.c_str(), "block_size attribute is null.");
         return ge::GRAPH_FAILED;
     }
-    if (*params.sparseBlockSize != 1) {
+    if (*params.blockSize != static_cast<int64_t>(SKG_BLOCK_SIZE)) {
+        OP_LOGE(OP_NAME_STR.c_str(), "block_size must be %u, got %ld.",
+                SKG_BLOCK_SIZE, *params.blockSize);
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus SKGInfoParser::CheckDtypes(SKGTilingInfo &info) const
+{
+    const auto ctkvType = info.params.pagedCtkvDesc->GetDataType();
+    const auto kpeType = info.params.pagedKpeDesc->GetDataType();
+    const auto outCtkvType = info.params.outCtkvDesc->GetDataType();
+    const auto outKpeType = info.params.outKpeDesc->GetDataType();
+
+    if (!IsCacheType(ctkvType) || !IsCacheType(kpeType)) {
         OP_LOGE(OP_NAME_STR.c_str(),
-            "sparseBlockSize only supports 1 (token-wise), got %ld.",
-            *params.sparseBlockSize);
+                "paged_ctkv and paged_kpe must be FLOAT16 or BF16, got %d and %d.",
+                static_cast<int32_t>(ctkvType), static_cast<int32_t>(kpeType));
         return ge::GRAPH_FAILED;
     }
-    return ge::GRAPH_SUCCESS;
-}
-
-ge::graphStatus SKGInfoParser::GetShapes(SKGTilingInfo &info, const SKGParamInfo &params) {
-    info.layoutQ  = ParseLayoutStr(params.layoutQuery);
-    info.layoutKV = ParseLayoutStr(params.layoutKv);
-    info.isPa     = (info.layoutKV == SKGLayout::PA_BSND);
-    info.hasActSeqLenQ  = (params.actSeqLenQTensor != nullptr);
-    info.hasActSeqLenKV = (params.actSeqLenKVTensor != nullptr);
-    info.hasCurPos       = (params.curPosTensor != nullptr);
-
-    // --- Sparse indices shape: last dim = topk_n ---
-    auto &siShape = params.sparseIndicesShape->GetStorageShape();
-    info.topkN = siShape.GetDim(siShape.GetDimNum() - 1);
-    info.sparseBlockCount = info.topkN;
-    info.sparseBlockSize  = *params.sparseBlockSize;
-
-    // --- N2 from key ---
-    auto &kShape = params.keyNopeShape->GetStorageShape();
-    uint32_t n2DimIdx;
-    if (info.isPa) {
-        n2DimIdx = 2;
-        info.blockSize = kShape.GetDim(1);
-        info.s2Size    = kShape.GetDim(0) * kShape.GetDim(1);
-    } else if (info.layoutKV == SKGLayout::TND) {
-        n2DimIdx = 1;
-        info.s2Size = kShape.GetDim(0);
-    } else {
-        n2DimIdx = 2;
-        info.s2Size = kShape.GetDim(1);
-    }
-    info.n2Size = kShape.GetDim(n2DimIdx);
-
-    // --- numActual (N) ---
-    // Supports both 2D [N, K] (Triton) and 3D [B, S1, K] (BSND legacy).
-    if (info.layoutQ == SKGLayout::TND) {
-        info.s1Size = siShape.GetDim(0);
-        info.bSize  = info.hasActSeqLenQ
-            ? params.actSeqLenQTensor->GetShapeSize() : 1;
-        info.numActual = info.s1Size;  // T
-    } else {
-        uint32_t dimNum = siShape.GetDimNum();
-        if (dimNum == 2) {
-            // 2D: Triton-compatible [num_actual, topk_n]
-            info.bSize  = siShape.GetDim(0);
-            info.s1Size = 1;
-        } else {
-            // 3D: [B, S1, K]
-            info.bSize  = siShape.GetDim(0);
-            info.s1Size = siShape.GetDim(1);
-        }
-        info.numActual = info.bSize * info.s1Size;
-    }
-
-    info.totalOutputRows = info.numActual * info.topkN;
-
-    // --- PA ---
-    if (info.isPa) {
-        if (params.blockTableTensor == nullptr) {
-            OP_LOGE(OP_NAME_STR.c_str(),
-                "block_table is required for PA_BSND layout.");
-            return ge::GRAPH_FAILED;
-        }
-        info.maxBlockNumPerBatch =
-            params.blockTableTensor->GetStorageShape().GetDim(1);
-    }
-
-    // --- cur_pos shape check ---
-    if (info.hasCurPos) {
-        auto curPosSize = params.curPosTensor->GetShapeSize();
-        if (static_cast<uint32_t>(curPosSize) != info.numActual) {
-            OP_LOGE(OP_NAME_STR.c_str(),
-                "cur_pos size %ld != num_actual %u.",
-                curPosSize, info.numActual);
-            return ge::GRAPH_FAILED;
-        }
-    }
-
-    // --- Head dim validation ---
-    uint32_t lastDim = kShape.GetDimNum() - 1;
-    uint32_t dNope = kShape.GetDim(lastDim);
-    auto &rShape = params.keyRopeShape->GetStorageShape();
-    uint32_t dRope = rShape.GetDim(rShape.GetDimNum() - 1);
-    if (dNope != SKG_D_NOPE || dRope != SKG_D_ROPE) {
+    if (ctkvType != kpeType) {
         OP_LOGE(OP_NAME_STR.c_str(),
-            "Expected nope_dim=512, rope_dim=64; got %u, %u.", dNope, dRope);
+                "paged_ctkv and paged_kpe must have the same dtype, got %d and %d.",
+                static_cast<int32_t>(ctkvType), static_cast<int32_t>(kpeType));
+        return ge::GRAPH_FAILED;
+    }
+    if (outCtkvType != ctkvType || outKpeType != kpeType) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "Output dtype must match its paged cache input: ctkv %d/%d, kpe %d/%d.",
+                static_cast<int32_t>(ctkvType), static_cast<int32_t>(outCtkvType),
+                static_cast<int32_t>(kpeType), static_cast<int32_t>(outKpeType));
+        return ge::GRAPH_FAILED;
+    }
+
+    const auto blockTableType = info.params.blockTableDesc->GetDataType();
+    const auto topkIndicesType = info.params.topkIndicesDesc->GetDataType();
+    const auto curPosType = info.params.curPosDesc->GetDataType();
+    if (!IsIndexType(blockTableType) || !IsIndexType(topkIndicesType) ||
+        !IsIndexType(curPosType)) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "block_table, topk_indices and cur_pos must be INT32 or INT64, got %d, %d, %d.",
+                static_cast<int32_t>(blockTableType),
+                static_cast<int32_t>(topkIndicesType),
+                static_cast<int32_t>(curPosType));
+        return ge::GRAPH_FAILED;
+    }
+
+    info.blockTableType = ToIndexType(blockTableType);
+    info.topkIndicesType = ToIndexType(topkIndicesType);
+    info.curPosType = ToIndexType(curPosType);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus SKGInfoParser::CheckShapes(SKGTilingInfo &info) const
+{
+    if (CheckRank(info.params.pagedCtkvShape, 4, "paged_ctkv") != ge::GRAPH_SUCCESS ||
+        CheckRank(info.params.pagedKpeShape, 4, "paged_kpe") != ge::GRAPH_SUCCESS ||
+        CheckRank(info.params.blockTableShape, 2, "block_table") != ge::GRAPH_SUCCESS ||
+        CheckRank(info.params.topkIndicesShape, 2, "topk_indices") != ge::GRAPH_SUCCESS ||
+        CheckRank(info.params.curPosShape, 1, "cur_pos") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    const auto &ctkv = info.params.pagedCtkvShape->GetStorageShape();
+    const auto &kpe = info.params.pagedKpeShape->GetStorageShape();
+    const auto &blockTable = info.params.blockTableShape->GetStorageShape();
+    const auto &topk = info.params.topkIndicesShape->GetStorageShape();
+    const auto &curPos = info.params.curPosShape->GetStorageShape();
+
+    if (!IsPositiveUint32Dim(ctkv.GetDim(0)) ||
+        !IsPositiveUint32Dim(blockTable.GetDim(0)) ||
+        !IsPositiveUint32Dim(blockTable.GetDim(1)) ||
+        !IsPositiveUint32Dim(topk.GetDim(1))) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "num_blocks, num_actual, max_blocks and topk_n must be positive uint32 dimensions.");
+        return ge::GRAPH_FAILED;
+    }
+
+    if (ctkv.GetDim(1) != static_cast<int64_t>(SKG_BLOCK_SIZE) ||
+        ctkv.GetDim(2) != static_cast<int64_t>(SKG_HEAD_NUM) ||
+        ctkv.GetDim(3) != static_cast<int64_t>(SKG_CTKV_DIM)) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "paged_ctkv shape must be [num_blocks, %u, %u, %u], got [%ld, %ld, %ld, %ld].",
+                SKG_BLOCK_SIZE, SKG_HEAD_NUM, SKG_CTKV_DIM,
+                ctkv.GetDim(0), ctkv.GetDim(1), ctkv.GetDim(2), ctkv.GetDim(3));
+        return ge::GRAPH_FAILED;
+    }
+
+    if (kpe.GetDim(0) != ctkv.GetDim(0) ||
+        kpe.GetDim(1) != static_cast<int64_t>(SKG_BLOCK_SIZE) ||
+        kpe.GetDim(2) != static_cast<int64_t>(SKG_HEAD_NUM) ||
+        kpe.GetDim(3) != static_cast<int64_t>(SKG_KPE_DIM)) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "paged_kpe shape must be [num_blocks, %u, %u, %u] and share num_blocks with paged_ctkv; "
+                "got [%ld, %ld, %ld, %ld].",
+                SKG_BLOCK_SIZE, SKG_HEAD_NUM, SKG_KPE_DIM,
+                kpe.GetDim(0), kpe.GetDim(1), kpe.GetDim(2), kpe.GetDim(3));
+        return ge::GRAPH_FAILED;
+    }
+
+    const auto numActual = static_cast<uint32_t>(topk.GetDim(0));
+    if (blockTable.GetDim(0) != topk.GetDim(0) || curPos.GetDim(0) != topk.GetDim(0)) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "block_table, topk_indices and cur_pos must share num_actual; got %ld, %ld, %ld.",
+                blockTable.GetDim(0), topk.GetDim(0), curPos.GetDim(0));
+        return ge::GRAPH_FAILED;
+    }
+
+    info.numBlocks = static_cast<uint32_t>(ctkv.GetDim(0));
+    info.numActual = numActual;
+    info.maxBlocks = static_cast<uint32_t>(blockTable.GetDim(1));
+    info.topkN = static_cast<uint32_t>(topk.GetDim(1));
+    info.totalSlots = static_cast<uint64_t>(info.numActual) * info.topkN;
+
+    if (CheckExact3DShape(info.params.outCtkvShape, info.numActual, info.topkN,
+                          SKG_CTKV_DIM, "out_ctkv") != ge::GRAPH_SUCCESS ||
+        CheckExact3DShape(info.params.outKpeShape, info.numActual, info.topkN,
+                          SKG_KPE_DIM, "out_kpe") != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
 
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus SKGInfoParser::Validate(const SKGTilingInfo &info) {
-    if (info.numActual == 0 || info.topkN == 0) {
-        OP_LOGE(OP_NAME_STR.c_str(), "Zero-sized: num_actual=%u topk_n=%u.",
-                info.numActual, info.topkN);
-        return ge::GRAPH_FAILED;
-    }
-    return ge::GRAPH_SUCCESS;
-}
-
-ge::graphStatus SKGInfoParser::Parse(SKGTilingInfo &info) {
+ge::graphStatus SKGInfoParser::Parse(SKGTilingInfo &info)
+{
     SKGParamInfo params;
-    if (GetInputs(params)  != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (GetAttrs(params)   != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (GetShapes(info, params) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (Validate(info)     != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
+    if (GetTensorInfo(params) != ge::GRAPH_SUCCESS ||
+        GetAttrs(params) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     info.params = params;
-    return ge::GRAPH_SUCCESS;
-}
-
-// ===================== SKGTilingCheck =====================
-
-ge::graphStatus SKGTilingCheck::Process() {
-    if (CheckDtypes() != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (CheckShapes() != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (CheckAttrs()  != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    return ge::GRAPH_SUCCESS;
-}
-ge::graphStatus SKGTilingCheck::CheckDtypes() const { return ge::GRAPH_SUCCESS; }
-ge::graphStatus SKGTilingCheck::CheckShapes() const {
-    if (info_.totalOutputRows == 0) {
-        OP_LOGE(OP_NAME_STR.c_str(), "totalOutputRows is 0.");
+    if (CheckDtypes(info) != ge::GRAPH_SUCCESS ||
+        CheckShapes(info) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
 }
-ge::graphStatus SKGTilingCheck::CheckAttrs() const { return ge::GRAPH_SUCCESS; }
 
-// ===================== SparseKvGatherTiling =====================
-
-ge::graphStatus SparseKvGatherTiling::SetBlockDim(uint32_t blockDim) const {
-    context_->SetBlockDim(blockDim);
-    return ge::GRAPH_SUCCESS;
-}
-ge::graphStatus SparseKvGatherTiling::SetWorkspaceSize(uint64_t size) const {
-    size_t *ws = context_->GetWorkspaceSizes(1);
-    if (ws == nullptr) {
-        OP_LOGE(OP_NAME_STR.c_str(), "workspace size ptr is null.");
+ge::graphStatus SparseKvGatherTiling::GetPlatformInfo(SKGTilingInfo *info) const
+{
+    if (info->platformInfo == nullptr) {
+        OP_LOGE(info->opName, "GetPlatformInfo returned nullptr.");
         return ge::GRAPH_FAILED;
     }
-    ws[0] = size;
-    return ge::GRAPH_SUCCESS;
-}
-ge::graphStatus SparseKvGatherTiling::SetTilingData(TilingDef &td) const {
-    if (context_->GetRawTilingData() == nullptr) {
-        OP_LOGE(OP_NAME_STR.c_str(), "RawTilingData is null.");
-        return ge::GRAPH_FAILED;
-    }
-    td.SaveToBuffer(context_->GetRawTilingData()->GetData(),
-                    context_->GetRawTilingData()->GetCapacity());
-    context_->GetRawTilingData()->SetDataSize(td.GetDataSize());
-    return ge::GRAPH_SUCCESS;
-}
-
-ge::graphStatus SparseKvGatherTiling::GetPlatformInfo(SKGTilingInfo *info) {
-    auto *plat = info->platformInfo;
-    if (plat == nullptr) {
-        OP_LOGE(info->opName, "GetPlatformInfo is nullptr.");
-        return ge::GRAPH_FAILED;
-    }
-    auto ascPlat = platform_ascendc::PlatformAscendC(plat);
-    info->aivNum = ascPlat.GetCoreNumAiv();
+    const auto platform = platform_ascendc::PlatformAscendC(info->platformInfo);
+    info->aivNum = platform.GetCoreNumAiv();
     if (info->aivNum == 0) {
         OP_LOGE(info->opName, "AIV core count is 0.");
         return ge::GRAPH_FAILED;
@@ -241,60 +279,76 @@ ge::graphStatus SparseKvGatherTiling::GetPlatformInfo(SKGTilingInfo *info) {
     return ge::GRAPH_SUCCESS;
 }
 
-void SparseKvGatherTiling::InitParams(SKGTilingInfo *info) {
-    info->usedCoreNum  = info->aivNum;
-    info->groupsPerCore = (info->numActual + info->usedCoreNum - 1)
-                          / info->usedCoreNum;
-    info->rowsPerCore   = info->groupsPerCore * info->topkN;
+ge::graphStatus SparseKvGatherTiling::SplitWork(SKGTilingInfo *info) const
+{
+    if (info->totalSlots == 0) {
+        OP_LOGE(info->opName, "totalSlots is 0.");
+        return ge::GRAPH_FAILED;
+    }
+    info->usedCoreNum = static_cast<uint32_t>(
+        std::min<uint64_t>(info->aivNum, info->totalSlots));
+    info->slotsPerCore =
+        (info->totalSlots + info->usedCoreNum - 1) / info->usedCoreNum;
+    return ge::GRAPH_SUCCESS;
 }
 
-void SparseKvGatherTiling::SplitWork(SKGTilingInfo *info) {
-    // Static even split; tail handled by kernel clamping.
+void SparseKvGatherTiling::FillTilingData(const SKGTilingInfo *info)
+{
+    tilingData_.set_numBlocks(info->numBlocks);
+    tilingData_.set_numActual(info->numActual);
+    tilingData_.set_maxBlocks(info->maxBlocks);
+    tilingData_.set_topkN(info->topkN);
+    tilingData_.set_totalSlots(info->totalSlots);
+    tilingData_.set_slotsPerCore(info->slotsPerCore);
+    tilingData_.set_usedCoreNum(info->usedCoreNum);
+    tilingData_.set_blockTableType(static_cast<uint32_t>(info->blockTableType));
+    tilingData_.set_topkIndicesType(static_cast<uint32_t>(info->topkIndicesType));
+    tilingData_.set_curPosType(static_cast<uint32_t>(info->curPosType));
 }
 
-void SparseKvGatherTiling::CalcWorkspace(SKGTilingInfo *info) {
-    auto ascPlat = platform_ascendc::PlatformAscendC(info->platformInfo);
-    workspaceSize_ = ascPlat.GetLibApiWorkSpaceSize();
+ge::graphStatus SparseKvGatherTiling::SetBlockDim(const uint32_t blockDim) const
+{
+    context_->SetBlockDim(blockDim);
+    return ge::GRAPH_SUCCESS;
 }
 
-void SparseKvGatherTiling::FillTilingData(SKGTilingInfo *info) {
-    auto &bp = tilingData_.baseParams;
-    bp.set_batchSize(info->bSize);
-    bp.set_s1Size(info->s1Size);
-    bp.set_s2Size(info->s2Size);
-    bp.set_numActual(info->numActual);
-    bp.set_topkN(info->topkN);
-    bp.set_sparseBlockCount(info->sparseBlockCount);
-    bp.set_sparseBlockSize(info->sparseBlockSize);
-    bp.set_totalGroups(info->numActual);
-    bp.set_totalOutputRows(info->totalOutputRows);
-    bp.set_rowsPerCore(info->rowsPerCore);
-    bp.set_groupsPerCore(info->groupsPerCore);
-    bp.set_blockSize(info->blockSize);
-    bp.set_maxBlockNumPerBatch(info->maxBlockNumPerBatch);
-    bp.set_usedCoreNum(info->usedCoreNum);
-    bp.set_layoutQuery(static_cast<uint32_t>(info->layoutQ));
-    bp.set_layoutKv(static_cast<uint32_t>(info->layoutKV));
-    bp.set_isActualLenDimsNull(info->hasActSeqLenQ ? 0U : 1U);
-    bp.set_isActualLenDimsKVNull(info->hasActSeqLenKV ? 0U : 1U);
-    bp.set_isPageAttention(info->isPa ? 1U : 0U);
-    bp.set_hasCurPos(info->hasCurPos ? 1U : 0U);
+ge::graphStatus SparseKvGatherTiling::SetWorkspaceSize(const uint64_t workspaceSize) const
+{
+    size_t *workspaceSizes = context_->GetWorkspaceSizes(1);
+    if (workspaceSizes == nullptr) {
+        OP_LOGE(OP_NAME_STR.c_str(), "Workspace size pointer is null.");
+        return ge::GRAPH_FAILED;
+    }
+    workspaceSizes[0] = workspaceSize;
+    return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus SparseKvGatherTiling::DoOpTiling(SKGTilingInfo *info) {
-    info_ = info;
-    if (GetPlatformInfo(info) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    InitParams(info);
-    SplitWork(info);
+ge::graphStatus SparseKvGatherTiling::SetTilingData(TilingDef &tilingData) const
+{
+    auto *rawTilingData = context_->GetRawTilingData();
+    if (rawTilingData == nullptr) {
+        OP_LOGE(OP_NAME_STR.c_str(), "RawTilingData is null.");
+        return ge::GRAPH_FAILED;
+    }
+    tilingData.SaveToBuffer(rawTilingData->GetData(), rawTilingData->GetCapacity());
+    rawTilingData->SetDataSize(tilingData.GetDataSize());
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus SparseKvGatherTiling::DoOpTiling(SKGTilingInfo *info)
+{
+    if (GetPlatformInfo(info) != ge::GRAPH_SUCCESS ||
+        SplitWork(info) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
     FillTilingData(info);
-    CalcWorkspace(info);
 
-    blockDim_ = info->usedCoreNum;
-
-    if (SetBlockDim(blockDim_)          != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (SetWorkspaceSize(workspaceSize_) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-    if (SetTilingData(tilingData_)      != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
-
+    if (SetBlockDim(info->usedCoreNum) != ge::GRAPH_SUCCESS ||
+        SetWorkspaceSize(0) != ge::GRAPH_SUCCESS ||
+        SetTilingData(tilingData_) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 

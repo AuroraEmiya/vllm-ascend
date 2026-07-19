@@ -2295,13 +2295,9 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
 
     ops.def(
         "npu_sparse_kv_gather("
-            "Tensor sparse_indices, Tensor key_nope, Tensor key_rope, *,"
-            "Tensor? block_table=None,"
-            "Tensor? actual_seq_lengths_query=None,"
-            "Tensor? actual_seq_lengths_kv=None,"
-            "Tensor? cur_pos=None,"
-            "int sparse_block_size=1,"
-            "str layout_query='BSND', str layout_kv='PA_BSND'"
+            "Tensor paged_ctkv, Tensor paged_kpe,"
+            "Tensor block_table, Tensor topk_indices, Tensor cur_pos,"
+            "int block_size"
         ") -> (Tensor out_ctkv, Tensor out_kpe)"
     );
     ops.impl("npu_sparse_kv_gather", torch::kPrivateUse1, &vllm_ascend::npu_sparse_kv_gather);
