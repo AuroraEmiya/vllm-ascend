@@ -1658,6 +1658,28 @@ at::Tensor chunk_fwd_o_meta(
     return o;
 }
 
+std::tuple<at::Tensor, at::Tensor> npu_sparse_kv_gather_meta(
+    const at::Tensor &paged_ctkv,
+    const at::Tensor &paged_kpe,
+    const at::Tensor &block_table,
+    const at::Tensor &topk_indices,
+    const at::Tensor &cur_pos,
+    int64_t block_size)
+{
+    (void)block_table;
+    (void)cur_pos;
+    (void)block_size;
+    constexpr int64_t CTKV_DIM = 512;
+    constexpr int64_t KPE_DIM = 64;
+    at::Tensor out_ctkv = at::empty_symint(
+        {topk_indices.sym_size(0), topk_indices.sym_size(1), CTKV_DIM},
+        paged_ctkv.options());
+    at::Tensor out_kpe = at::empty_symint(
+        {topk_indices.sym_size(0), topk_indices.sym_size(1), KPE_DIM},
+        paged_kpe.options());
+    return std::make_tuple(out_ctkv, out_kpe);
+}
+
 void store_kv_block_metadata(
     const at::Tensor &slot_mapping_npu,
     const at::Tensor &group_len,
@@ -1795,6 +1817,8 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
      // store_kv_block
     ops.impl("store_kv_block_pre", &vllm_ascend::meta::store_kv_block_metadata);
     ops.impl("store_kv_block", &vllm_ascend::meta::store_kv_block);
+    // sparse_kv_gather
+    ops.impl("npu_sparse_kv_gather", &vllm_ascend::meta::npu_sparse_kv_gather_meta);
     // npu_fused_gdn_gating
     ops.impl("npu_fused_gdn_gating", &vllm_ascend::meta::npu_fused_gdn_gating_meta);
 }
