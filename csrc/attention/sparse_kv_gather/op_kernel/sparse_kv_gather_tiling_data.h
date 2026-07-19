@@ -27,8 +27,6 @@ enum class SKGIndexType : uint32_t {
     INT64 = 1,
 };
 
-}  // namespace optiling
-
 BEGIN_TILING_DATA_DEF(SparseKvGatherTilingData)
     TILING_DATA_FIELD_DEF(uint32_t, numBlocks)
     TILING_DATA_FIELD_DEF(uint32_t, numActual)
@@ -42,5 +40,7 @@ BEGIN_TILING_DATA_DEF(SparseKvGatherTilingData)
     TILING_DATA_FIELD_DEF(uint32_t, curPosType)
 END_TILING_DATA_DEF
 REGISTER_TILING_DATA_CLASS(SparseKvGather, SparseKvGatherTilingData)
+
+}  // namespace optiling
 
 #endif  // SPARSE_KV_GATHER_TILING_DATA_H

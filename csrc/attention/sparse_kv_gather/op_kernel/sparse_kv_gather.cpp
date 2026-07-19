@@ -9,6 +9,7 @@
 
 using namespace AscendC;
 using namespace BaseApi;
+using optiling::SparseKvGatherTilingData;
 
 extern "C" __global__ __aicore__ void sparse_kv_gather(
     __gm__ uint8_t *pagedCtkv,
