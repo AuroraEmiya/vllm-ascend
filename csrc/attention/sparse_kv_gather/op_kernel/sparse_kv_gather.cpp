@@ -4,12 +4,10 @@
  */
 
 #include "kernel_operator.h"
-#include "sparse_kv_gather_tiling_data.h"
 #include "sparse_kv_gather_kernel.h"
 
 using namespace AscendC;
 using namespace BaseApi;
-using optiling::SparseKvGatherTilingData;
 
 extern "C" __global__ __aicore__ void sparse_kv_gather(
     __gm__ uint8_t *pagedCtkv,
@@ -30,10 +28,7 @@ extern "C" __global__ __aicore__ void sparse_kv_gather(
 
     TPipe pipe;
 
-    GET_TILING_DATA_WITH_STRUCT(
-        SparseKvGatherTilingData,
-        tilingData,
-        tiling);
+    GET_TILING_DATA(tilingData, tiling);
 
     SparseKvGatherKernel op;
     op.Init(
@@ -44,7 +39,15 @@ extern "C" __global__ __aicore__ void sparse_kv_gather(
         curPos,
         outCtkv,
         outKpe,
-        &tilingData,
+        tilingData.numBlocks,
+        tilingData.maxBlocks,
+        tilingData.topkN,
+        tilingData.totalSlots,
+        tilingData.slotsPerCore,
+        tilingData.usedCoreNum,
+        tilingData.blockTableType,
+        tilingData.topkIndicesType,
+        tilingData.curPosType,
         &pipe);
     op.Process();
 }

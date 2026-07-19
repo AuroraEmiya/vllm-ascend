@@ -7,14 +7,13 @@
 #define SPARSE_KV_GATHER_KERNEL_H
 
 #include "kernel_operator.h"
-#include "sparse_kv_gather_tiling_data.h"
 
 namespace BaseApi {
 
 using namespace AscendC;
 
-constexpr uint32_t SKG_LOCAL_CTKV_DIM = optiling::SKG_CTKV_DIM;
-constexpr uint32_t SKG_LOCAL_KPE_DIM = optiling::SKG_KPE_DIM;
+constexpr uint32_t SKG_LOCAL_CTKV_DIM = 512;
+constexpr uint32_t SKG_LOCAL_KPE_DIM  = 64;
 constexpr uint32_t SKG_LOCAL_COMBINED_DIM = SKG_LOCAL_CTKV_DIM + SKG_LOCAL_KPE_DIM;
 constexpr uint32_t SKG_LOCAL_PAIR_WIDTH = 2;
 constexpr uint32_t SKG_LOCAL_CTKV_PAIR_DIM =
@@ -23,7 +22,7 @@ constexpr uint32_t SKG_LOCAL_KPE_PAIR_DIM =
     SKG_LOCAL_PAIR_WIDTH * SKG_LOCAL_KPE_DIM;
 constexpr uint32_t SKG_LOCAL_STAGE_DIM =
     SKG_LOCAL_CTKV_PAIR_DIM + SKG_LOCAL_KPE_PAIR_DIM;
-constexpr uint32_t SKG_LOCAL_BLOCK_SIZE = optiling::SKG_BLOCK_SIZE;
+constexpr uint32_t SKG_LOCAL_BLOCK_SIZE = 128;
 constexpr uint32_t SKG_LOCAL_BLOCK_SHIFT = 7;
 constexpr uint32_t SKG_LOCAL_BLOCK_MASK = SKG_LOCAL_BLOCK_SIZE - 1;
 constexpr uint32_t SKG_STAGE_BUFFER_NUM = 2;
@@ -47,7 +46,15 @@ public:
         __gm__ uint8_t *curPos,
         __gm__ uint8_t *outCtkv,
         __gm__ uint8_t *outKpe,
-        const optiling::SparseKvGatherTilingData *__restrict tilingData,
+        uint32_t numBlocks,
+        uint32_t maxBlocks,
+        uint32_t topkN,
+        uint64_t totalSlots,
+        uint64_t slotsPerCore,
+        uint32_t usedCoreNum,
+        uint32_t blockTableType,
+        uint32_t topkIndicesType,
+        uint32_t curPosType,
         TPipe *pipe);
 
     __aicore__ inline void Process();
@@ -126,20 +133,28 @@ __aicore__ inline void SparseKvGatherKernel::Init(
     __gm__ uint8_t *curPos,
     __gm__ uint8_t *outCtkv,
     __gm__ uint8_t *outKpe,
-    const optiling::SparseKvGatherTilingData *__restrict tilingData,
+    const uint32_t numBlocks,
+    const uint32_t maxBlocks,
+    const uint32_t topkN,
+    const uint64_t totalSlots,
+    const uint64_t slotsPerCore,
+    const uint32_t usedCoreNum,
+    const uint32_t blockTableType,
+    const uint32_t topkIndicesType,
+    const uint32_t curPosType,
     TPipe *pipe)
 {
     pipe_ = pipe;
 
-    numBlocks_ = tilingData->numBlocks;
-    maxBlocks_ = tilingData->maxBlocks;
-    topkN_ = tilingData->topkN;
-    totalSlots_ = tilingData->totalSlots;
-    slotsPerCore_ = tilingData->slotsPerCore;
-    usedCoreNum_ = tilingData->usedCoreNum;
-    blockTableType_ = tilingData->blockTableType;
-    topkIndicesType_ = tilingData->topkIndicesType;
-    curPosType_ = tilingData->curPosType;
+    numBlocks_ = numBlocks;
+    maxBlocks_ = maxBlocks;
+    topkN_ = topkN;
+    totalSlots_ = totalSlots;
+    slotsPerCore_ = slotsPerCore;
+    usedCoreNum_ = usedCoreNum;
+    blockTableType_ = blockTableType;
+    topkIndicesType_ = topkIndicesType;
+    curPosType_ = curPosType;
 
     coreIdx_ = GetBlockIdx();
 
@@ -172,7 +187,7 @@ __aicore__ inline int64_t SparseKvGatherKernel::ReadIndex(
     const uint32_t type,
     const uint64_t offset) const
 {
-    if (type == static_cast<uint32_t>(optiling::SKGIndexType::INT64)) {
+    if (type == 1U) {  // SKGIndexType::INT64
         return tensorI64.GetValue(offset);
     }
     return static_cast<int64_t>(tensorI32.GetValue(offset));
