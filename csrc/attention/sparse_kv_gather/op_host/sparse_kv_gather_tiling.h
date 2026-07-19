@@ -10,7 +10,8 @@
 #include <exe_graph/runtime/tiling_context.h>
 #include <graph/utils/type_utils.h>
 #include <tiling/platform/platform_ascendc.h>
-#include "register/tilingdata_base.h"
+
+#include "../op_kernel/sparse_kv_gather_tiling_data.h"
 
 namespace optiling {
 
@@ -24,30 +25,6 @@ constexpr uint32_t SKG_OUT_CTKV_IDX = 0;
 constexpr uint32_t SKG_OUT_KPE_IDX  = 1;
 
 constexpr uint32_t SKG_ATTR_BLOCK_SIZE = 0;
-
-constexpr uint32_t SKG_BLOCK_SIZE = 128;
-constexpr uint32_t SKG_CTKV_DIM   = 512;
-constexpr uint32_t SKG_KPE_DIM    = 64;
-constexpr uint32_t SKG_HEAD_NUM   = 1;
-
-enum class SKGIndexType : uint32_t {
-    INT32 = 0,
-    INT64 = 1,
-};
-
-BEGIN_TILING_DATA_DEF(SparseKvGatherTilingData)
-    TILING_DATA_FIELD_DEF(uint32_t, numBlocks)
-    TILING_DATA_FIELD_DEF(uint32_t, numActual)
-    TILING_DATA_FIELD_DEF(uint32_t, maxBlocks)
-    TILING_DATA_FIELD_DEF(uint32_t, topkN)
-    TILING_DATA_FIELD_DEF(uint64_t, totalSlots)
-    TILING_DATA_FIELD_DEF(uint64_t, slotsPerCore)
-    TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum)
-    TILING_DATA_FIELD_DEF(uint32_t, blockTableType)
-    TILING_DATA_FIELD_DEF(uint32_t, topkIndicesType)
-    TILING_DATA_FIELD_DEF(uint32_t, curPosType)
-END_TILING_DATA_DEF
-REGISTER_TILING_DATA_CLASS(SparseKvGather, SparseKvGatherTilingData)
 
 struct SKGParamInfo {
     const gert::CompileTimeTensorDesc *pagedCtkvDesc = nullptr;

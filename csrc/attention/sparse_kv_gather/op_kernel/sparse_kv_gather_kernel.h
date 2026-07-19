@@ -7,7 +7,7 @@
 #define SPARSE_KV_GATHER_KERNEL_H
 
 #include "kernel_operator.h"
-#include "../op_host/sparse_kv_gather_tiling.h"
+#include "sparse_kv_gather_tiling_data.h"
 
 namespace BaseApi {
 
