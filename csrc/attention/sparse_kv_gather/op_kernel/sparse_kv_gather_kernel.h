@@ -34,6 +34,10 @@ constexpr uint32_t SKG_KPE_ROW_BYTES =
 constexpr uint64_t SKG_MAX_DMA_EXT_STRIDE = 0xFFFFFFFFULL;
 constexpr bool SKG_ENABLE_PAIR_MOVE = true;
 
+// Index-type encoding, must match Host SKGIndexType.
+constexpr uint32_t SKG_INDEX_TYPE_INT32 = 0U;
+constexpr uint32_t SKG_INDEX_TYPE_INT64 = 1U;
+
 class SparseKvGatherKernel {
 public:
     __aicore__ inline SparseKvGatherKernel() = default;
@@ -187,7 +191,7 @@ __aicore__ inline int64_t SparseKvGatherKernel::ReadIndex(
     const uint32_t type,
     const uint64_t offset) const
 {
-    if (type == 1U) {  // SKGIndexType::INT64
+    if (type == SKG_INDEX_TYPE_INT64) {
         return tensorI64.GetValue(offset);
     }
     return static_cast<int64_t>(tensorI32.GetValue(offset));
