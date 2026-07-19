@@ -5,7 +5,7 @@
 add_op_to_compiled_list()
 
 if (BUILD_OPEN_PROJECT)
-    target_sources(op_host_aclnnInner PRIVATE
+    target_sources(op_host_aclnn PRIVATE
         sparse_kv_gather_def.cpp
     )
 endif()
@@ -20,5 +20,5 @@ add_ops_compile_options(
 )
 
 if (NOT BUILD_OPS_RTY_KERNEL)
-    add_modules_sources(OPTYPE sparse_kv_gather ACLNNTYPE aclnn_inner)
+    add_modules_sources(OPTYPE sparse_kv_gather ACLNNTYPE aclnn)
 endif()

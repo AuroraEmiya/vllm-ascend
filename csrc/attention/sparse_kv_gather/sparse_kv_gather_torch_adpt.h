@@ -17,8 +17,6 @@
 #ifndef SPARSE_KV_GATHER_TORCH_ADPT_H
 #define SPARSE_KV_GATHER_TORCH_ADPT_H
 
-#include "aclnn_torch_adapter/op_api_common.h"
-
 namespace vllm_ascend {
 namespace sparse_kv_gather_detail {
 

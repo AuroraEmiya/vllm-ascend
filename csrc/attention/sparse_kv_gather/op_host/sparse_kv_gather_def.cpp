@@ -28,7 +28,7 @@ public:
         // block_table[q, logical_block] -> physical block.
         this->Input("block_table")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_INT32, ge::DT_INT32})
+            .DataType({ge::DT_INT32, ge::DT_INT64})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
@@ -36,7 +36,7 @@ public:
         // Logical token positions, shape [num_actual, topk_n].
         this->Input("topk_indices")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_INT32, ge::DT_INT32})
+            .DataType({ge::DT_INT32, ge::DT_INT64})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
@@ -44,7 +44,7 @@ public:
         // Current logical token position for every query row.
         this->Input("cur_pos")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_INT32, ge::DT_INT32})
+            .DataType({ge::DT_INT32, ge::DT_INT64})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
