@@ -353,16 +353,31 @@ ge::graphStatus SparseKvGatherTiling::DoOpTiling(SKGTilingInfo *info)
     return ge::GRAPH_SUCCESS;
 }
 
+static ge::graphStatus SparseKvGatherTilingFunc(
+    gert::TilingContext *context)
+{
+    SKGTilingInfo info;
+    info.opName       = context->GetNodeName();
+    info.platformInfo = context->GetPlatformInfo();
+
+    SKGInfoParser parser(context);
+    if (parser.Parse(info) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    SparseKvGatherTiling tiling(context);
+    return tiling.DoOpTiling(&info);
+}
+
 static ge::graphStatus TilingPrepareForSparseKvGather(
     gert::TilingParseContext *context)
 {
-    SparseKvGatherCompileInfo compileInfo{};
-    context->SetCompileInfo(compileInfo);
+    (void)context;
     return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP_OPTILING(SparseKvGather)
-    .Tiling(TilingSparseKvGather)
+    .Tiling(SparseKvGatherTilingFunc)
     .TilingParse<SparseKvGatherCompileInfo>(TilingPrepareForSparseKvGather);
 
 }  // namespace optiling
