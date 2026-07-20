@@ -22,14 +22,3 @@ static ge::graphStatus TilingSparseKvGather(
     SparseKvGatherTiling tiling(context);
     return tiling.DoOpTiling(&info);
 }
-
-static ge::graphStatus TilingPrepareForSparseKvGather(
-    gert::TilingParseContext *context)
-{
-    (void)context;
-    return ge::GRAPH_SUCCESS;
-}
-
-IMPL_OP_OPTILING(SparseKvGather)
-    .Tiling(TilingSparseKvGather)
-    .TilingParse<int>(TilingPrepareForSparseKvGather);

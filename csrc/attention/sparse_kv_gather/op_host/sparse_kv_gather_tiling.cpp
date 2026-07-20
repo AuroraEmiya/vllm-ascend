@@ -353,4 +353,16 @@ ge::graphStatus SparseKvGatherTiling::DoOpTiling(SKGTilingInfo *info)
     return ge::GRAPH_SUCCESS;
 }
 
+static ge::graphStatus TilingPrepareForSparseKvGather(
+    gert::TilingParseContext *context)
+{
+    SparseKvGatherCompileInfo compileInfo{};
+    context->SetCompileInfo(compileInfo);
+    return ge::GRAPH_SUCCESS;
+}
+
+IMPL_OP_OPTILING(SparseKvGather)
+    .Tiling(TilingSparseKvGather)
+    .TilingParse<SparseKvGatherCompileInfo>(TilingPrepareForSparseKvGather);
+
 }  // namespace optiling

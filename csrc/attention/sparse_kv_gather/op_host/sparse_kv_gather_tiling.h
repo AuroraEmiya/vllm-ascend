@@ -26,6 +26,10 @@ constexpr uint32_t SKG_OUT_KPE_IDX  = 1;
 
 constexpr uint32_t SKG_ATTR_BLOCK_SIZE = 0;
 
+struct SparseKvGatherCompileInfo {
+    int64_t core_num;
+};
+
 struct SKGParamInfo {
     const gert::CompileTimeTensorDesc *pagedCtkvDesc = nullptr;
     const gert::StorageShape *pagedCtkvShape = nullptr;
