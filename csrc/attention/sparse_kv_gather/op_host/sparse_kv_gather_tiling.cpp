@@ -3,14 +3,15 @@
  * Licensed under CANN Open Software License Agreement Version 2.0.
  */
 
-#include "sparse_kv_gather_tiling.h"
+#include "register/op_def_registry.h"
+#include "err/ops_err.h"
 
 #include <algorithm>
 #include <cinttypes>
 #include <limits>
 #include <string>
 
-#include "register/op_def_registry.h"
+#include "sparse_kv_gather_tiling.h"
 
 namespace optiling {
 namespace {
