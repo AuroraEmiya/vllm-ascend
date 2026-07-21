@@ -101,7 +101,6 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
         "grouped_matmul_swiglu_quant_weight_nz_tensor_list"
         "lightning_indexer"
         "sparse_flash_attention"
-        "sparse_attention_score"
         "kv_quant_sparse_flash_attention"
         "matmul_allreduce_add_rmsnorm"
         "moe_init_routing_custom"
@@ -137,6 +136,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
         "chunk_gated_delta_rule_fwd_h"
         "store_kv_block"
         "store_kv_block_metadata"
+        "sparse_attention_score"
     )
 
     CUSTOM_OPS=$(IFS=';'; echo "${CUSTOM_OPS_ARRAY[*]}")
@@ -152,7 +152,6 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "grouped_matmul_swiglu_quant_weight_nz_tensor_list"
         "lightning_indexer"
         "sparse_flash_attention"
-        "sparse_attention_score"
         "kv_quant_sparse_flash_attention"
         "dispatch_ffn_combine"
         "dispatch_ffn_combine_w4_a8"
@@ -191,6 +190,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "chunk_gated_delta_rule_fwd_h"
         "store_kv_block"
         "store_kv_block_metadata"
+        "sparse_attention_score"
     )
     CUSTOM_OPS=$(IFS=';'; echo "${CUSTOM_OPS_ARRAY[*]}")
     SOC_ARG="ascend910_93"
@@ -222,9 +222,9 @@ elif [[ "$SOC_VERSION" =~ ^ascend950 ]]; then
         "recurrent_gated_delta_rule"
         "chunk_fwd_o"
         "chunk_gated_delta_rule_fwd_h"
-        "sparse_attention_score"
         "store_kv_block"
         "store_kv_block_metadata"
+        "sparse_attention_score"
     )
 
     CUSTOM_OPS=$(IFS=';'; echo "${CUSTOM_OPS_ARRAY[*]}")
