@@ -13,15 +13,17 @@ namespace BaseApi {
 using namespace AscendC;
 
 constexpr uint32_t SKG_LOCAL_CTKV_DIM = 512;
-constexpr uint32_t SKG_LOCAL_KPE_DIM  = 64;
-constexpr uint32_t SKG_LOCAL_COMBINED_DIM = SKG_LOCAL_CTKV_DIM + SKG_LOCAL_KPE_DIM;
+constexpr uint32_t SKG_LOCAL_KPE_DIM = 64;
+constexpr uint32_t SKG_LOCAL_COMBINED_DIM =
+    SKG_LOCAL_CTKV_DIM + SKG_LOCAL_KPE_DIM;
+constexpr uint32_t SKG_LOCAL_STAGE_ROWS = 16;
 constexpr uint32_t SKG_LOCAL_PAIR_WIDTH = 2;
-constexpr uint32_t SKG_LOCAL_CTKV_PAIR_DIM =
-    SKG_LOCAL_PAIR_WIDTH * SKG_LOCAL_CTKV_DIM;
-constexpr uint32_t SKG_LOCAL_KPE_PAIR_DIM =
-    SKG_LOCAL_PAIR_WIDTH * SKG_LOCAL_KPE_DIM;
+constexpr uint32_t SKG_LOCAL_CTKV_STAGE_DIM =
+    SKG_LOCAL_STAGE_ROWS * SKG_LOCAL_CTKV_DIM;
+constexpr uint32_t SKG_LOCAL_KPE_STAGE_DIM =
+    SKG_LOCAL_STAGE_ROWS * SKG_LOCAL_KPE_DIM;
 constexpr uint32_t SKG_LOCAL_STAGE_DIM =
-    SKG_LOCAL_CTKV_PAIR_DIM + SKG_LOCAL_KPE_PAIR_DIM;
+    SKG_LOCAL_CTKV_STAGE_DIM + SKG_LOCAL_KPE_STAGE_DIM;
 constexpr uint32_t SKG_LOCAL_BLOCK_SIZE = 128;
 constexpr uint32_t SKG_LOCAL_BLOCK_SHIFT = 7;
 constexpr uint32_t SKG_LOCAL_BLOCK_MASK = SKG_LOCAL_BLOCK_SIZE - 1;
@@ -70,9 +72,20 @@ private:
         uint32_t type,
         uint64_t offset) const;
 
+    template <typename IndexT>
+    __aicore__ inline int64_t ReadIndexTyped(
+        const GlobalTensor<IndexT> &tensor,
+        uint64_t offset) const;
+
     __aicore__ inline int64_t ResolvePhysicalToken(
         uint32_t queryIdx,
         int64_t logicalToken) const;
+
+    template <typename IndexT>
+    __aicore__ inline int64_t ResolvePhysicalTokenTyped(
+        uint32_t queryIdx,
+        int64_t logicalToken,
+        const GlobalTensor<IndexT> &blockTable) const;
 
     __aicore__ inline void WriteZero(
         uint64_t flatSlot,
@@ -81,6 +94,19 @@ private:
     __aicore__ inline bool CanGatherPair(
         int64_t physicalToken0,
         int64_t physicalToken1) const;
+
+    __aicore__ inline void LoadOneToStage(
+        uint32_t row,
+        int64_t physicalToken,
+        LocalTensor<uint16_t> &ctkvUb,
+        LocalTensor<uint16_t> &kpeUb) const;
+
+    __aicore__ inline void LoadPairToStage(
+        uint32_t row,
+        int64_t physicalToken0,
+        int64_t physicalToken1,
+        LocalTensor<uint16_t> &ctkvUb,
+        LocalTensor<uint16_t> &kpeUb) const;
 
     __aicore__ inline void GatherOne(
         uint64_t flatSlot,
@@ -94,6 +120,21 @@ private:
         int64_t physicalToken1,
         uint32_t pingPong,
         LocalTensor<uint16_t> &stageUb);
+
+    __aicore__ inline void GatherFullValidChunk(
+        uint64_t flatSlot,
+        uint32_t dealRows,
+        const int64_t *physicalTokens,
+        uint32_t pingPong,
+        LocalTensor<uint16_t> &stageUb);
+
+    template <typename IndexT>
+    __aicore__ inline void ProcessTyped(
+        const GlobalTensor<IndexT> &blockTable,
+        const GlobalTensor<IndexT> &topkIndices,
+        const GlobalTensor<IndexT> &curPos);
+
+    __aicore__ inline void ProcessGeneric();
 
     GlobalTensor<uint16_t> pagedCtkvGm_;
     GlobalTensor<uint16_t> pagedKpeGm_;
@@ -197,6 +238,14 @@ __aicore__ inline int64_t SparseKvGatherKernel::ReadIndex(
     return static_cast<int64_t>(tensorI32.GetValue(offset));
 }
 
+template <typename IndexT>
+__aicore__ inline int64_t SparseKvGatherKernel::ReadIndexTyped(
+    const GlobalTensor<IndexT> &tensor,
+    const uint64_t offset) const
+{
+    return static_cast<int64_t>(tensor.GetValue(offset));
+}
+
 __aicore__ inline int64_t SparseKvGatherKernel::ResolvePhysicalToken(
     const uint32_t queryIdx,
     const int64_t logicalToken) const
@@ -215,6 +264,35 @@ __aicore__ inline int64_t SparseKvGatherKernel::ResolvePhysicalToken(
         static_cast<uint64_t>(queryIdx) * maxBlocks_ + logicalBlock;
     const int64_t physicalBlock = ReadIndex(
         blockTableI32Gm_, blockTableI64Gm_, blockTableType_, blockTableOffset);
+    if (physicalBlock < 0 || physicalBlock >= static_cast<int64_t>(numBlocks_)) {
+        return -1;
+    }
+
+    const uint64_t blockOffset =
+        static_cast<uint64_t>(logicalToken) & SKG_LOCAL_BLOCK_MASK;
+    return physicalBlock * static_cast<int64_t>(SKG_LOCAL_BLOCK_SIZE) +
+           static_cast<int64_t>(blockOffset);
+}
+
+template <typename IndexT>
+__aicore__ inline int64_t SparseKvGatherKernel::ResolvePhysicalTokenTyped(
+    const uint32_t queryIdx,
+    const int64_t logicalToken,
+    const GlobalTensor<IndexT> &blockTable) const
+{
+    if (logicalToken < 0) {
+        return -1;
+    }
+
+    const uint64_t logicalBlock =
+        static_cast<uint64_t>(logicalToken) >> SKG_LOCAL_BLOCK_SHIFT;
+    if (logicalBlock >= maxBlocks_) {
+        return -1;
+    }
+
+    const uint64_t blockTableOffset =
+        static_cast<uint64_t>(queryIdx) * maxBlocks_ + logicalBlock;
+    const int64_t physicalBlock = ReadIndexTyped(blockTable, blockTableOffset);
     if (physicalBlock < 0 || physicalBlock >= static_cast<int64_t>(numBlocks_)) {
         return -1;
     }
@@ -250,47 +328,29 @@ __aicore__ inline bool SparseKvGatherKernel::CanGatherPair(
     return ctkvSrcStrideBytes <= SKG_MAX_DMA_EXT_STRIDE;
 }
 
-__aicore__ inline void SparseKvGatherKernel::GatherOne(
-    const uint64_t flatSlot,
+__aicore__ inline void SparseKvGatherKernel::LoadOneToStage(
+    const uint32_t row,
     const int64_t physicalToken,
-    const uint32_t pingPong,
-    LocalTensor<uint16_t> &stageUb)
+    LocalTensor<uint16_t> &ctkvUb,
+    LocalTensor<uint16_t> &kpeUb) const
 {
-    LocalTensor<uint16_t> pairUb =
-        stageUb[pingPong * SKG_LOCAL_STAGE_DIM];
-    LocalTensor<uint16_t> ctkvUb = pairUb;
-    LocalTensor<uint16_t> kpeUb = pairUb[SKG_LOCAL_CTKV_PAIR_DIM];
-
-    DataCopy(ctkvUb,
-             pagedCtkvGm_[static_cast<uint64_t>(physicalToken) * SKG_LOCAL_CTKV_DIM],
-             SKG_LOCAL_CTKV_DIM);
-    DataCopy(kpeUb,
-             pagedKpeGm_[static_cast<uint64_t>(physicalToken) * SKG_LOCAL_KPE_DIM],
-             SKG_LOCAL_KPE_DIM);
-
-    SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
-    WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
-
-    DataCopy(outCtkvGm_[flatSlot * SKG_LOCAL_CTKV_DIM],
-             ctkvUb, SKG_LOCAL_CTKV_DIM);
-    DataCopy(outKpeGm_[flatSlot * SKG_LOCAL_KPE_DIM],
-             kpeUb, SKG_LOCAL_KPE_DIM);
-
-    SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
+    DataCopy(
+        ctkvUb[static_cast<uint64_t>(row) * SKG_LOCAL_CTKV_DIM],
+        pagedCtkvGm_[static_cast<uint64_t>(physicalToken) * SKG_LOCAL_CTKV_DIM],
+        SKG_LOCAL_CTKV_DIM);
+    DataCopy(
+        kpeUb[static_cast<uint64_t>(row) * SKG_LOCAL_KPE_DIM],
+        pagedKpeGm_[static_cast<uint64_t>(physicalToken) * SKG_LOCAL_KPE_DIM],
+        SKG_LOCAL_KPE_DIM);
 }
 
-__aicore__ inline void SparseKvGatherKernel::GatherPair(
-    const uint64_t flatSlot,
+__aicore__ inline void SparseKvGatherKernel::LoadPairToStage(
+    const uint32_t row,
     const int64_t physicalToken0,
     const int64_t physicalToken1,
-    const uint32_t pingPong,
-    LocalTensor<uint16_t> &stageUb)
+    LocalTensor<uint16_t> &ctkvUb,
+    LocalTensor<uint16_t> &kpeUb) const
 {
-    LocalTensor<uint16_t> pairUb =
-        stageUb[pingPong * SKG_LOCAL_STAGE_DIM];
-    LocalTensor<uint16_t> ctkvUb = pairUb;
-    LocalTensor<uint16_t> kpeUb = pairUb[SKG_LOCAL_CTKV_PAIR_DIM];
-
     const uint64_t tokenGap = static_cast<uint64_t>(
         physicalToken1 - physicalToken0);
 
@@ -312,33 +372,230 @@ __aicore__ inline void SparseKvGatherKernel::GatherPair(
     padParams.isPad = false;
 
     DataCopyPad(
-        ctkvUb,
+        ctkvUb[static_cast<uint64_t>(row) * SKG_LOCAL_CTKV_DIM],
         pagedCtkvGm_[static_cast<uint64_t>(physicalToken0) * SKG_LOCAL_CTKV_DIM],
         ctkvParams,
         padParams);
     DataCopyPad(
-        kpeUb,
+        kpeUb[static_cast<uint64_t>(row) * SKG_LOCAL_KPE_DIM],
         pagedKpeGm_[static_cast<uint64_t>(physicalToken0) * SKG_LOCAL_KPE_DIM],
         kpeParams,
         padParams);
+}
+
+__aicore__ inline void SparseKvGatherKernel::GatherOne(
+    const uint64_t flatSlot,
+    const int64_t physicalToken,
+    const uint32_t pingPong,
+    LocalTensor<uint16_t> &stageUb)
+{
+    LocalTensor<uint16_t> chunkUb =
+        stageUb[pingPong * SKG_LOCAL_STAGE_DIM];
+    LocalTensor<uint16_t> ctkvUb = chunkUb;
+    LocalTensor<uint16_t> kpeUb = chunkUb[SKG_LOCAL_CTKV_STAGE_DIM];
+
+    LoadOneToStage(0, physicalToken, ctkvUb, kpeUb);
 
     SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
     WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
 
     DataCopy(outCtkvGm_[flatSlot * SKG_LOCAL_CTKV_DIM],
-             ctkvUb, SKG_LOCAL_CTKV_PAIR_DIM);
+             ctkvUb, SKG_LOCAL_CTKV_DIM);
     DataCopy(outKpeGm_[flatSlot * SKG_LOCAL_KPE_DIM],
-             kpeUb, SKG_LOCAL_KPE_PAIR_DIM);
+             kpeUb, SKG_LOCAL_KPE_DIM);
 
     SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
 }
 
-__aicore__ inline void SparseKvGatherKernel::Process()
+__aicore__ inline void SparseKvGatherKernel::GatherPair(
+    const uint64_t flatSlot,
+    const int64_t physicalToken0,
+    const int64_t physicalToken1,
+    const uint32_t pingPong,
+    LocalTensor<uint16_t> &stageUb)
 {
-    if (coreIdx_ >= usedCoreNum_) {
+    LocalTensor<uint16_t> chunkUb =
+        stageUb[pingPong * SKG_LOCAL_STAGE_DIM];
+    LocalTensor<uint16_t> ctkvUb = chunkUb;
+    LocalTensor<uint16_t> kpeUb = chunkUb[SKG_LOCAL_CTKV_STAGE_DIM];
+
+    LoadPairToStage(0, physicalToken0, physicalToken1, ctkvUb, kpeUb);
+
+    SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
+    WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
+
+    DataCopy(outCtkvGm_[flatSlot * SKG_LOCAL_CTKV_DIM],
+             ctkvUb, SKG_LOCAL_PAIR_WIDTH * SKG_LOCAL_CTKV_DIM);
+    DataCopy(outKpeGm_[flatSlot * SKG_LOCAL_KPE_DIM],
+             kpeUb, SKG_LOCAL_PAIR_WIDTH * SKG_LOCAL_KPE_DIM);
+
+    SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
+}
+
+__aicore__ inline void SparseKvGatherKernel::GatherFullValidChunk(
+    const uint64_t flatSlot,
+    const uint32_t dealRows,
+    const int64_t *physicalTokens,
+    const uint32_t pingPong,
+    LocalTensor<uint16_t> &stageUb)
+{
+    LocalTensor<uint16_t> chunkUb =
+        stageUb[pingPong * SKG_LOCAL_STAGE_DIM];
+    LocalTensor<uint16_t> ctkvUb = chunkUb;
+    LocalTensor<uint16_t> kpeUb = chunkUb[SKG_LOCAL_CTKV_STAGE_DIM];
+
+    uint32_t row = 0;
+    while (row + 1U < dealRows) {
+        if (SKG_ENABLE_PAIR_MOVE &&
+            CanGatherPair(physicalTokens[row], physicalTokens[row + 1U])) {
+            LoadPairToStage(
+                row, physicalTokens[row], physicalTokens[row + 1U], ctkvUb, kpeUb);
+            row += 2U;
+        } else {
+            LoadOneToStage(row, physicalTokens[row], ctkvUb, kpeUb);
+            ++row;
+        }
+    }
+    if (row < dealRows) {
+        LoadOneToStage(row, physicalTokens[row], ctkvUb, kpeUb);
+    }
+
+    SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
+    WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3_[pingPong]);
+
+    DataCopy(
+        outCtkvGm_[flatSlot * SKG_LOCAL_CTKV_DIM],
+        ctkvUb,
+        static_cast<uint64_t>(dealRows) * SKG_LOCAL_CTKV_DIM);
+    DataCopy(
+        outKpeGm_[flatSlot * SKG_LOCAL_KPE_DIM],
+        kpeUb,
+        static_cast<uint64_t>(dealRows) * SKG_LOCAL_KPE_DIM);
+
+    SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
+}
+
+template <typename IndexT>
+__aicore__ inline void SparseKvGatherKernel::ProcessTyped(
+    const GlobalTensor<IndexT> &blockTable,
+    const GlobalTensor<IndexT> &topkIndices,
+    const GlobalTensor<IndexT> &curPos)
+{
+    const uint64_t slotStart = static_cast<uint64_t>(coreIdx_) * slotsPerCore_;
+    uint64_t slotEnd = slotStart + slotsPerCore_;
+    if (slotEnd > totalSlots_) {
+        slotEnd = totalSlots_;
+    }
+    if (slotStart >= slotEnd) {
         return;
     }
 
+    LocalTensor<uint16_t> stageUb = stageBuf_.Get<uint16_t>();
+    LocalTensor<uint16_t> zeroUb = zeroBuf_.Get<uint16_t>();
+
+    Duplicate(zeroUb, static_cast<uint16_t>(0), SKG_LOCAL_COMBINED_DIM);
+    SetFlag<HardEvent::V_MTE3>(vectorToMte3_);
+    WaitFlag<HardEvent::V_MTE3>(vectorToMte3_);
+
+    bool stageInFlight[SKG_STAGE_BUFFER_NUM] = {false, false};
+    uint32_t pingPong = 0;
+
+    uint32_t queryIdx = static_cast<uint32_t>(slotStart / topkN_);
+    uint32_t slotInQuery = static_cast<uint32_t>(
+        slotStart - static_cast<uint64_t>(queryIdx) * topkN_);
+    int64_t currentPos = ReadIndexTyped(curPos, queryIdx);
+
+    uint64_t flatSlot = slotStart;
+    while (flatSlot < slotEnd) {
+        const uint64_t rowsLeftCore = slotEnd - flatSlot;
+        const uint32_t rowsLeftQuery = topkN_ - slotInQuery;
+        uint32_t dealRows = SKG_LOCAL_STAGE_ROWS;
+        if (rowsLeftCore < dealRows) {
+            dealRows = static_cast<uint32_t>(rowsLeftCore);
+        }
+        if (rowsLeftQuery < dealRows) {
+            dealRows = rowsLeftQuery;
+        }
+
+        int64_t physicalTokens[SKG_LOCAL_STAGE_ROWS];
+        bool fullValid = true;
+        for (uint32_t row = 0; row < dealRows; ++row) {
+            const int64_t logicalToken = ReadIndexTyped(topkIndices, flatSlot + row);
+            int64_t physicalToken = -1;
+            if (logicalToken >= 0 && logicalToken != currentPos) {
+                physicalToken = ResolvePhysicalTokenTyped(
+                    queryIdx, logicalToken, blockTable);
+            }
+            physicalTokens[row] = physicalToken;
+            fullValid = fullValid && (physicalToken >= 0);
+        }
+
+        if (fullValid) {
+            if (stageInFlight[pingPong]) {
+                WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
+            }
+            GatherFullValidChunk(
+                flatSlot, dealRows, physicalTokens, pingPong, stageUb);
+            stageInFlight[pingPong] = true;
+            pingPong ^= 1U;
+        } else {
+            uint32_t row = 0;
+            while (row < dealRows) {
+                const bool hasSecond = row + 1U < dealRows;
+                if (hasSecond && SKG_ENABLE_PAIR_MOVE &&
+                    physicalTokens[row] >= 0 && physicalTokens[row + 1U] >= 0 &&
+                    CanGatherPair(physicalTokens[row], physicalTokens[row + 1U])) {
+                    if (stageInFlight[pingPong]) {
+                        WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
+                    }
+                    GatherPair(
+                        flatSlot + row,
+                        physicalTokens[row],
+                        physicalTokens[row + 1U],
+                        pingPong,
+                        stageUb);
+                    stageInFlight[pingPong] = true;
+                    pingPong ^= 1U;
+                    row += 2U;
+                    continue;
+                }
+
+                if (physicalTokens[row] < 0) {
+                    WriteZero(flatSlot + row, zeroUb);
+                } else {
+                    if (stageInFlight[pingPong]) {
+                        WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[pingPong]);
+                    }
+                    GatherOne(
+                        flatSlot + row,
+                        physicalTokens[row],
+                        pingPong,
+                        stageUb);
+                    stageInFlight[pingPong] = true;
+                    pingPong ^= 1U;
+                }
+                ++row;
+            }
+        }
+
+        flatSlot += dealRows;
+        slotInQuery += dealRows;
+        if (slotInQuery == topkN_ && flatSlot < slotEnd) {
+            slotInQuery = 0;
+            ++queryIdx;
+            currentPos = ReadIndexTyped(curPos, queryIdx);
+        }
+    }
+
+    for (uint32_t i = 0; i < SKG_STAGE_BUFFER_NUM; ++i) {
+        if (stageInFlight[i]) {
+            WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[i]);
+        }
+    }
+}
+
+__aicore__ inline void SparseKvGatherKernel::ProcessGeneric()
+{
     const uint64_t slotStart = static_cast<uint64_t>(coreIdx_) * slotsPerCore_;
     uint64_t slotEnd = slotStart + slotsPerCore_;
     if (slotEnd > totalSlots_) {
@@ -435,6 +692,35 @@ __aicore__ inline void SparseKvGatherKernel::Process()
             WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_[i]);
         }
     }
+}
+
+__aicore__ inline void SparseKvGatherKernel::Process()
+{
+    if (coreIdx_ >= usedCoreNum_) {
+        return;
+    }
+
+    const bool allInt32 =
+        blockTableType_ == SKG_INDEX_TYPE_INT32 &&
+        topkIndicesType_ == SKG_INDEX_TYPE_INT32 &&
+        curPosType_ == SKG_INDEX_TYPE_INT32;
+    if (allInt32) {
+        ProcessTyped<int32_t>(
+            blockTableI32Gm_, topkIndicesI32Gm_, curPosI32Gm_);
+        return;
+    }
+
+    const bool allInt64 =
+        blockTableType_ == SKG_INDEX_TYPE_INT64 &&
+        topkIndicesType_ == SKG_INDEX_TYPE_INT64 &&
+        curPosType_ == SKG_INDEX_TYPE_INT64;
+    if (allInt64) {
+        ProcessTyped<int64_t>(
+            blockTableI64Gm_, topkIndicesI64Gm_, curPosI64Gm_);
+        return;
+    }
+
+    ProcessGeneric();
 }
 
 }  // namespace BaseApi

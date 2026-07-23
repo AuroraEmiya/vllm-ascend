@@ -172,6 +172,19 @@ ge::graphStatus SKGInfoParser::CheckDtypes(SKGTilingInfo &info) const
                 static_cast<int32_t>(curPosType));
         return ge::GRAPH_FAILED;
     }
+    if (blockTableType != topkIndicesType || blockTableType != curPosType) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "block_table, topk_indices and cur_pos must use the same dtype, got %d, %d, %d.",
+                static_cast<int32_t>(blockTableType),
+                static_cast<int32_t>(topkIndicesType),
+                static_cast<int32_t>(curPosType));
+        return ge::GRAPH_FAILED;
+    }
+    if (ctkvType == ge::DT_FLOAT16 && blockTableType != ge::DT_INT32) {
+        OP_LOGE(OP_NAME_STR.c_str(),
+                "FLOAT16 cache currently requires INT32 indices.");
+        return ge::GRAPH_FAILED;
+    }
 
     info.blockTableType = ToIndexType(blockTableType);
     info.topkIndicesType = ToIndexType(topkIndicesType);

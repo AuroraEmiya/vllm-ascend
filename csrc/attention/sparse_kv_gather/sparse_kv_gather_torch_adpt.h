@@ -64,6 +64,12 @@ inline void validate_inputs(
                 "topk_indices must be int32 or int64");
     TORCH_CHECK(is_index_dtype(cur_pos.scalar_type()),
                 "cur_pos must be int32 or int64");
+    TORCH_CHECK(block_table.scalar_type() == topk_indices.scalar_type() &&
+                    block_table.scalar_type() == cur_pos.scalar_type(),
+                "block_table, topk_indices and cur_pos must use the same dtype");
+    TORCH_CHECK(paged_ctkv.scalar_type() != at::kHalf ||
+                    block_table.scalar_type() == at::kInt,
+                "float16 cache currently requires int32 indices");
 
     TORCH_CHECK(paged_ctkv.dim() == 4,
                 "paged_ctkv must have shape [num_blocks, 128, 1, 512]");
