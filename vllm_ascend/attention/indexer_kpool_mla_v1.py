@@ -79,6 +79,20 @@ class AscendIndexerKPoolMetadataBuilder(AttentionMetadataBuilder):
         self.logical_block_size = kv_cache_spec.block_size
         self.storage_block_size = kv_cache_spec.storage_block_size
         self.compress_ratio = kv_cache_spec.compress_ratio
+        scheduler_config = vllm_config.scheduler_config
+        # ACLGraph replay keeps the addresses captured on the first run. The
+        # derived compressed metadata therefore needs persistent storage that
+        # is refreshed in place on every builder invocation.
+        self._slot_mapping_buffer = torch.empty(
+            scheduler_config.max_num_batched_tokens,
+            dtype=torch.int64,
+            device=device,
+        )
+        self._seq_lens_buffer = torch.empty(
+            scheduler_config.max_num_seqs,
+            dtype=torch.int32,
+            device=device,
+        )
 
     def build(
         self,
@@ -90,16 +104,21 @@ class AscendIndexerKPoolMetadataBuilder(AttentionMetadataBuilder):
         num_reqs = common_attn_metadata.num_reqs
         num_input_tokens = common_attn_metadata.num_input_tokens
         positions = common_attn_metadata.positions[:num_input_tokens].long()
-        slot_mapping = format_indexer_kpool_slot_mapping(
-            common_attn_metadata.slot_mapping[:num_input_tokens],
-            positions,
-            self.logical_block_size,
-            self.compress_ratio,
+        slot_mapping = self._slot_mapping_buffer[:num_input_tokens]
+        slot_mapping.copy_(
+            format_indexer_kpool_slot_mapping(
+                common_attn_metadata.slot_mapping[:num_input_tokens],
+                positions,
+                self.logical_block_size,
+                self.compress_ratio,
+            )
         )
-        seq_lens = torch.div(
+        seq_lens = self._seq_lens_buffer[:num_reqs]
+        torch.div(
             common_attn_metadata.seq_lens[:num_reqs],
             self.compress_ratio,
             rounding_mode="floor",
+            out=seq_lens,
         )
         if common_attn_metadata._seq_lens_cpu is not None:
             seq_lens_cpu = common_attn_metadata._seq_lens_cpu[:num_reqs]
@@ -263,8 +282,13 @@ class AscendIndexerKPoolMLAMetadataBuilder(AscendSFAMetadataBuilder):
 
     @classmethod
     def get_cudagraph_support(cls, vllm_config: VllmConfig, kv_cache_spec) -> AttentionCGSupport:
-        # Pool completion currently uses dynamic nonzero/gather shapes.
-        return AttentionCGSupport.NEVER
+        if getattr(vllm_config, "speculative_config", None) is not None:
+            # Lightning Indexer's right-down causal mask does not model the
+            # compressed-pool boundary for multi-token speculative queries.
+            return AttentionCGSupport.NEVER
+        # The graph path uses fixed-shape cache updates and is only valid for
+        # uniform decode batches. Prefill keeps the eager implementation.
+        return AttentionCGSupport.UNIFORM_BATCH
 
     def _build(self, common_attn_metadata, draft_index: int | None = None):
         metadata = super()._build(common_attn_metadata, draft_index)
@@ -362,14 +386,13 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
     ) -> None:
         # Sliding-window metadata marks evicted prompt tokens with -1. Those
         # rows are already compressed and must not be scattered into the tail
-        # state page during a long/chunked prefill.
-        valid_rows = (slot_mapping >= 0).nonzero().flatten()
-        if valid_rows.numel() == 0:
-            return
-        torch_npu.npu_scatter_nd_update_(
+        # state page during a long/chunked prefill. ScatterNdUpdateV2 filters
+        # negative/out-of-range indices on device, preserving a static shape
+        # for ACLGraph capture.
+        torch.ops._C_ascend.npu_scatter_nd_update_v2(
             cache.view(-1, values.shape[-1]),
-            slot_mapping[valid_rows].view(-1, 1),
-            values[valid_rows].view(-1, values.shape[-1]),
+            slot_mapping.view(-1, 1),
+            values.view(-1, values.shape[-1]),
         )
 
     def _get_mla_cache_views(
@@ -408,7 +431,9 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
         block_ids = torch.div(slots, block_size, rounding_mode="floor")
         block_offsets = torch.remainder(slots, block_size)
         indices = torch.stack([block_ids, block_offsets], dim=-1)
-        torch_npu.npu_scatter_nd_update_(
+        # ScatterNdUpdateV2 ignores negative slots, which are used by padded
+        # full-graph decode rows.
+        torch.ops._C_ascend.npu_scatter_nd_update_v2(
             cache,
             indices,
             values.view(values.shape[0], *cache.shape[2:]),
