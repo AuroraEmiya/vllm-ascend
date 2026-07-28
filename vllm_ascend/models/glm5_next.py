@@ -1153,49 +1153,27 @@ class AscendSparseAttnIndexerKpool(nn.Module):
                 pool_state,
             )
             pool_k, pool_gate = pool_state.split(self.head_dim, dim=-1)
-            self.kpool_compress_and_write_cache(
+            torch.ops.vllm.glm5_next_kpool_compress_and_write_cache(
                 indexer_cache,
                 pool_k.to(torch.bfloat16),
                 pool_gate.to(torch.bfloat16),
                 compress_ape,
                 indexer_metadata.slot_mapping[selected].to(torch.int64),
-                pool_size=index_kpool,
-                head_dim=self.head_dim,
-                round_scale=False,
             )
 
         max_pool_seq_len = int(indexer_metadata.seq_lens_cpu.max())
-        pool_ids = self.indexer_kpool_topk_pytorch(
-            query=q_values[:num_tokens],
-            key=indexer_cache,
-            weights=weights[:num_tokens].to(q_values.dtype),
-            actual_seq_lengths_query=attn_metadata.cum_query_lens,
-            actual_seq_lengths_key=indexer_metadata.seq_lens,
-            block_table=indexer_metadata.block_table,
-            query_positions=positions,
-            sparse_count=self.pool_topk,
-            pool_size=index_kpool,
-            max_key_seq_len=max_pool_seq_len,
+        return torch.ops.vllm.glm5_next_lightning_indexer(
+            q_values[:num_tokens],
+            indexer_cache,
+            weights[:num_tokens].to(q_values.dtype),
+            attn_metadata.cum_query_lens,
+            indexer_metadata.seq_lens,
+            indexer_metadata.block_table,
+            positions,
+            index_topk=self.topk_tokens,
+            index_kpool=index_kpool,
+            max_pool_seq_len=max_pool_seq_len,
         )
-        expanded = self.expand_pools_to_tokens(
-            pool_ids,
-            pool_ids >= 0,
-            self.topk_tokens,
-            index_kpool,
-        )
-        query_seq_lens = positions.to(torch.int32) + 1
-        pool_lens = torch.div(
-            query_seq_lens,
-            index_kpool,
-            rounding_mode="floor",
-        )
-        expanded = self.append_tail_to_topk(
-            expanded,
-            query_seq_lens,
-            pool_lens,
-            index_kpool,
-        )
-        return expanded.unsqueeze(1)
 
 
 class AscendGlm5NextIndexer(nn.Module):
