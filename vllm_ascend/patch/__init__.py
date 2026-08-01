@@ -786,7 +786,19 @@
 #
 # ** 11. File: worker/patch_mamba_utils.py**
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#   1. `vllm.v1.worker.mamba_utils.batch_memcpy_kernel = batch_memcpy_kernel`
+#   1. `vllm.v1.worker.mamba_utils._copy_mamba_state_block = _copy_mamba_state_block`
+#    Why:
+#       The shared Mamba state-copy device helper needs Ascend-safe pointer
+#       arithmetic when it is inlined by the V2 align kernels.
+#    How:
+#       Replace it with the Ascend implementation, which converts byte addresses
+#       to pointers outside the copy loops.
+#    Related PR (if no, explain why):
+#       No, this is an Ascend Triton compiler compatibility patch.
+#    Future Plan:
+#       Remove this patch when upstream exposes an NPU-safe helper through a
+#       stable backend hook.
+#   2. `vllm.v1.worker.mamba_utils.batch_memcpy_kernel = batch_memcpy_kernel`
 #    Why:
 #       Oringnal batch_memcpy_kernel implemented in vLLM might encounter bugs when running on
 #       Ascend hardwares.
@@ -797,7 +809,7 @@
 #       (1) oringnal batch_memcpy_kernel can run on Ascend hardware.
 #       or
 #       (2) design a dispatch mechanism for batch_memcpy_kernel.
-#   2. `vllm.v1.worker.mamba_utils.batch_memcpy = batch_memcpy`
+#   3. `vllm.v1.worker.mamba_utils.batch_memcpy = batch_memcpy`
 #    Why:
 #       vLLM use BLOCK_SIZE 1024 for batch_memcpy_kernel. This results in suboptimal performance
 #       on Ascend hardwares.
@@ -806,7 +818,7 @@
 #    Future Plan:
 #       Remove this patch when:
 #       design a dispatch mechanism for batch_memcpy_kernel.
-#   3. `mamba_utils.preprocess_mamba = preprocess_mamba`
+#   4. `mamba_utils.preprocess_mamba = preprocess_mamba`
 #    Why:
 #       1. preprocess_mamba has a assert logic, cause kv transfer call fails
 #       2. preprocess_mamba copy the state of previous step to the last block before kv transfer load
