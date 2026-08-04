@@ -70,8 +70,8 @@ class IndexerKPoolMLACacheLayer(nn.Module, AttentionLayerBase):
         self.head_size = kv_lora_rank + qk_rope_head_dim
         if cache_config is None:
             raise ValueError("GLM-5 Indexer KPool MLA requires cache_config.")
-        # GLM-5 Next 的完整 MLA KV cache 固定使用 BF16，与 Indexer K 和
-        # compressor state 的缓存精度保持一致，不接受全局量化 cache 覆盖。
+        # GLM-5 Next's full MLA KV cache remains BF16 on every device. The A5
+        # shared-KV operator consumes this cache directly without quantization.
         self.kv_cache_dtype = "bfloat16"
         self.block_size = cache_config.block_size
         self.attn_backend = AscendIndexerKPoolMLABackend

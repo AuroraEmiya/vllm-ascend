@@ -9,6 +9,9 @@ from dataclasses import dataclass
 import torch
 import torch_npu
 from vllm.config import VllmConfig
+from vllm.config.compilation import CUDAGraphMode
+from vllm.forward_context import get_forward_context
+from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (
     AttentionBackend,
     AttentionCGSupport,
@@ -28,8 +31,11 @@ from vllm_ascend.core.kv_cache_interface import (
     AscendIndexerKPoolStateSpec,
     format_indexer_kpool_slot_mapping,
 )
+from vllm_ascend.device.device_op import DeviceOperator
 
 INDEXER_KPOOL_MLA_SPARSE_ATTN_QUERY_CHUNK_SIZE = 16
+INDEXER_KPOOL_MLA_SAS_METADATA_SIZE = 1024
+GLM5_SFA_KERNEL_BLOCK_SIZE = 128
 
 
 @dataclass
@@ -37,6 +43,9 @@ class AscendIndexerKPoolMLAMetadata(AscendSFAMetadata):
     """主 MLA KV cache 使用的 SFA metadata。"""
 
     cache_role: str = "kv"
+    sas_metadata: torch.Tensor | None = None
+    sas_sinks: torch.Tensor | None = None
+    query_start_loc: torch.Tensor | None = None
 
 
 @dataclass
@@ -55,6 +64,17 @@ class AscendIndexerKPoolMetadata:
 
 class AscendIndexerKPoolMetadataBuilder(AttentionMetadataBuilder):
     """为压缩 Indexer K cache 构造 pool 级寻址信息。"""
+
+    @classmethod
+    def get_cudagraph_support(
+        cls,
+        vllm_config: VllmConfig,
+        kv_cache_spec,
+    ) -> AttentionCGSupport:
+        # This cache-only builder still participates in graph capability
+        # reduction. Its decode metadata uses persistent buffers refreshed in
+        # place, so it must not disable the main model's uniform decode graph.
+        return AttentionCGSupport.UNIFORM_BATCH
 
     def __init__(
         self,
@@ -79,6 +99,39 @@ class AscendIndexerKPoolMetadataBuilder(AttentionMetadataBuilder):
         self.logical_block_size = kv_cache_spec.block_size
         self.storage_block_size = kv_cache_spec.storage_block_size
         self.compress_ratio = kv_cache_spec.compress_ratio
+        if self.logical_block_size % GLM5_SFA_KERNEL_BLOCK_SIZE:
+            raise ValueError(
+                "GLM-5 logical block size must be divisible by the SFA "
+                f"kernel block size: logical={self.logical_block_size}, "
+                f"kernel={GLM5_SFA_KERNEL_BLOCK_SIZE}."
+            )
+        self.kernel_blocks_per_logical_block = (
+            self.logical_block_size // GLM5_SFA_KERNEL_BLOCK_SIZE
+        )
+        scheduler_config = vllm_config.scheduler_config
+        # ACLGraph replay keeps the addresses captured on the first run. The
+        # derived compressed metadata therefore needs persistent storage that
+        # is refreshed in place on every builder invocation.
+        self._slot_mapping_buffer = torch.empty(
+            scheduler_config.max_num_batched_tokens,
+            dtype=torch.int64,
+            device=device,
+        )
+        self._seq_lens_buffer = torch.empty(
+            scheduler_config.max_num_seqs,
+            dtype=torch.int32,
+            device=device,
+        )
+        max_logical_blocks = cdiv(
+            vllm_config.model_config.max_model_len,
+            self.logical_block_size,
+        )
+        self._block_table_buffer = torch.empty(
+            scheduler_config.max_num_seqs,
+            max_logical_blocks,
+            dtype=torch.int32,
+            device=device,
+        )
 
     def build(
         self,
@@ -90,16 +143,21 @@ class AscendIndexerKPoolMetadataBuilder(AttentionMetadataBuilder):
         num_reqs = common_attn_metadata.num_reqs
         num_input_tokens = common_attn_metadata.num_input_tokens
         positions = common_attn_metadata.positions[:num_input_tokens].long()
-        slot_mapping = format_indexer_kpool_slot_mapping(
-            common_attn_metadata.slot_mapping[:num_input_tokens],
-            positions,
-            self.logical_block_size,
-            self.compress_ratio,
+        slot_mapping = self._slot_mapping_buffer[:num_input_tokens]
+        slot_mapping.copy_(
+            format_indexer_kpool_slot_mapping(
+                common_attn_metadata.slot_mapping[:num_input_tokens],
+                positions,
+                self.logical_block_size,
+                self.compress_ratio,
+            )
         )
-        seq_lens = torch.div(
+        seq_lens = self._seq_lens_buffer[:num_reqs]
+        torch.div(
             common_attn_metadata.seq_lens[:num_reqs],
             self.compress_ratio,
             rounding_mode="floor",
+            out=seq_lens,
         )
         if common_attn_metadata._seq_lens_cpu is not None:
             seq_lens_cpu = common_attn_metadata._seq_lens_cpu[:num_reqs]
@@ -112,8 +170,37 @@ class AscendIndexerKPoolMetadataBuilder(AttentionMetadataBuilder):
             self.compress_ratio,
             rounding_mode="floor",
         )
+        expanded_block_table = common_attn_metadata.block_table_tensor[
+            :num_reqs
+        ]
+        split = self.kernel_blocks_per_logical_block
+        if expanded_block_table.shape[1] % split:
+            raise ValueError(
+                "GLM-5 indexer received a partially expanded SFA block "
+                f"table: width={expanded_block_table.shape[1]}, split={split}."
+            )
+        logical_width = expanded_block_table.shape[1] // split
+        if logical_width > self._block_table_buffer.shape[1]:
+            raise ValueError(
+                "GLM-5 indexer block table exceeds its persistent buffer: "
+                f"required={logical_width}, capacity="
+                f"{self._block_table_buffer.shape[1]}."
+            )
+        block_table = self._block_table_buffer[
+            :num_reqs, :logical_width
+        ]
+        # The common full-group table is expanded for the C128 SFA kernel:
+        # scheduler block N becomes [split*N, ..., split*N+split-1]. The
+        # compressed indexer owns one physical page per scheduler block, so it
+        # must recover N rather than treating the SFA sub-blocks as pages.
+        torch.div(
+            expanded_block_table[:, ::split],
+            split,
+            rounding_mode="floor",
+            out=block_table,
+        )
         return AscendIndexerKPoolMetadata(
-            block_table=common_attn_metadata.block_table_tensor[:num_reqs],
+            block_table=block_table,
             slot_mapping=slot_mapping,
             seq_lens=seq_lens,
             seq_lens_cpu=seq_lens_cpu,
@@ -165,6 +252,17 @@ class AscendIndexerKPoolStateMetadata:
 
 class AscendIndexerKPoolStateMetadataBuilder(AttentionMetadataBuilder):
     """为 GLM-5 compressor tail cache 构造独立 metadata。"""
+
+    @classmethod
+    def get_cudagraph_support(
+        cls,
+        vllm_config: VllmConfig,
+        kv_cache_spec,
+    ) -> AttentionCGSupport:
+        # Full-graph state writes use the fixed-shape sentinel path. Do not let
+        # the base class default NEVER downgrade FULL_DECODE_ONLY for the main
+        # model merely because this cache-only builder is in the cache group.
+        return AttentionCGSupport.UNIFORM_BATCH
 
     def __init__(
         self,
@@ -260,15 +358,104 @@ class AscendIndexerKPoolMLAMetadataBuilder(AscendSFAMetadataBuilder):
             metadata_cls=AscendIndexerKPoolMLAMetadata,
             **kwargs,
         )
+        self._sas_metadata_buffer: torch.Tensor | None = None
+        self._spec_sas_metadata_buffers: list[torch.Tensor] | None = None
+        self._sas_sinks: torch.Tensor | None = None
+        self._seqused_q: torch.Tensor | None = None
+        if DeviceOperator.supports_sharedkv_indexer_kpool_mla():
+            self._sas_metadata_buffer = torch.zeros(
+                INDEXER_KPOOL_MLA_SAS_METADATA_SIZE,
+                dtype=torch.int32,
+                device=device,
+            )
+            num_heads_q = (
+                self.model_config.hf_text_config.num_attention_heads
+                // self.vllm_config.parallel_config.tensor_parallel_size
+            )
+            self._sas_sinks = torch.ones(
+                num_heads_q, dtype=torch.float32, device=device
+            )
+            self._seqused_q = torch.empty(
+                0,
+                dtype=torch.int32,
+                device=device,
+            )
+            if self.speculative_config is not None:
+                self._spec_sas_metadata_buffers = [
+                    torch.zeros(
+                        INDEXER_KPOOL_MLA_SAS_METADATA_SIZE,
+                        dtype=torch.int32,
+                        device=device,
+                    )
+                    for _ in range(self.speculative_config.num_speculative_tokens)
+                ]
 
     @classmethod
     def get_cudagraph_support(cls, vllm_config: VllmConfig, kv_cache_spec) -> AttentionCGSupport:
-        # Pool completion currently uses dynamic nonzero/gather shapes.
-        return AttentionCGSupport.NEVER
+        # The graph path uses fixed-shape cache updates and is only valid for
+        # uniform decode batches. The GLM MTP proposer is forced to eager mode
+        # independently; its presence must not disable the target model graph.
+        return AttentionCGSupport.UNIFORM_BATCH
 
     def _build(self, common_attn_metadata, draft_index: int | None = None):
         metadata = super()._build(common_attn_metadata, draft_index)
         metadata.cache_role = "kv"
+        if not DeviceOperator.supports_sharedkv_indexer_kpool_mla():
+            return metadata
+
+        if draft_index is None:
+            sas_metadata_buffer = self._sas_metadata_buffer
+        else:
+            if self._spec_sas_metadata_buffers is None:
+                raise RuntimeError("Missing GLM-5 speculative sparse-attention metadata buffers.")
+            sas_metadata_buffer = self._spec_sas_metadata_buffers[draft_index - 1]
+        if sas_metadata_buffer is None or self._seqused_q is None:
+            raise RuntimeError("Missing GLM-5 A5 sparse-attention metadata storage.")
+
+        num_reqs = common_attn_metadata.num_reqs
+        query_start_loc = common_attn_metadata.query_start_loc[: num_reqs + 1]
+        metadata.query_start_loc = query_start_loc
+        seq_lens = common_attn_metadata.seq_lens[:num_reqs]
+        query_lens = query_start_loc[1:] - query_start_loc[:-1]
+        hf_config = self.model_config.hf_text_config
+        metadata_op = DeviceOperator.get_sparse_attention_metadata_op_indexer_kpool_mla()
+        generated_metadata = metadata_op(
+            **DeviceOperator.get_sparse_attention_metadata_kwargs_indexer_kpool_mla(query_start_loc.device),
+            num_heads_q=hf_config.num_attention_heads // self.vllm_config.parallel_config.tensor_parallel_size,
+            num_heads_kv=1,
+            head_dim=hf_config.kv_lora_rank,
+            cu_seqlens_q=query_start_loc,
+            cu_seqlens_ori_kv=None,
+            cu_seqlens_cmp_kv=None,
+            seqused_q=self._seqused_q,
+            seqused_ori_kv=seq_lens,
+            seqused_cmp_kv=None,
+            cmp_residual_kv=None,
+            max_seqlen_q=query_lens.max(),
+            max_seqlen_ori_kv=seq_lens.max(),
+            max_seqlen_cmp_kv=0,
+            batch_size=num_reqs,
+            ori_topk=hf_config.index_topk + hf_config.index_kpool - 1,
+            cmp_topk=0,
+            cmp_ratio=1,
+            ori_mask_mode=3,
+            cmp_mask_mode=3,
+            ori_win_left=0,
+            ori_win_right=0,
+            layout_q="TND",
+            layout_kv="PA_BBND",
+            has_ori_kv=True,
+            has_cmp_kv=False,
+        )
+        if generated_metadata.numel() != sas_metadata_buffer.numel():
+            raise ValueError(
+                "GLM-5 sparse-attention metadata must contain "
+                f"{sas_metadata_buffer.numel()} int32 values, got "
+                f"{generated_metadata.numel()}."
+            )
+        sas_metadata_buffer.copy_(generated_metadata)
+        metadata.sas_metadata = sas_metadata_buffer
+        metadata.sas_sinks = self._sas_sinks
         return metadata
 
 
@@ -305,7 +492,7 @@ class AscendIndexerKPoolMLABackend(AttentionBackend):
 
     @staticmethod
     def get_supported_kernel_block_sizes() -> list[int]:
-        return [128]
+        return [GLM5_SFA_KERNEL_BLOCK_SIZE]
 
 
 class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
@@ -323,9 +510,9 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
             )
         if self.enable_dsa_cp:
             raise ValueError("GLM-5 Indexer KPool MLA does not yet support DSA context parallelism.")
-        # Indexer KPool MLA owns three cache groups. SFA's packed-C8 and fused MLA
-        # prolog paths assume one combined MLAAttention cache and therefore
-        # must not reinterpret this layout.
+        # Indexer KPool MLA owns three physical cache roles. Main MLA and the
+        # compressed indexer share one scheduler group, while compressor state
+        # uses another. SFA's fused cache paths must not reinterpret this layout.
         self.use_sparse_c8_indexer = False
         self.use_sparse_c8_sfa = False
         self.enable_sfa_prolog_v3 = False
@@ -363,13 +550,14 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
         # Sliding-window metadata marks evicted prompt tokens with -1. Those
         # rows are already compressed and must not be scattered into the tail
         # state page during a long/chunked prefill.
-        valid_rows = (slot_mapping >= 0).nonzero().flatten()
-        if valid_rows.numel() == 0:
-            return
-        torch_npu.npu_scatter_nd_update_(
-            cache.view(-1, values.shape[-1]),
-            slot_mapping[valid_rows].view(-1, 1),
-            values[valid_rows].view(-1, values.shape[-1]),
+        # The state payload may be an as_strided prefix of a padded physical
+        # page. Keep the block dimension explicit instead of flattening across
+        # page padding with view().
+        AscendIndexerKPoolMLAImpl._scatter_paged_cache(
+            cache,
+            slot_mapping,
+            values,
+            cache.shape[1],
         )
 
     def _get_mla_cache_views(
@@ -405,13 +593,54 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
         values: torch.Tensor,
         block_size: int,
     ) -> None:
-        block_ids = torch.div(slots, block_size, rounding_mode="floor")
-        block_offsets = torch.remainder(slots, block_size)
+        if get_forward_context().cudagraph_runtime_mode == CUDAGraphMode.FULL:
+            # A GLM-5 logical cache may occupy only the payload prefix of a
+            # larger physical page. Flattening such an as_strided view would
+            # either fail or discard the physical page stride, so address the
+            # page and its token offset independently.
+            values = values.reshape(values.shape[0], *cache.shape[2:])
+            valid = (slots >= 0) & (slots < cache.shape[0] * block_size)
+            safe_slots = torch.where(valid, slots, torch.zeros_like(slots))
+            block_ids = torch.div(
+                safe_slots,
+                block_size,
+                rounding_mode="floor",
+            )
+            block_offsets = torch.remainder(safe_slots, block_size)
+            row_mask = valid.view(-1, *([1] * (values.ndim - 1)))
+            row_zero = cache[0, 0].clone()
+            safe_values = torch.where(row_mask, values, row_zero.unsqueeze(0))
+            row_zero_mask = valid & (slots == 0)
+            update_zero = torch.where(
+                row_zero_mask.view(-1, *([1] * (values.ndim - 1))),
+                values,
+                torch.zeros_like(values),
+            ).sum(dim=0)
+            expected_zero = torch.where(
+                row_zero_mask.any(),
+                update_zero,
+                row_zero,
+            )
+            cache[block_ids, block_offsets] = safe_values
+            cache[0, 0].copy_(expected_zero)
+            return
+        valid_rows = (
+            (slots >= 0) & (slots < cache.shape[0] * block_size)
+        ).nonzero().flatten()
+        if valid_rows.numel() == 0:
+            return
+        valid_slots = slots[valid_rows]
+        block_ids = torch.div(
+            valid_slots,
+            block_size,
+            rounding_mode="floor",
+        )
+        block_offsets = torch.remainder(valid_slots, block_size)
         indices = torch.stack([block_ids, block_offsets], dim=-1)
         torch_npu.npu_scatter_nd_update_(
             cache,
             indices,
-            values.view(values.shape[0], *cache.shape[2:]),
+            values.reshape(values.shape[0], *cache.shape[2:])[valid_rows],
         )
 
     def indexer_select_pre_process(
@@ -721,13 +950,14 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
                 max=packed_kv_cache.shape[0] - 1,
             )
 
-            # Advanced indexing materializes one contiguous [C,K,576] tensor
-            # from the packed cache. The source cache itself stays packed.
-            flat_cache_slots = safe_physical_blocks * block_size + page_offsets
-            gathered_packed_kv = packed_kv_cache.view(
-                -1,
-                packed_kv_cache.shape[-1],
-            )[flat_cache_slots]
+            # Index both page dimensions so padded physical-page strides are
+            # preserved. Advanced indexing materializes a contiguous [C,K,D]
+            # result without requiring the source cache itself to be contiguous.
+            gathered_packed_kv = packed_kv_cache[
+                safe_physical_blocks,
+                page_offsets,
+                0,
+            ]
             gathered_kv, gathered_rope = gathered_packed_kv.split(
                 [
                     ql_nope.shape[-1],
@@ -795,17 +1025,19 @@ class AscendIndexerKPoolMLAImpl(AscendSFAImpl):
 
         packed_kv_cache = self._indexer_kpool_mla_caches.get("kv")
         if not isinstance(packed_kv_cache, torch.Tensor):
-            raise ValueError("Indexer KPool MLA PyTorch sparse attention requires the packed MLA cache.")
-        return self._sparse_attention_pytorch(
-            ql_nope=ql_nope,
-            q_pe=q_pe,
-            packed_kv_cache=packed_kv_cache,
-            topk_indices=topk_indices,
+            raise ValueError("Indexer KPool MLA sparse attention requires the packed MLA cache.")
+        return DeviceOperator.execute_sparse_attention_indexer_kpool_mla(
+            self,
+            ql_nope,
+            q_pe,
+            packed_kv_cache,
+            topk_indices,
+            attn_metadata,
+            actual_seq_lengths_query,
+            actual_seq_lengths_key,
             block_table=attn_metadata.block_table,
-            actual_seq_lengths_query=actual_seq_lengths_query,
-            actual_seq_lengths_key=actual_seq_lengths_key,
-            scale=self.scale,
-            num_actual_tokens=attn_metadata.num_actual_tokens,
+            sparse_mode=3,
+            return_lse=False,
         )
 
     def indexer_select_post_process(

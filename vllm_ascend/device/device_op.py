@@ -686,6 +686,40 @@ class BaseDeviceAdaptor:
         )
 
     @staticmethod
+    def execute_sparse_attention_indexer_kpool_mla(
+        sfa_impl,
+        ql_nope: torch.Tensor,
+        q_pe: torch.Tensor,
+        packed_kv_cache: torch.Tensor,
+        topk_indices: torch.Tensor,
+        attn_metadata,
+        actual_seq_lengths_query: torch.Tensor,
+        actual_seq_lengths_key: torch.Tensor,
+        *,
+        block_table: torch.Tensor | None = None,
+        sparse_mode: int = 3,
+        return_lse: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Execute Indexer KPool MLA attention as a sequence of small ops."""
+        if return_lse:
+            raise NotImplementedError("Indexer KPool MLA small-op attention does not expose LSE.")
+        if sparse_mode != 3:
+            raise ValueError(f"Indexer KPool MLA only supports sparse_mode=3, got {sparse_mode}.")
+        if block_table is None:
+            block_table = attn_metadata.block_table
+        return sfa_impl._sparse_attention_pytorch(
+            ql_nope=ql_nope,
+            q_pe=q_pe,
+            packed_kv_cache=packed_kv_cache,
+            topk_indices=topk_indices,
+            block_table=block_table,
+            actual_seq_lengths_query=actual_seq_lengths_query,
+            actual_seq_lengths_key=actual_seq_lengths_key,
+            scale=sfa_impl.scale,
+            num_actual_tokens=attn_metadata.num_actual_tokens,
+        )
+
+    @staticmethod
     def execute_kv_quant_sparse_flash_attention(
         sfa_impl,
         ql_nope: torch.Tensor,
@@ -799,6 +833,20 @@ class BaseDeviceAdaptor:
     def get_dsa_sparse_attn_base_kwargs():
         """Returns base kwargs for sparse attention (extended by caller)."""
         return {}
+
+    @staticmethod
+    def supports_sharedkv_indexer_kpool_mla() -> bool:
+        """Whether Indexer KPool MLA should build A5 shared-KV metadata."""
+        return False
+
+    @staticmethod
+    def get_sparse_attention_metadata_op_indexer_kpool_mla():
+        raise NotImplementedError("Indexer KPool MLA fused sparse attention is A5-only.")
+
+    @staticmethod
+    def get_sparse_attention_metadata_kwargs_indexer_kpool_mla(device):
+        del device
+        raise NotImplementedError("Indexer KPool MLA fused sparse attention is A5-only.")
 
     @staticmethod
     def get_dsa_compressor_slot_mapping_format():
@@ -1508,6 +1556,94 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
     @staticmethod
     def get_dsa_sparse_attn_base_kwargs():
         return {"kv_quant_mode": 1, "tile_size": 64, "rope_head_dim": 64}
+
+    @staticmethod
+    def supports_sharedkv_indexer_kpool_mla() -> bool:
+        return True
+
+    @staticmethod
+    def get_sparse_attention_metadata_op_indexer_kpool_mla():
+        return torch.ops._C_ascend.npu_sparse_flash_mla_metadata
+
+    @staticmethod
+    def get_sparse_attention_metadata_kwargs_indexer_kpool_mla(device):
+        return {"device": str(device)}
+
+    @staticmethod
+    def execute_sparse_attention_indexer_kpool_mla(
+        sfa_impl,
+        ql_nope: torch.Tensor,
+        q_pe: torch.Tensor,
+        packed_kv_cache: torch.Tensor,
+        topk_indices: torch.Tensor,
+        attn_metadata,
+        actual_seq_lengths_query: torch.Tensor,
+        actual_seq_lengths_key: torch.Tensor,
+        *,
+        block_table: torch.Tensor | None = None,
+        sparse_mode: int = 3,
+        return_lse: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if return_lse:
+            raise NotImplementedError("GLM-5 A5 shared-KV sparse attention does not expose LSE.")
+        if sfa_impl.qk_rope_head_dim != 0 or q_pe.shape[-1] != 0:
+            raise ValueError("GLM-5 A5 shared-KV sparse attention requires qk_rope_head_dim=0.")
+        if packed_kv_cache.dtype != torch.bfloat16:
+            raise ValueError(
+                "Indexer KPool MLA A5 shared-KV cache must use BF16, "
+                f"got {packed_kv_cache.dtype}."
+            )
+        if packed_kv_cache.shape[-1] != sfa_impl.kv_lora_rank:
+            raise ValueError(
+                "Indexer KPool MLA A5 shared-KV cache head dim must be "
+                f"{sfa_impl.kv_lora_rank}, got {packed_kv_cache.shape[-1]}."
+            )
+        if attn_metadata.sas_metadata is None:
+            raise RuntimeError("GLM-5 A5 shared-KV sparse attention metadata is missing.")
+        if attn_metadata.query_start_loc is None:
+            raise RuntimeError("GLM-5 A5 query_start_loc metadata is missing.")
+        if block_table is None:
+            block_table = attn_metadata.block_table
+
+        if attn_metadata.sas_sinks is None:
+            raise RuntimeError("GLM-5 A5 sparse attention sinks (sas_sinks) is missing.")
+
+        # GLM-5 Indexer KPool MLA has only one KV cache (the packed MLA
+        # latent+RoPE). It is not a compressed representation of a larger
+        # original KV, so route real data through the ori_* (original) path
+        # and leave cmp_* (compressed) parameters at their None defaults.
+
+        result = torch.ops._C_ascend.npu_sparse_flash_mla(
+            ql_nope,
+            ori_kv=packed_kv_cache,
+            cmp_kv=None,
+            ori_sparse_indices=topk_indices,
+            cmp_sparse_indices=None,
+            ori_block_table=block_table,
+            cmp_block_table=None,
+            cu_seqlens_q=attn_metadata.query_start_loc,
+            cu_seqlens_ori_kv=None,
+            cu_seqlens_cmp_kv=None,
+            seqused_q=None,
+            seqused_ori_kv=actual_seq_lengths_key,
+            seqused_cmp_kv=None,
+            cmp_residual_kv=None,
+            ori_topk_length=None,
+            cmp_topk_length=None,
+            sinks=attn_metadata.sas_sinks,
+            metadata=attn_metadata.sas_metadata,
+            softmax_scale=sfa_impl.scale,
+            cmp_ratio=1,
+            ori_mask_mode=sparse_mode,
+            cmp_mask_mode=3,
+            ori_win_left=0,
+            ori_win_right=0,
+            layout_q="TND",
+            layout_kv="PA_BBND",
+            topk_value_mode=1,
+            return_softmax_lse=False,
+        )
+        return result[0]
 
     @staticmethod
     def get_dsa_compressor_slot_mapping_format():
