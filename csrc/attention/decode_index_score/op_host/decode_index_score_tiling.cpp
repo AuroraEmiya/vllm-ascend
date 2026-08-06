@@ -39,9 +39,9 @@ static ge::graphStatus TilingForDecodeIndexScore(gert::TilingContext *context)
 {
     OP_CHECK_IF(context == nullptr, OP_LOGE("DecodeIndexScore", "Tiling context is null."), return ge::GRAPH_FAILED);
 
-    const gert::Shape *queryShape = context->GetInputShape(QUERY_INDEX);
-    const gert::Shape *seqLensShape = context->GetInputShape(SEQ_LENS_INDEX);
-    const gert::Shape *blockTableShape = context->GetInputShape(BLOCK_TABLE_INDEX);
+    const gert::StorageShape *queryShape = context->GetInputShape(QUERY_INDEX);
+    const gert::StorageShape *seqLensShape = context->GetInputShape(SEQ_LENS_INDEX);
+    const gert::StorageShape *blockTableShape = context->GetInputShape(BLOCK_TABLE_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, queryShape);
     OP_CHECK_NULL_WITH_CONTEXT(context, seqLensShape);
     OP_CHECK_NULL_WITH_CONTEXT(context, blockTableShape);
@@ -61,13 +61,13 @@ static ge::graphStatus TilingForDecodeIndexScore(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, scoreBlockStridePtr);
     OP_CHECK_NULL_WITH_CONTEXT(context, numChunksPtr);
 
-    OP_CHECK_IF(queryShape->GetDimNum() != 3, OP_LOGE(context, "query must be [total_q, H, D]."),
+    OP_CHECK_IF(queryShape->GetStorageShape().GetDimNum() != 3, OP_LOGE(context, "query must be [total_q, H, D]."),
                 return ge::GRAPH_FAILED);
-    const uint32_t totalQ = static_cast<uint32_t>(queryShape->GetDim(0));
-    const uint32_t numIdxHeads = static_cast<uint32_t>(queryShape->GetDim(1));
-    const uint32_t headDim = static_cast<uint32_t>(queryShape->GetDim(2));
-    const uint32_t numReqs = static_cast<uint32_t>(seqLensShape->GetDim(0));
-    const uint32_t localMaxBlocks = static_cast<uint32_t>(blockTableShape->GetDim(1));
+    const uint32_t totalQ = static_cast<uint32_t>(queryShape->GetStorageShape().GetDim(0));
+    const uint32_t numIdxHeads = static_cast<uint32_t>(queryShape->GetStorageShape().GetDim(1));
+    const uint32_t headDim = static_cast<uint32_t>(queryShape->GetStorageShape().GetDim(2));
+    const uint32_t numReqs = static_cast<uint32_t>(seqLensShape->GetStorageShape().GetDim(0));
+    const uint32_t localMaxBlocks = static_cast<uint32_t>(blockTableShape->GetStorageShape().GetDim(1));
     const int64_t decodeQueryLen = *decodeQueryLenPtr;
     const int64_t blockOffset = *blockOffsetPtr;
     const int64_t initBlocks = *initBlocksPtr;
@@ -111,7 +111,7 @@ static ge::graphStatus TilingForDecodeIndexScore(gert::TilingContext *context)
     context->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
 
     // tiling key: input dtype pair (query / index-k cache share the dtype)
-    const gert::CompileTimeTensorDesc *queryDesc = context->GetInputTensorDesc(QUERY_INDEX);
+    const gert::CompileTimeTensorDesc *queryDesc = context->GetInputDesc(QUERY_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, queryDesc);
     ge::DataType inputQType = queryDesc->GetDataType();
     uint32_t tilingKey = GET_TPL_TILING_KEY(static_cast<uint32_t>(inputQType), static_cast<uint32_t>(inputQType));
