@@ -38,6 +38,7 @@
 #include "gmm/grouped_matmul_swiglu_quant_weight_nz_tensor_list/grouped_matmul_swiglu_quant_torch_adpt.h"
 #include "gmm/grouped_matmul_swiglu_quant_v2/grouped_matmul_swiglu_quant_v2_torch_adpt.h"
 #include "attention/lightning_indexer/lightning_indexer_torch_adpt.h"
+#include "attention/decode_index_score/decode_index_score_torch_adpt.h"
 #include "moe/moe_gating_top_k/moe_gating_top_k_torch_adpt.h"
 #include "attention/sparse_flash_attention/sparse_flash_attention_torch_adpt.h"
 #include "attention/kv_quant_sparse_flash_attention/kv_quant_sparse_flash_attention_torch_adpt.h"
@@ -2226,6 +2227,16 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         ") -> (Tensor sparse_indices, Tensor sparse_values)"
     );
     ops.impl("npu_lightning_indexer", torch::kPrivateUse1, &vllm_ascend::npu_lightning_indexer);
+
+    ops.def(
+        "npu_decode_index_score(Tensor query, Tensor index_kv_cache, Tensor block_table,"
+        "                        Tensor seq_lens, Tensor global_seq_lens, *,"
+        "                        int decode_query_len, int block_offset=0,"
+        "                        int init_blocks=0, int local_blocks=0,"
+        "                        int score_block_stride, int num_chunks=1)"
+        "                        -> Tensor score"
+    );
+    ops.impl("npu_decode_index_score", torch::kPrivateUse1, &vllm_ascend::npu_decode_index_score);
 
     ops.def(
         "npu_sparse_flash_attention(Tensor query, Tensor key, Tensor value,"

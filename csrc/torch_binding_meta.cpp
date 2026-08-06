@@ -242,6 +242,20 @@ std::tuple<at::Tensor, at::Tensor> npu_lightning_indexer_meta(
     return std::tuple<at::Tensor, at::Tensor>(sparse_indices_out, sparse_values_out);
 }
 
+at::Tensor npu_decode_index_score_meta(
+    const at::Tensor &query, const at::Tensor &index_kv_cache, const at::Tensor &block_table,
+    const at::Tensor &seq_lens, const at::Tensor &global_seq_lens,
+    int64_t decode_query_len, int64_t block_offset, int64_t init_blocks,
+    int64_t local_blocks, int64_t score_block_stride, int64_t num_chunks)
+{
+    TORCH_CHECK(score_block_stride > 0, "score_block_stride must be positive.");
+    // score: [num_idx_heads, total_q, score_block_stride]
+    constexpr int64_t DIM_Q = 0;
+    constexpr int64_t DIM_H = 1;
+    return at::empty_symint({query.sym_size(DIM_H), query.sym_size(DIM_Q), c10::SymInt(score_block_stride)},
+                            query.options().dtype(at::kFloat));
+}
+
 std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_sparse_flash_attention_meta(
     const at::Tensor &query, const at::Tensor &key, const at::Tensor &value,
     const at::Tensor &sparse_indices, double scale_value,
@@ -1575,6 +1589,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("grouped_matmul_swiglu_quant_v2", &vllm_ascend::meta::grouped_matmul_swiglu_quant_v2_meta);
     // Lightning indexer
     ops.impl("npu_lightning_indexer", &vllm_ascend::meta::npu_lightning_indexer_meta);
+    ops.impl("npu_decode_index_score", &vllm_ascend::meta::npu_decode_index_score_meta);
     // Sparse flash attention
     ops.impl("npu_sparse_flash_attention", &vllm_ascend::meta::npu_sparse_flash_attention_meta);
     ops.impl("npu_sparse_attention_score", &vllm_ascend::meta::npu_sparse_attention_score_meta);
