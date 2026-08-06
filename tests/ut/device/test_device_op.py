@@ -1,9 +1,116 @@
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 import torch
 
 from vllm_ascend.device.device_op import A5DeviceAdaptor, BaseDeviceAdaptor
+
+
+def test_glm5_sparse_attention_device_contract_is_a5_only():
+    assert not BaseDeviceAdaptor.supports_sharedkv_indexer_kpool_mla()
+    assert A5DeviceAdaptor.supports_sharedkv_indexer_kpool_mla()
+    assert A5DeviceAdaptor.get_sparse_attention_metadata_kwargs_indexer_kpool_mla(
+        torch.device("cpu")
+    ) == {"device": "cpu"}
+    with mock.patch.object(
+        torch.ops._C_ascend,
+        "npu_sparse_flash_mla_metadata",
+        create=True,
+    ) as metadata_op:
+        assert A5DeviceAdaptor.get_sparse_attention_metadata_op_indexer_kpool_mla() is metadata_op
+    # The existing DSA contract must retain its 64-dimensional RoPE.
+    assert A5DeviceAdaptor.get_dsa_sparse_attn_base_kwargs()["rope_head_dim"] == 64
+
+
+def test_base_glm5_sparse_attention_delegates_to_small_op_path():
+    expected = torch.randn((1, 8, 512), dtype=torch.bfloat16)
+    small_op_path = mock.MagicMock(return_value=expected)
+    packed_kv_cache = torch.zeros((1, 128, 1, 512), dtype=torch.bfloat16)
+    block_table = torch.zeros((1, 1), dtype=torch.int32)
+    args = (
+        SimpleNamespace(scale=0.125, _sparse_attention_pytorch=small_op_path),
+        torch.zeros_like(expected),
+        torch.empty((1, 8, 0), dtype=torch.bfloat16),
+        packed_kv_cache,
+        torch.zeros((1, 1, 515), dtype=torch.int32),
+        SimpleNamespace(block_table=block_table, num_actual_tokens=1),
+        torch.tensor([1], dtype=torch.int32),
+        torch.tensor([1], dtype=torch.int32),
+    )
+
+    result = BaseDeviceAdaptor.execute_sparse_attention_indexer_kpool_mla(*args)
+
+    assert result is expected
+    small_op_path.assert_called_once_with(
+        ql_nope=args[1],
+        q_pe=args[2],
+        packed_kv_cache=packed_kv_cache,
+        topk_indices=args[4],
+        block_table=block_table,
+        actual_seq_lengths_query=args[6],
+        actual_seq_lengths_key=args[7],
+        scale=0.125,
+        num_actual_tokens=1,
+    )
+
+
+def test_a5_glm5_sparse_attention_uses_non_quantized_sharedkv():
+    query = torch.zeros((1, 8, 512), dtype=torch.bfloat16)
+    kv = torch.zeros((1, 128, 1, 512), dtype=torch.bfloat16)
+    topk_indices = torch.zeros((1, 1, 515), dtype=torch.int32)
+    block_table = torch.zeros((1, 1), dtype=torch.int32)
+    query_lens = torch.tensor([1], dtype=torch.int32)
+    key_lens = torch.tensor([1], dtype=torch.int32)
+    sas_metadata = torch.zeros(1024, dtype=torch.int32)
+    sas_sinks = torch.ones(8, dtype=torch.float32)
+    metadata = SimpleNamespace(
+        block_table=block_table,
+        query_start_loc=torch.tensor([0, 1], dtype=torch.int32),
+        sas_metadata=sas_metadata,
+        sas_sinks=sas_sinks,
+    )
+    expected = torch.ones_like(query)
+
+    with mock.patch.object(
+        torch.ops._C_ascend,
+        "npu_sparse_flash_mla",
+        return_value=(expected, torch.empty(0)),
+        create=True,
+    ) as sparse_op:
+        result = A5DeviceAdaptor.execute_sparse_attention_indexer_kpool_mla(
+            SimpleNamespace(scale=0.125, qk_rope_head_dim=0, kv_lora_rank=512),
+            query,
+            torch.empty((1, 8, 0), dtype=torch.bfloat16),
+            kv,
+            topk_indices,
+            metadata,
+            query_lens,
+            key_lens,
+            block_table=block_table,
+        )
+
+    assert result is expected
+    sparse_op.assert_called_once()
+    call_args, kwargs = sparse_op.call_args
+    assert call_args == (query,)
+    # GLM-5 passes its only KV cache as the original (ori) KV — no compressed path.
+    assert kwargs["ori_kv"] is kv
+    assert kwargs["cmp_kv"] is None
+    assert kwargs["ori_sparse_indices"] is topk_indices
+    assert kwargs["cmp_sparse_indices"] is None
+    assert kwargs["ori_block_table"] is block_table
+    assert kwargs["cmp_block_table"] is None
+    assert kwargs["cu_seqlens_q"] is metadata.query_start_loc
+    assert kwargs["seqused_ori_kv"] is key_lens
+    assert kwargs["seqused_cmp_kv"] is None
+    assert kwargs["metadata"] is sas_metadata
+    assert kwargs["sinks"] is sas_sinks
+    assert kwargs["ori_mask_mode"] == 3
+    assert kwargs["layout_kv"] == "PA_BBND"
+    assert kwargs["topk_value_mode"] == 1
+    assert kwargs["seqused_q"] is None
+    assert "kv_quant_mode" not in kwargs
 
 
 def test_npu_flash_attention_uses_fusion_attention_for_fp32():
