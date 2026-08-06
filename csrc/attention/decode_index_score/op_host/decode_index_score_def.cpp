@@ -76,8 +76,8 @@ public:
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true);
+        // arch22 only (910B / A2). The kernel has no arch35 variant yet.
         this->AICore().AddConfig("ascend910b", aicore_config);
-        this->AICore().AddConfig("ascend910_93", aicore_config);
     }
 };
 OP_ADD(DecodeIndexScore);
