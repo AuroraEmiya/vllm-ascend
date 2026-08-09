@@ -348,6 +348,17 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         for _ in range(self.num_speculative_tokens):
             self.piece_all_attn_layer_name.append([name for name in self.attn_layer_names])
 
+        if self.supports_mm_inputs:
+            try:
+                dummy_input_ids = torch.tensor([[1]], device=self.input_ids.device)
+                self.model.embed_input_ids(dummy_input_ids, multimodal_embeddings=None)
+            except (NotImplementedError, AttributeError, TypeError):
+                logger.warning(
+                    "Draft model does not support multimodal inputs, "
+                    "falling back to text-only mode"
+                )
+                self.supports_mm_inputs = False
+
         if supports_multimodal(model):
             # handle multimodality
             if self.get_model_name(model) in [
@@ -357,7 +368,7 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 "Qwen3_5ForConditionalGeneration",
                 "Qwen3_5MoeForConditionalGeneration",
                 "Step3p7ForConditionalGeneration",
-                "Glm5NextForConditionalGeneration",
+                "AscendGlm5NextForConditionalGeneration",
             ]:
                 self.model.config.image_token_index = model.config.image_token_id
             elif self.get_model_name(model) == "PixtralForConditionalGeneration":
