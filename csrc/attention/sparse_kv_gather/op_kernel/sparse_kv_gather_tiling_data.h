@@ -7,7 +7,7 @@
  * \file sparse_kv_gather_tiling_data.h
  * \brief Shared tiling-data definition for SparseKvGather.
  *
- * Included by both the host tiling layer and the AscendC device kernel.
+ * INT32-only index specialization based on the passing implementation.
  */
 
 #ifndef SPARSE_KV_GATHER_TILING_DATA_H
@@ -22,11 +22,6 @@ constexpr uint32_t SKG_CTKV_DIM   = 512;
 constexpr uint32_t SKG_KPE_DIM    = 64;
 constexpr uint32_t SKG_HEAD_NUM   = 1;
 
-enum class SKGIndexType : uint32_t {
-    INT32 = 0,
-    INT64 = 1,
-};
-
 BEGIN_TILING_DATA_DEF(SparseKvGatherTilingData)
     TILING_DATA_FIELD_DEF(uint32_t, numBlocks)
     TILING_DATA_FIELD_DEF(uint32_t, numActual)
@@ -35,9 +30,6 @@ BEGIN_TILING_DATA_DEF(SparseKvGatherTilingData)
     TILING_DATA_FIELD_DEF(uint64_t, totalSlots)
     TILING_DATA_FIELD_DEF(uint64_t, slotsPerCore)
     TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum)
-    TILING_DATA_FIELD_DEF(uint32_t, blockTableType)
-    TILING_DATA_FIELD_DEF(uint32_t, topkIndicesType)
-    TILING_DATA_FIELD_DEF(uint32_t, curPosType)
 END_TILING_DATA_DEF
 REGISTER_TILING_DATA_CLASS(SparseKvGather, SparseKvGatherTilingData)
 

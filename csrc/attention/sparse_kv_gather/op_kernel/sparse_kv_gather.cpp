@@ -45,9 +45,6 @@ extern "C" __global__ __aicore__ void sparse_kv_gather(
         tilingData.totalSlots,
         tilingData.slotsPerCore,
         tilingData.usedCoreNum,
-        tilingData.blockTableType,
-        tilingData.topkIndicesType,
-        tilingData.curPosType,
         &pipe);
     op.Process();
 }

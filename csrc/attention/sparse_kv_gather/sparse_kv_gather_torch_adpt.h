@@ -26,7 +26,7 @@ constexpr int64_t KPE_DIM = 64;
 
 inline bool is_index_dtype(const at::ScalarType dtype)
 {
-    return dtype == at::kInt || dtype == at::kLong;
+    return dtype == at::kInt;
 }
 
 inline bool is_cache_dtype(const at::ScalarType dtype)
@@ -59,18 +59,11 @@ inline void validate_inputs(
     TORCH_CHECK(paged_kpe.scalar_type() == paged_ctkv.scalar_type(),
                 "paged_kpe dtype must match paged_ctkv dtype");
     TORCH_CHECK(is_index_dtype(block_table.scalar_type()),
-                "block_table must be int32 or int64");
+                "block_table must be int32");
     TORCH_CHECK(is_index_dtype(topk_indices.scalar_type()),
-                "topk_indices must be int32 or int64");
+                "topk_indices must be int32");
     TORCH_CHECK(is_index_dtype(cur_pos.scalar_type()),
-                "cur_pos must be int32 or int64");
-    TORCH_CHECK(block_table.scalar_type() == topk_indices.scalar_type() &&
-                    block_table.scalar_type() == cur_pos.scalar_type(),
-                "block_table, topk_indices and cur_pos must use the same dtype");
-    TORCH_CHECK(paged_ctkv.scalar_type() != at::kHalf ||
-                    block_table.scalar_type() == at::kInt,
-                "float16 cache currently requires int32 indices");
-
+                "cur_pos must be int32");
     TORCH_CHECK(paged_ctkv.dim() == 4,
                 "paged_ctkv must have shape [num_blocks, 128, 1, 512]");
     TORCH_CHECK(paged_kpe.dim() == 4,

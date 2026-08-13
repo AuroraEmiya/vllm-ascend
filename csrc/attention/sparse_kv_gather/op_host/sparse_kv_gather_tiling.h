@@ -70,10 +70,6 @@ struct SKGTilingInfo {
 
     uint32_t aivNum = 0;
     uint32_t usedCoreNum = 0;
-
-    SKGIndexType blockTableType = SKGIndexType::INT32;
-    SKGIndexType topkIndicesType = SKGIndexType::INT32;
-    SKGIndexType curPosType = SKGIndexType::INT32;
 };
 
 class SKGInfoParser {

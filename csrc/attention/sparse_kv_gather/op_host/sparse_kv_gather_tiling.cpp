@@ -25,12 +25,7 @@ bool IsCacheType(const ge::DataType dtype)
 
 bool IsIndexType(const ge::DataType dtype)
 {
-    return dtype == ge::DT_INT32 || dtype == ge::DT_INT64;
-}
-
-SKGIndexType ToIndexType(const ge::DataType dtype)
-{
-    return dtype == ge::DT_INT64 ? SKGIndexType::INT64 : SKGIndexType::INT32;
+    return dtype == ge::DT_INT32;
 }
 
 ge::graphStatus CheckRank(const gert::StorageShape *shape, const uint32_t expectedRank,
@@ -166,29 +161,13 @@ ge::graphStatus SKGInfoParser::CheckDtypes(SKGTilingInfo &info) const
     if (!IsIndexType(blockTableType) || !IsIndexType(topkIndicesType) ||
         !IsIndexType(curPosType)) {
         OP_LOGE(OP_NAME_STR.c_str(),
-                "block_table, topk_indices and cur_pos must be INT32 or INT64, got %d, %d, %d.",
+                "block_table, topk_indices and cur_pos must be INT32, got %d, %d, %d.",
                 static_cast<int32_t>(blockTableType),
                 static_cast<int32_t>(topkIndicesType),
                 static_cast<int32_t>(curPosType));
-        return ge::GRAPH_FAILED;
-    }
-    if (blockTableType != topkIndicesType || blockTableType != curPosType) {
-        OP_LOGE(OP_NAME_STR.c_str(),
-                "block_table, topk_indices and cur_pos must use the same dtype, got %d, %d, %d.",
-                static_cast<int32_t>(blockTableType),
-                static_cast<int32_t>(topkIndicesType),
-                static_cast<int32_t>(curPosType));
-        return ge::GRAPH_FAILED;
-    }
-    if (ctkvType == ge::DT_FLOAT16 && blockTableType != ge::DT_INT32) {
-        OP_LOGE(OP_NAME_STR.c_str(),
-                "FLOAT16 cache currently requires INT32 indices.");
         return ge::GRAPH_FAILED;
     }
 
-    info.blockTableType = ToIndexType(blockTableType);
-    info.topkIndicesType = ToIndexType(topkIndicesType);
-    info.curPosType = ToIndexType(curPosType);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -315,9 +294,6 @@ void SparseKvGatherTiling::FillTilingData(const SKGTilingInfo *info)
     tilingData_.set_totalSlots(info->totalSlots);
     tilingData_.set_slotsPerCore(info->slotsPerCore);
     tilingData_.set_usedCoreNum(info->usedCoreNum);
-    tilingData_.set_blockTableType(static_cast<uint32_t>(info->blockTableType));
-    tilingData_.set_topkIndicesType(static_cast<uint32_t>(info->topkIndicesType));
-    tilingData_.set_curPosType(static_cast<uint32_t>(info->curPosType));
 }
 
 ge::graphStatus SparseKvGatherTiling::SetBlockDim(const uint32_t blockDim) const
