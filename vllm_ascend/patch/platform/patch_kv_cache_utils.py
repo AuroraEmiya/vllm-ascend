@@ -799,10 +799,12 @@ def _max_memory_usage_bytes_from_groups(
         glm5_layout.main_slot_count * glm5_layout.main_page_size
         + glm5_layout.small_slot_count * glm5_layout.small_page_size
     )
-    blocks_needed = sum(
-        _max_memory_usage_pages(vllm_config, group.kv_cache_spec)
-        for group in kv_cache_groups
-    )
+    # GLM-5 packs all main/indexer/state/Mamba slots into one shared block-id
+    # pool, so the total memory is bytes_per_block * num_blocks.  The full
+    # group owns the block table and therefore defines how many blocks are
+    # needed; summing per-group page counts would count the same physical
+    # blocks once per group and massively overestimate the KV cache size.
+    blocks_needed = glm5_layout.full_group.kv_cache_spec.max_memory_usage_pages(vllm_config)
     return bytes_per_block * blocks_needed
 
 

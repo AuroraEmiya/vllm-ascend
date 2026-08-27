@@ -1054,17 +1054,15 @@ def test_glm5_memory_accounting_counts_combined_full_group_once():
         ),
         cache_config=SimpleNamespace(mamba_cache_mode="none"),
     )
-    blocks_needed = sum(
+    full_blocks = layout.full_group.kv_cache_spec.max_memory_usage_pages(vllm_config)
+    bytes_per_block = 12 * layout.main_page_size + 11 * layout.small_page_size
+    old_overcount = sum(
         _max_memory_usage_pages(vllm_config, group.kv_cache_spec)
         for group in groups
     )
-    full_blocks = layout.full_group.kv_cache_spec.max_memory_usage_pages(vllm_config)
-    bytes_per_block = 12 * layout.main_page_size + 11 * layout.small_page_size
 
-    assert _max_memory_usage_bytes_from_groups(vllm_config, groups) == (blocks_needed * bytes_per_block)
-    assert _max_memory_usage_bytes_from_groups(vllm_config, groups) < (
-        (blocks_needed + full_blocks) * bytes_per_block
-    )
+    assert _max_memory_usage_bytes_from_groups(vllm_config, groups) == (full_blocks * bytes_per_block)
+    assert full_blocks < old_overcount
 
 
 def test_indexer_kpool_mla_compressed_slot_mapping_only_writes_completed_pools():
