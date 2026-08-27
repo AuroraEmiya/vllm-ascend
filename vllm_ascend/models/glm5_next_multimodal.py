@@ -1,10 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from functools import partial
 from typing import ClassVar, Literal
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from vllm.config import VllmConfig
+from vllm.config.multimodal import BaseDummyOptions
+from vllm.inputs import MultiModalDataDict
+from vllm.model_executor.layers.conv import Conv2dLayer
+from vllm.model_executor.layers.layernorm import RMSNorm
+from vllm.model_executor.layers.linear import (
+    ColumnParallelLinear,
+    MergedColumnParallelLinear,
+    RowParallelLinear,
+)
+from vllm.model_executor.layers.rotary_embedding import get_rope
+from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.glm4_1v import (
     Glm4vDummyInputsBuilder,
     Glm4vForConditionalGeneration,
@@ -12,7 +26,8 @@ from vllm.model_executor.models.glm4_1v import (
     Glm4vProcessingInfo,
 )
 from vllm.model_executor.models.glm_ocr import (
-    GlmOcrPatchMerger,
+    GlmOcrVisionAttention,
+    GlmOcrVisionPatchEmbed,
     GlmOcrVisionTransformer,
 )
 from vllm.model_executor.models.interfaces import HasInnerState, IsHybrid
@@ -22,14 +37,204 @@ from vllm.model_executor.models.utils import (
     init_vllm_registered_model,
     maybe_prefix,
 )
+from vllm.model_executor.models.vision import (
+    get_vit_attn_backend,
+    is_vit_use_data_parallel,
+)
 from vllm.multimodal import MULTIMODAL_REGISTRY
 
+from vllm_ascend.transformers_utils.processors.glm5_next import (
+    Glm5NextImageProcessor,
+    Glm5NextProcessor,
+    smart_resize as glm5_next_smart_resize,
+)
 
-class AscendGlm5NextVisionPatchMerger(GlmOcrPatchMerger):
+
+class Glm5NextSiluAndMul(nn.Module):
+    """GLM5Next SwiGLU with the checkpoint-defined activation clamp."""
+
+    def __init__(self, swiglu_limit: float) -> None:
+        super().__init__()
+        self.swiglu_limit = swiglu_limit
+
+    def forward(self, gate_up: torch.Tensor) -> torch.Tensor:
+        gate, up = gate_up.chunk(2, dim=-1)
+        gate = gate.clamp(max=self.swiglu_limit)
+        up = up.clamp(min=-self.swiglu_limit, max=self.swiglu_limit)
+        return F.silu(gate) * up
+
+
+class AscendGlm5NextVisionMLP(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: int,
+        swiglu_limit: float,
+        bias: bool = True,
+        quant_config=None,
+        prefix: str = "",
+    ) -> None:
+        super().__init__()
+        use_data_parallel = is_vit_use_data_parallel()
+        self.gate_up_proj = MergedColumnParallelLinear(
+            input_size=in_features,
+            output_sizes=[hidden_features] * 2,
+            bias=bias,
+            quant_config=quant_config,
+            prefix=f"{prefix}.gate_up_proj",
+            disable_tp=use_data_parallel,
+        )
+        self.down_proj = RowParallelLinear(
+            hidden_features,
+            in_features,
+            bias=bias,
+            quant_config=quant_config,
+            prefix=f"{prefix}.down_proj",
+            disable_tp=use_data_parallel,
+        )
+        self.act_fn = Glm5NextSiluAndMul(swiglu_limit)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gate_up, _ = self.gate_up_proj(x)
+        x = self.act_fn(gate_up)
+        x, _ = self.down_proj(x)
+        return x
+
+
+class AscendGlm5NextVisionAttention(GlmOcrVisionAttention):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        projection_size: int,
+        norm_eps: float,
+        quant_config=None,
+        prefix: str = "",
+    ) -> None:
+        super().__init__(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            projection_size=projection_size,
+            quant_config=quant_config,
+            prefix=prefix,
+        )
+        self.q_norm = RMSNorm(self.head_dim, eps=norm_eps)
+        self.k_norm = RMSNorm(self.head_dim, eps=norm_eps)
+
+
+class AscendGlm5NextVisionBlock(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_hidden_dim: int,
+        norm_eps: float,
+        swiglu_limit: float,
+        bias: bool = True,
+        quant_config=None,
+        prefix: str = "",
+    ) -> None:
+        super().__init__()
+        norm_layer = partial(RMSNorm, eps=norm_eps)
+        self.norm1 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
+        self.attn = AscendGlm5NextVisionAttention(
+            embed_dim=dim,
+            num_heads=num_heads,
+            projection_size=dim,
+            norm_eps=norm_eps,
+            quant_config=quant_config,
+            prefix=f"{prefix}.attn",
+        )
+        self.mlp = AscendGlm5NextVisionMLP(
+            in_features=dim,
+            hidden_features=mlp_hidden_dim,
+            swiglu_limit=swiglu_limit,
+            bias=bias,
+            quant_config=quant_config,
+            prefix=f"{prefix}.mlp",
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        rotary_pos_emb_cos: torch.Tensor,
+        rotary_pos_emb_sin: torch.Tensor,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
+        x = x + self.attn(
+            self.norm1(x),
+            cu_seqlens=cu_seqlens,
+            rotary_pos_emb_cos=rotary_pos_emb_cos,
+            rotary_pos_emb_sin=rotary_pos_emb_sin,
+            max_seqlen=max_seqlen,
+        )
+        x = x + self.mlp(self.norm2(x))
+        return x
+
+
+class AscendGlm5NextVisionPatchEmbed(GlmOcrVisionPatchEmbed):
     pass
 
 
+class AscendGlm5NextVisionPatchMerger(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        context_dim: int,
+        swiglu_limit: float,
+        quant_config=None,
+        bias: bool = False,
+        prefix: str = "",
+    ) -> None:
+        super().__init__()
+        use_data_parallel = is_vit_use_data_parallel()
+        self.hidden_size = d_model
+        self.proj = ColumnParallelLinear(
+            self.hidden_size,
+            self.hidden_size,
+            bias=bias,
+            gather_output=True,
+            quant_config=quant_config,
+            prefix=f"{prefix}.proj",
+            disable_tp=use_data_parallel,
+        )
+        self.post_projection_norm = nn.LayerNorm(self.hidden_size)
+        self.gate_up_proj = MergedColumnParallelLinear(
+            input_size=self.hidden_size,
+            output_sizes=[context_dim] * 2,
+            bias=bias,
+            quant_config=quant_config,
+            prefix=f"{prefix}.gate_up_proj",
+            disable_tp=use_data_parallel,
+        )
+        self.down_proj = RowParallelLinear(
+            context_dim,
+            self.hidden_size,
+            bias=bias,
+            quant_config=quant_config,
+            prefix=f"{prefix}.down_proj",
+            disable_tp=use_data_parallel,
+        )
+        self.act_fn = Glm5NextSiluAndMul(swiglu_limit)
+        self.extra_activation_func = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x, _ = self.proj(x)
+        x = self.extra_activation_func(self.post_projection_norm(x))
+        gate_up, _ = self.gate_up_proj(x)
+        x = self.act_fn(gate_up)
+        x, _ = self.down_proj(x)
+        return x
+
+
 class AscendGlm5NextVisionTransformer(GlmOcrVisionTransformer):
+    stacked_params_mapping = (
+        ("gate_up_proj.", "gate_proj.", 0),
+        ("gate_up_proj.", "up_proj.", 1),
+    )
+
     def __init__(
         self,
         text_config,
@@ -38,75 +243,282 @@ class AscendGlm5NextVisionTransformer(GlmOcrVisionTransformer):
         quant_config=None,
         prefix: str = "",
     ) -> None:
-        super().__init__(
-            text_config,
-            vision_config,
-            norm_eps=norm_eps,
-            quant_config=quant_config,
-            prefix=prefix,
+        # Initialize the dedicated GLM5Next tower directly. Calling the
+        # GLM-OCR initializer and replacing its blocks would briefly allocate
+        # two complete vision towers for the production 24-layer config.
+        nn.Module.__init__(self)
+        # text_config remains in the signature for compatibility with the
+        # existing multimodal model construction path.
+
+        self.hidden_size = vision_config.hidden_size
+        self.num_heads = vision_config.num_heads
+        self.patch_size = vision_config.patch_size
+        self.spatial_merge_size = vision_config.spatial_merge_size
+        self.out_hidden_size = vision_config.out_hidden_size
+
+        self.patch_embed = AscendGlm5NextVisionPatchEmbed(
+            patch_size=vision_config.patch_size,
+            temporal_patch_size=vision_config.temporal_patch_size,
+            in_channels=vision_config.in_channels,
+            hidden_size=self.hidden_size,
+        )
+        head_dim = self.hidden_size // self.num_heads
+        self.rotary_pos_emb = get_rope(
+            head_size=head_dim,
+            max_position=8192,
+            is_neox_style=True,
+            rope_parameters={"partial_rotary_factor": 0.5},
+        )
+        swiglu_limit = vision_config.swiglu_limit
+        attention_bias = vision_config.attention_bias
+        self.blocks = nn.ModuleList(
+            [
+                AscendGlm5NextVisionBlock(
+                    dim=self.hidden_size,
+                    num_heads=self.num_heads,
+                    mlp_hidden_dim=vision_config.intermediate_size,
+                    norm_eps=norm_eps,
+                    swiglu_limit=swiglu_limit,
+                    bias=attention_bias,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.blocks.{layer_idx}",
+                )
+                for layer_idx in range(vision_config.depth)
+            ]
         )
         self.merger = AscendGlm5NextVisionPatchMerger(
             d_model=vision_config.out_hidden_size,
             context_dim=vision_config.projection_intermediate_size,
+            swiglu_limit=swiglu_limit,
             quant_config=quant_config,
             bias=False,
             prefix=f"{prefix}.merger",
         )
+        self.downsample = Conv2dLayer(
+            in_channels=vision_config.hidden_size,
+            out_channels=vision_config.out_hidden_size,
+            kernel_size=vision_config.spatial_merge_size,
+            stride=vision_config.spatial_merge_size,
+        )
+        self.post_layernorm = RMSNorm(vision_config.hidden_size, eps=norm_eps)
+        self.attn_backend = get_vit_attn_backend(
+            head_size=head_dim,
+            dtype=torch.get_default_dtype(),
+        )
+
+    @classmethod
+    def _get_expected_weight_shards(
+        cls,
+        parameter_names: Iterable[str],
+    ) -> set[tuple[str, int | None]]:
+        expected: set[tuple[str, int | None]] = set()
+        for name in parameter_names:
+            if "gate_up_proj." in name:
+                expected.add((name, 0))
+                expected.add((name, 1))
+            else:
+                expected.add((name, None))
+        return expected
+
+    @classmethod
+    def _map_weight_name(
+        cls,
+        name: str,
+    ) -> tuple[str, int | None]:
+        for param_name, weight_name, shard_id in cls.stacked_params_mapping:
+            if weight_name in name:
+                return name.replace(weight_name, param_name), shard_id
+        return name, None
+
+    @classmethod
+    def _get_source_weight_name(
+        cls,
+        target_name: str,
+        shard_id: int | None,
+    ) -> str:
+        if shard_id is None:
+            return target_name
+        for param_name, weight_name, mapped_shard_id in cls.stacked_params_mapping:
+            if mapped_shard_id == shard_id and param_name in target_name:
+                return target_name.replace(param_name, weight_name)
+        return f"{target_name}[shard={shard_id}]"
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        params_dict = dict(self.named_parameters(remove_duplicate=False))
+        expected_shards = self._get_expected_weight_shards(params_dict)
+        loaded_shards: set[tuple[str, int | None]] = set()
+        loaded_sources: set[str] = set()
+
+        for source_name, loaded_weight in weights:
+            if source_name in loaded_sources:
+                raise ValueError(
+                    f"Duplicate GLM5Next vision weight {source_name!r}"
+                )
+            loaded_sources.add(source_name)
+
+            target_name, shard_id = self._map_weight_name(source_name)
+            if target_name not in params_dict:
+                raise ValueError(
+                    "Unexpected GLM5Next vision weight "
+                    f"{source_name!r} mapped to {target_name!r}"
+                )
+
+            target_shard = (target_name, shard_id)
+            if target_shard in loaded_shards:
+                raise ValueError(
+                    "Duplicate GLM5Next vision target shard "
+                    f"{target_name!r}, shard={shard_id!r}"
+                )
+
+            param = params_dict[target_name]
+            weight_loader = getattr(
+                param,
+                "weight_loader",
+                default_weight_loader,
+            )
+            try:
+                if shard_id is None:
+                    weight_loader(param, loaded_weight)
+                else:
+                    weight_loader(param, loaded_weight, shard_id)
+            except (AssertionError, RuntimeError, ValueError) as exc:
+                raise ValueError(
+                    f"Failed to load GLM5Next vision weight {source_name!r} "
+                    f"into {target_name!r}: checkpoint shape "
+                    f"{tuple(loaded_weight.shape)}, target shape "
+                    f"{tuple(param.shape)}"
+                ) from exc
+            loaded_shards.add(target_shard)
+
+        missing_shards = expected_shards - loaded_shards
+        if missing_shards:
+            missing = ", ".join(
+                self._get_source_weight_name(name, shard_id)
+                for name, shard_id in sorted(
+                    missing_shards,
+                    key=lambda item: (item[0], -1 if item[1] is None else item[1]),
+                )
+            )
+            raise ValueError(f"Missing GLM5Next vision weights: {missing}")
+
+        return {name for name, _ in loaded_shards}
 
 
 class AscendGlm5NextProcessingInfo(Glm4vProcessingInfo):
+    def get_supported_mm_limits(self) -> Mapping[str, int | None]:
+        # Stage 3 signs off image inputs only. Do not silently route videos
+        # through the inherited GLM4V video processor.
+        return {"image": None}
+
     def get_hf_processor(self, **kwargs: object):
         proc = getattr(self, "_glm5_hf_processor", None)
         if proc is None:
-            import json
-            import os
-
-            import transformers
-            from transformers import (
-                AutoTokenizer,
-                Glm4vImageProcessor,
-                Glm4vProcessor,
-            )
+            from huggingface_hub.constants import HF_HUB_OFFLINE
             from transformers.models.auto.image_processing_auto import (
                 get_image_processor_config,
             )
 
             model_path = self.ctx.model_config.model
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
-            ip_cfg = get_image_processor_config(model_path)
-            _MM_MAX_PIXELS = 1_254_400
-            if isinstance(ip_cfg.get("size"), dict):
-                ip_cfg["size"]["longest_edge"] = min(
-                    ip_cfg["size"].get("longest_edge", _MM_MAX_PIXELS),
-                    _MM_MAX_PIXELS,
-                )
-            image_processor = Glm4vImageProcessor(
-                **{k: v for k, v in ip_cfg.items() if k != "image_processor_type"}
+            model_config = self.ctx.model_config
+            tokenizer = self.get_tokenizer()
+            ip_cfg = get_image_processor_config(
+                model_path,
+                cache_dir=getattr(model_config, "download_dir", None),
+                revision=getattr(model_config, "revision", None),
+                local_files_only=bool(
+                    kwargs.get("local_files_only", HF_HUB_OFFLINE)
+                ),
             )
-            with open(os.path.join(model_path, "processor_config.json")) as f:
-                vp_cfg = json.load(f)["video_processor"]
-            if isinstance(vp_cfg.get("size"), dict):
-                vp_cfg["size"]["longest_edge"] = min(
-                    vp_cfg["size"].get("longest_edge", _MM_MAX_PIXELS),
-                    _MM_MAX_PIXELS,
-                )
-            video_cls = transformers.Glm4vVideoProcessor
-            video_processor = video_cls(
-                **{k: v for k, v in vp_cfg.items() if k != "video_processor_type"}
-            )
-            proc = Glm4vProcessor(
+            ip_cfg = {
+                key: value
+                for key, value in ip_cfg.items()
+                if key
+                not in {
+                    "auto_map",
+                    "image_processor_type",
+                    "processor_class",
+                }
+            }
+            image_processor = Glm5NextImageProcessor(**ip_cfg)
+            proc = Glm5NextProcessor(
                 image_processor=image_processor,
-                video_processor=video_processor,
                 tokenizer=tokenizer,
             )
             self._glm5_hf_processor = proc
         return proc
 
+    def get_image_size_with_most_features(self):
+        image_processor = self.get_image_processor()
+        factor = image_processor.patch_size * image_processor.merge_size
+        height, width = glm5_next_smart_resize(
+            num_frames=image_processor.temporal_patch_size,
+            height=9999999,
+            width=9999999,
+            factor=factor,
+            min_pixels=image_processor.min_image_tokens,
+            max_pixels=image_processor.max_image_tokens,
+            temporal_factor=image_processor.temporal_patch_size,
+        )
+        from vllm.multimodal.parse import ImageSize
+
+        return ImageSize(width=width, height=height)
+
+    def get_num_image_tokens(
+        self,
+        *,
+        image_width: int,
+        image_height: int,
+    ) -> int:
+        image_processor = self.get_image_processor()
+        num_patches = image_processor.get_number_of_image_patches(
+            image_height,
+            image_width,
+        )
+        return num_patches // image_processor.merge_size**2
+
+    def get_max_image_tokens(self) -> int:
+        image_size = self.get_image_size_with_most_features()
+        return self.get_num_image_tokens(
+            image_width=image_size.width,
+            image_height=image_size.height,
+        )
+
+
+class AscendGlm5NextDummyInputsBuilder(Glm4vDummyInputsBuilder):
+    def get_dummy_text(self, mm_counts: Mapping[str, int]) -> str:
+        if mm_counts.get("video", 0):
+            raise NotImplementedError(
+                "GLM5Next video input is not supported by this image-only adapter"
+            )
+        num_images = mm_counts.get("image", 0)
+        return self.info.get_hf_processor().image_token * num_images
+
+    def get_dummy_mm_data(
+        self,
+        seq_len: int,
+        mm_counts: Mapping[str, int],
+        mm_options: Mapping[str, BaseDummyOptions],
+    ) -> MultiModalDataDict:
+        del seq_len
+        if mm_counts.get("video", 0):
+            raise NotImplementedError(
+                "GLM5Next video input is not supported by this image-only adapter"
+            )
+        target_size = self.info.get_image_size_with_most_features()
+        return {
+            "image": self._get_dummy_images(
+                width=target_size.width,
+                height=target_size.height,
+                num_images=mm_counts.get("image", 0),
+                overrides=mm_options.get("image"),
+            )
+        }
+
 
 @MULTIMODAL_REGISTRY.register_processor(
     Glm4vMultiModalProcessor,
     info=AscendGlm5NextProcessingInfo,
-    dummy_inputs=Glm4vDummyInputsBuilder,
+    dummy_inputs=AscendGlm5NextDummyInputsBuilder,
 )
 class AscendGlm5NextForConditionalGeneration(
     Glm4vForConditionalGeneration, HasInnerState, IsHybrid
@@ -143,7 +555,7 @@ class AscendGlm5NextForConditionalGeneration(
             multimodal_config.is_multimodal_pruning_enabled()
         )
 
-        with self._mark_tower_model(vllm_config, {"image", "video"}):
+        with self._mark_tower_model(vllm_config, {"image"}):
             self.visual = AscendGlm5NextVisionTransformer(
                 config.text_config,
                 config.vision_config,

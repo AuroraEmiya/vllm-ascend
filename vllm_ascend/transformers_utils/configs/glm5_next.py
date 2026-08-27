@@ -305,6 +305,7 @@ class Glm5NextVisionConfig(PretrainedConfig):
         temporal_patch_size: int = 2,
         attention_dropout: float = 0.0,
         attention_bias: bool = True,
+        swiglu_limit: float = 10.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -323,15 +324,12 @@ class Glm5NextVisionConfig(PretrainedConfig):
         self.in_channels = in_channels
         self.initializer_range = initializer_range
         self.patch_size = patch_size
-        # The open GLM5-Next checkpoints ship vision_config.rms_norm_eps = 1e-5,
-        # but the vision tower was trained with 1e-6. Serving with 1e-5 drifts
-        # the RMSNorm and produces repetitive/degraded image descriptions, so
-        # force the trained value regardless of the checkpoint field.
-        self.rms_norm_eps = 1e-6
+        self.rms_norm_eps = rms_norm_eps
         self.spatial_merge_size = spatial_merge_size
         self.temporal_patch_size = temporal_patch_size
         self.attention_dropout = attention_dropout
         self.attention_bias = attention_bias
+        self.swiglu_limit = swiglu_limit
 
 
 class Glm5NextConfig(PretrainedConfig):
