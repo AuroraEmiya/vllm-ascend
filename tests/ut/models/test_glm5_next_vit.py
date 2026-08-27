@@ -16,6 +16,7 @@ from vllm_ascend.models.glm5_next_multimodal import (
     AscendGlm5NextVisionPatchMerger,
     AscendGlm5NextVisionTransformer,
     Glm5NextSiluAndMul,
+    Glm5NextVisionRMSNorm,
 )
 from vllm_ascend.transformers_utils.configs.glm5_next import (
     Glm5NextVisionConfig,
@@ -134,6 +135,24 @@ def test_glm5_next_swiglu_preserves_shape_and_dtype():
     assert actual.dtype == gate_up.dtype
 
 
+def test_glm5_next_vision_rms_norm_matches_transformers_reference():
+    hidden_states = torch.randn(2, 3, 8, dtype=torch.bfloat16)
+    norm = Glm5NextVisionRMSNorm(8, eps=1e-5)
+    norm.weight.data.copy_(torch.linspace(0.5, 1.5, 8))
+
+    hidden_states_fp32 = hidden_states.float()
+    variance = hidden_states_fp32.pow(2).mean(-1, keepdim=True)
+    expected = norm.weight * (
+        hidden_states_fp32 * torch.rsqrt(variance + 1e-5)
+    ).to(hidden_states.dtype)
+
+    actual = norm(hidden_states)
+
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert dict(norm.named_parameters()).keys() == {"weight"}
+    assert not hasattr(norm, "bias")
+
+
 def test_glm5_next_vision_config_preserves_checkpoint_semantics():
     config = Glm5NextVisionConfig(rms_norm_eps=1e-5, swiglu_limit=10.0)
 
@@ -190,7 +209,11 @@ def test_glm5_next_patch_merger_matches_transformers_operation_order():
 
 def test_glm5_next_vision_block_matches_transformers_residual_order():
     with (
-        patch.object(glm5_vit, "RMSNorm", lambda *args, **kwargs: nn.Identity()),
+        patch.object(
+            glm5_vit,
+            "Glm5NextVisionRMSNorm",
+            lambda *args, **kwargs: nn.Identity(),
+        ),
         patch.object(
             glm5_vit,
             "AscendGlm5NextVisionAttention",
@@ -244,7 +267,11 @@ def test_glm5_next_transformer_builds_only_dedicated_vision_components():
             _FakePatchMerger,
         ),
         patch.object(glm5_vit, "Conv2dLayer", _FakeConv2d),
-        patch.object(glm5_vit, "RMSNorm", lambda *args, **kwargs: nn.Identity()),
+        patch.object(
+            glm5_vit,
+            "Glm5NextVisionRMSNorm",
+            lambda *args, **kwargs: nn.Identity(),
+        ),
         patch.object(glm5_vit, "get_rope", return_value=object()),
         patch.object(glm5_vit, "get_vit_attn_backend", return_value="test"),
     ):
@@ -288,15 +315,25 @@ def test_glm5_next_vision_weight_loader_keeps_fused_qkv_name():
     ) == ("blocks.0.attn.qkv.weight", None)
 
 
-def test_glm5_next_vision_weight_loader_rejects_missing_shard():
+def test_glm5_next_vision_weight_loader_accepts_partial_shards():
     tower = _make_fake_vision_weight_module()
-    weights = [
+    first_shard = [
         ("patch_embed.weight", torch.ones(2, 2)),
         ("mlp.gate_proj.weight", torch.full((2, 2), 2.0)),
     ]
+    second_shard = [
+        ("mlp.up_proj.weight", torch.full((2, 2), 3.0)),
+    ]
 
-    with pytest.raises(ValueError, match="Missing GLM5Next vision weights"):
-        tower.load_weights(weights)
+    first_loaded = tower.load_weights(first_shard)
+    second_loaded = tower.load_weights(second_shard)
+
+    assert first_loaded == {"patch_embed.weight", "mlp.gate_up_proj.weight"}
+    assert second_loaded == {"mlp.gate_up_proj.weight"}
+    torch.testing.assert_close(tower.patch_embed.weight, torch.ones(2, 2))
+    gate, up = tower.mlp.gate_up_proj.weight.chunk(2, dim=0)
+    torch.testing.assert_close(gate, torch.full((2, 2), 2.0))
+    torch.testing.assert_close(up, torch.full((2, 2), 3.0))
 
 
 def test_glm5_next_vision_weight_loader_rejects_unexpected_weight():

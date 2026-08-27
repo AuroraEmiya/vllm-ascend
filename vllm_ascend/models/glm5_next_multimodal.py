@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable, Mapping
-from functools import partial
 from typing import ClassVar, Literal
 
 import torch
@@ -11,7 +10,6 @@ from vllm.config import VllmConfig
 from vllm.config.multimodal import BaseDummyOptions
 from vllm.inputs import MultiModalDataDict
 from vllm.model_executor.layers.conv import Conv2dLayer
-from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
     MergedColumnParallelLinear,
@@ -62,6 +60,29 @@ class Glm5NextSiluAndMul(nn.Module):
         gate = gate.clamp(max=self.swiglu_limit)
         up = up.clamp(min=-self.swiglu_limit, max=self.swiglu_limit)
         return F.silu(gate) * up
+
+
+class Glm5NextVisionRMSNorm(nn.Module):
+    """Weight-only RMSNorm matching the Transformers GLM5Next ViT.
+
+    Keep this vision-specific implementation independent from vLLM's RMSNorm.
+    On Ascend, the latter can acquire a quantization bias from the global text
+    quantization config even though the vision tower itself is unquantized.
+    """
+
+    def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(
+            variance + self.variance_epsilon
+        )
+        return self.weight * hidden_states.to(input_dtype)
 
 
 class AscendGlm5NextVisionMLP(nn.Module):
@@ -118,8 +139,8 @@ class AscendGlm5NextVisionAttention(GlmOcrVisionAttention):
             quant_config=quant_config,
             prefix=prefix,
         )
-        self.q_norm = RMSNorm(self.head_dim, eps=norm_eps)
-        self.k_norm = RMSNorm(self.head_dim, eps=norm_eps)
+        self.q_norm = Glm5NextVisionRMSNorm(self.head_dim, eps=norm_eps)
+        self.k_norm = Glm5NextVisionRMSNorm(self.head_dim, eps=norm_eps)
 
 
 class AscendGlm5NextVisionBlock(nn.Module):
@@ -135,9 +156,8 @@ class AscendGlm5NextVisionBlock(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
-        norm_layer = partial(RMSNorm, eps=norm_eps)
-        self.norm1 = norm_layer(dim)
-        self.norm2 = norm_layer(dim)
+        self.norm1 = Glm5NextVisionRMSNorm(dim, eps=norm_eps)
+        self.norm2 = Glm5NextVisionRMSNorm(dim, eps=norm_eps)
         self.attn = AscendGlm5NextVisionAttention(
             embed_dim=dim,
             num_heads=num_heads,
@@ -300,25 +320,14 @@ class AscendGlm5NextVisionTransformer(GlmOcrVisionTransformer):
             kernel_size=vision_config.spatial_merge_size,
             stride=vision_config.spatial_merge_size,
         )
-        self.post_layernorm = RMSNorm(vision_config.hidden_size, eps=norm_eps)
+        self.post_layernorm = Glm5NextVisionRMSNorm(
+            vision_config.hidden_size,
+            eps=norm_eps,
+        )
         self.attn_backend = get_vit_attn_backend(
             head_size=head_dim,
             dtype=torch.get_default_dtype(),
         )
-
-    @classmethod
-    def _get_expected_weight_shards(
-        cls,
-        parameter_names: Iterable[str],
-    ) -> set[tuple[str, int | None]]:
-        expected: set[tuple[str, int | None]] = set()
-        for name in parameter_names:
-            if "gate_up_proj." in name:
-                expected.add((name, 0))
-                expected.add((name, 1))
-            else:
-                expected.add((name, None))
-        return expected
 
     @classmethod
     def _map_weight_name(
@@ -330,22 +339,8 @@ class AscendGlm5NextVisionTransformer(GlmOcrVisionTransformer):
                 return name.replace(weight_name, param_name), shard_id
         return name, None
 
-    @classmethod
-    def _get_source_weight_name(
-        cls,
-        target_name: str,
-        shard_id: int | None,
-    ) -> str:
-        if shard_id is None:
-            return target_name
-        for param_name, weight_name, mapped_shard_id in cls.stacked_params_mapping:
-            if mapped_shard_id == shard_id and param_name in target_name:
-                return target_name.replace(param_name, weight_name)
-        return f"{target_name}[shard={shard_id}]"
-
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         params_dict = dict(self.named_parameters(remove_duplicate=False))
-        expected_shards = self._get_expected_weight_shards(params_dict)
         loaded_shards: set[tuple[str, int | None]] = set()
         loaded_sources: set[str] = set()
 
@@ -390,17 +385,9 @@ class AscendGlm5NextVisionTransformer(GlmOcrVisionTransformer):
                 ) from exc
             loaded_shards.add(target_shard)
 
-        missing_shards = expected_shards - loaded_shards
-        if missing_shards:
-            missing = ", ".join(
-                self._get_source_weight_name(name, shard_id)
-                for name, shard_id in sorted(
-                    missing_shards,
-                    key=lambda item: (item[0], -1 if item[1] is None else item[1]),
-                )
-            )
-            raise ValueError(f"Missing GLM5Next vision weights: {missing}")
-
+        # AutoWeightsLoader may call a child loader once per checkpoint shard.
+        # Global completeness must therefore be checked against the checkpoint
+        # index, not against the weights received by this individual call.
         return {name for name, _ in loaded_shards}
 
 
