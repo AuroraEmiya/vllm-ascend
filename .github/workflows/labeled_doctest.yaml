@@ -32,22 +32,6 @@ on:
         required: false
         type: string
         default: '["v0.18.0","latest"]'
-  pull_request:
-    branches:
-      - 'main'
-      - '*-dev'
-      - 'releases/v*'
-    paths:
-      # If we are changing the doctest we should do a PR test
-      - '.github/workflows/labeled_doctest.yaml'
-      # Version variables are sourced from mkdocs.yml 'extra:' and
-      # re-exported via the docs/source/conf.py shim. Trigger the
-      # workflow whenever either file changes.
-      - 'mkdocs.yml'
-      - 'docs/source/conf.py'
-      - 'tests/e2e/doctests/**'
-      - 'tests/e2e/common.sh'
-      - 'tests/e2e/run_doctests.sh'
 permissions:
   contents: read
 

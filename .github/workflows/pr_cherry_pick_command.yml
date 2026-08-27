@@ -18,8 +18,7 @@
 name: Handle /cherry-pick Command
 
 on:
-  repository_dispatch:
-    types: [cherry-pick-command]
+  workflow_dispatch:
 
 defaults:
   run:

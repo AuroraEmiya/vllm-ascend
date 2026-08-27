@@ -18,8 +18,7 @@
 name: Handle /nightly Command
 
 on:
-  repository_dispatch:
-    types: [nightly-command, weekly-command]
+  workflow_dispatch:
 
 defaults:
   run:

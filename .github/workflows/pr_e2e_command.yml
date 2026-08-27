@@ -18,8 +18,7 @@
 name: Handle /e2e Command
 
 on:
-  repository_dispatch:
-    types: [e2e-command]
+  workflow_dispatch:
 
 defaults:
   run:
