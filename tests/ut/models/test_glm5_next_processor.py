@@ -187,26 +187,33 @@ def test_glm5_next_placeholder_count_matches_merged_vit_tokens():
     assert replacement.count("<|image|>") == 8 * 12 // 2**2
 
 
-def test_glm5_next_processor_marks_only_image_tokens():
+def test_glm5_next_processor_marks_image_and_video_tokens():
     processor = Glm5NextProcessor.__new__(Glm5NextProcessor)
     processor.image_token_id = 99
+    processor.video_start_token_id = 100
+    processor.video_end_token_id = 101
 
-    token_types = processor.create_mm_token_type_ids([[1, 99, 99, 2]])
+    token_types = processor.create_mm_token_type_ids(
+        [[1, 99, 100, 99, 101, 99, 2]]
+    )
 
-    assert token_types == [[0, 1, 1, 0]]
+    assert token_types == [[0, 1, 0, 2, 0, 1, 0]]
 
 
-def test_glm5_next_processor_rejects_video_input():
+def test_glm5_next_processor_requires_multimodal_or_text_input():
     processor = Glm5NextProcessor.__new__(Glm5NextProcessor)
 
-    with pytest.raises(NotImplementedError, match="video input is not supported"):
-        processor(videos=[torch.zeros(2, 3, 4, 4)])
+    with pytest.raises(
+        ValueError,
+        match="At least one of images, videos, or text",
+    ):
+        processor()
 
 
-def test_glm5_next_processing_info_advertises_image_only():
+def test_glm5_next_processing_info_advertises_image_and_video():
     info = AscendGlm5NextProcessingInfo.__new__(AscendGlm5NextProcessingInfo)
 
-    assert info.get_supported_mm_limits() == {"image": None}
+    assert info.get_supported_mm_limits() == {"image": None, "video": 1}
 
 
 def test_glm5_next_processor_config_uses_hf_resolution_and_offline_flag():
@@ -230,10 +237,23 @@ def test_glm5_next_processor_config_uses_hf_resolution_and_offline_flag():
                 "patch_size": 14,
             },
         ) as get_config,
+        patch(
+            "transformers.models.auto.video_processing_auto."
+            "get_video_processor_config",
+            return_value={
+                "video_processor_type": "Glm5NextVideoProcessor",
+                "patch_size": 14,
+            },
+        ) as get_video_config,
+        patch(
+            "transformers.models.glm5_next.video_processing_glm5_next."
+            "Glm5NextVideoProcessor"
+        ) as video_cls,
         patch.object(glm5_mm, "Glm5NextImageProcessor") as image_cls,
         patch.object(glm5_mm, "Glm5NextProcessor") as processor_cls,
     ):
         image_processor = image_cls.return_value
+        video_processor = video_cls.return_value
         result = info.get_hf_processor(local_files_only=True)
 
     get_config.assert_called_once_with(
@@ -242,9 +262,17 @@ def test_glm5_next_processor_config_uses_hf_resolution_and_offline_flag():
         revision="test-revision",
         local_files_only=True,
     )
+    get_video_config.assert_called_once_with(
+        "org/glm5-next",
+        cache_dir="/cache/models",
+        revision="test-revision",
+        local_files_only=True,
+    )
     image_cls.assert_called_once_with(patch_size=14)
+    video_cls.assert_called_once_with(patch_size=14)
     processor_cls.assert_called_once_with(
         image_processor=image_processor,
         tokenizer=tokenizer,
+        video_processor=video_processor,
     )
     assert result is processor_cls.return_value

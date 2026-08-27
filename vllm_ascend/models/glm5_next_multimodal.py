@@ -7,8 +7,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from vllm.config import VllmConfig
-from vllm.config.multimodal import BaseDummyOptions
-from vllm.inputs import MultiModalDataDict
 from vllm.model_executor.layers.conv import Conv2dLayer
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
@@ -393,9 +391,14 @@ class AscendGlm5NextVisionTransformer(GlmOcrVisionTransformer):
 
 class AscendGlm5NextProcessingInfo(Glm4vProcessingInfo):
     def get_supported_mm_limits(self) -> Mapping[str, int | None]:
-        # Stage 3 signs off image inputs only. Do not silently route videos
-        # through the inherited GLM4V video processor.
-        return {"image": None}
+        return {"image": None, "video": 1}
+
+    def _is_glmga_model(self, processor: object) -> bool:
+        # GLM5Next uses the same fixed-fps timestamp construction as GLMGA,
+        # rather than GLM4.6V's duration-dependent sampling policy.
+        return isinstance(processor, Glm5NextProcessor) or super()._is_glmga_model(
+            processor
+        )
 
     def get_hf_processor(self, **kwargs: object):
         proc = getattr(self, "_glm5_hf_processor", None)
@@ -404,6 +407,18 @@ class AscendGlm5NextProcessingInfo(Glm4vProcessingInfo):
             from transformers.models.auto.image_processing_auto import (
                 get_image_processor_config,
             )
+            from transformers.models.auto.video_processing_auto import (
+                get_video_processor_config,
+            )
+            try:
+                from transformers.models.glm5_next.video_processing_glm5_next import (
+                    Glm5NextVideoProcessor,
+                )
+            except ImportError as exc:
+                raise RuntimeError(
+                    "GLM5Next video support requires the Transformers patch "
+                    "shipped with the runtime image"
+                ) from exc
 
             model_path = self.ctx.model_config.model
             model_config = self.ctx.model_config
@@ -427,9 +442,30 @@ class AscendGlm5NextProcessingInfo(Glm4vProcessingInfo):
                 }
             }
             image_processor = Glm5NextImageProcessor(**ip_cfg)
+            vp_cfg = get_video_processor_config(
+                model_path,
+                cache_dir=getattr(model_config, "download_dir", None),
+                revision=getattr(model_config, "revision", None),
+                local_files_only=bool(
+                    kwargs.get("local_files_only", HF_HUB_OFFLINE)
+                ),
+            )
+            vp_cfg = {
+                key: value
+                for key, value in vp_cfg.items()
+                if key
+                not in {
+                    "auto_map",
+                    "image_processor_type",
+                    "video_processor_type",
+                    "processor_class",
+                }
+            }
+            video_processor = Glm5NextVideoProcessor(**vp_cfg)
             proc = Glm5NextProcessor(
                 image_processor=image_processor,
                 tokenizer=tokenizer,
+                video_processor=video_processor,
             )
             self._glm5_hf_processor = proc
         return proc
@@ -470,36 +506,133 @@ class AscendGlm5NextProcessingInfo(Glm4vProcessingInfo):
             image_height=image_size.height,
         )
 
+    def get_num_video_tokens(
+        self,
+        *,
+        image_width: int,
+        image_height: int,
+        num_frames: int,
+    ) -> int:
+        video_processor = self.get_video_processor()
+        temporal_patch_size = video_processor.temporal_patch_size
+        num_frames = min(num_frames, video_processor.max_frames)
+        num_frames += (-num_frames) % temporal_patch_size
+        factor = (
+            video_processor.patch_size
+            * video_processor.merge_size
+            * getattr(video_processor, "patch_expand_factor", 1)
+        )
+        resized_height, resized_width = glm5_next_smart_resize(
+            num_frames=num_frames,
+            height=image_height,
+            width=image_width,
+            factor=factor,
+            min_pixels=video_processor.min_image_tokens,
+            max_pixels=video_processor.max_image_tokens,
+            temporal_factor=temporal_patch_size,
+        )
+        return (
+            num_frames
+            // temporal_patch_size
+            * resized_height
+            * resized_width
+            // video_processor.patch_size**2
+            // video_processor.merge_size**2
+        )
 
-class AscendGlm5NextDummyInputsBuilder(Glm4vDummyInputsBuilder):
-    def get_dummy_text(self, mm_counts: Mapping[str, int]) -> str:
-        if mm_counts.get("video", 0):
-            raise NotImplementedError(
-                "GLM5Next video input is not supported by this image-only adapter"
+    def _get_max_timestamp_tokens(self) -> int:
+        cached = getattr(self, "_glm5_max_timestamp_tokens", None)
+        if cached is not None:
+            return cached
+
+        video_processor = self.get_video_processor()
+        max_grid_t = (
+            video_processor.max_frames
+            + video_processor.temporal_patch_size
+            - 1
+        ) // video_processor.temporal_patch_size
+        timestamps = list(range(min(max_grid_t, 300)))
+        if max_grid_t > 300:
+            timestamps.append(max_grid_t - 1)
+        tokenizer = self.get_tokenizer()
+        cached = max(
+            len(
+                tokenizer.encode(
+                    f"{timestamp:.1f} seconds",
+                    add_special_tokens=False,
+                )
             )
-        num_images = mm_counts.get("image", 0)
-        return self.info.get_hf_processor().image_token * num_images
+            for timestamp in timestamps
+        )
+        self._glm5_max_timestamp_tokens = cached
+        return cached
 
-    def get_dummy_mm_data(
+    def _get_video_total_tokens(self, num_frames: int) -> int:
+        target_size = self.get_image_size_with_most_features()
+        vision_tokens = self.get_num_video_tokens(
+            image_width=target_size.width,
+            image_height=target_size.height,
+            num_frames=num_frames,
+        )
+        video_processor = self.get_video_processor()
+        grid_t = (
+            num_frames + video_processor.temporal_patch_size - 1
+        ) // video_processor.temporal_patch_size
+        return (
+            vision_tokens
+            + grid_t * (2 + self._get_max_timestamp_tokens())
+            + 2
+        )
+
+    def _get_max_video_frames(self, max_tokens: int) -> int:
+        video_processor = self.get_video_processor()
+        max_frames = min(video_processor.max_frames, max(max_tokens, 0))
+        num_frames = 0
+        for candidate in range(1, max_frames + 1):
+            if self._get_video_total_tokens(candidate) > max_tokens:
+                break
+            num_frames = candidate
+        return num_frames
+
+    def get_num_frames_with_most_features(
         self,
         seq_len: int,
         mm_counts: Mapping[str, int],
-        mm_options: Mapping[str, BaseDummyOptions],
-    ) -> MultiModalDataDict:
-        del seq_len
+    ) -> int:
+        num_images = mm_counts.get("image", 0)
+        num_videos = mm_counts.get("video", 0)
+        image_tokens = self.get_max_image_tokens() * num_images
+        tokens_per_video = max(
+            (seq_len - image_tokens) // max(num_videos, 1),
+            0,
+        )
+        return max(self._get_max_video_frames(tokens_per_video), 1)
+
+    def get_mm_max_tokens_per_item(
+        self,
+        seq_len: int,
+        mm_counts: Mapping[str, int],
+    ) -> Mapping[str, int] | None:
+        result: dict[str, int] = {}
+        if mm_counts.get("image", 0):
+            result["image"] = min(self.get_max_image_tokens(), seq_len)
         if mm_counts.get("video", 0):
-            raise NotImplementedError(
-                "GLM5Next video input is not supported by this image-only adapter"
+            video_processor = self.get_video_processor()
+            patch_expand_factor = getattr(
+                video_processor,
+                "patch_expand_factor",
+                1,
             )
-        target_size = self.info.get_image_size_with_most_features()
-        return {
-            "image": self._get_dummy_images(
-                width=target_size.width,
-                height=target_size.height,
-                num_images=mm_counts.get("image", 0),
-                overrides=mm_options.get("image"),
+            max_video_tokens = (
+                int(video_processor.max_image_tokens)
+                * patch_expand_factor**2
             )
-        }
+            result["video"] = min(max_video_tokens, seq_len)
+        return result
+
+
+class AscendGlm5NextDummyInputsBuilder(Glm4vDummyInputsBuilder):
+    pass
 
 
 @MULTIMODAL_REGISTRY.register_processor(
@@ -542,7 +675,7 @@ class AscendGlm5NextForConditionalGeneration(
             multimodal_config.is_multimodal_pruning_enabled()
         )
 
-        with self._mark_tower_model(vllm_config, {"image"}):
+        with self._mark_tower_model(vllm_config, {"image", "video"}):
             self.visual = AscendGlm5NextVisionTransformer(
                 config.text_config,
                 config.vision_config,

@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-"""Image-only processor backport for GLM-5.3-Flash.
+"""Image and video processor integration for GLM-5.3-Flash.
 
 The implementation follows the GLM5Next processor merged into Transformers
-after the transformers 5.5.4 version used by this branch. Video processing is
-intentionally excluded until a dedicated GLM5Next video path is validated.
+after the transformers 5.5.4 version used by this branch. Image preprocessing
+stays local to preserve the validated image path. Video pixel preprocessing is
+provided by the patched Transformers package shipped in the runtime image.
 """
 
 import math
@@ -358,12 +359,15 @@ class Glm5NextProcessorKwargs(ProcessingKwargs, total=False):
             "padding": False,
             "return_token_type_ids": False,
             "return_mm_token_type_ids": True,
-        }
+        },
+        "videos_kwargs": {
+            "return_metadata": True,
+        },
     }
 
 
 class Glm5NextProcessor(ProcessorMixin):
-    """Transformers-5.5-compatible, image-only GLM5Next processor."""
+    """Transformers-5.5-compatible GLM5Next multimodal processor."""
 
     valid_processor_kwargs = Glm5NextProcessorKwargs
 
@@ -371,6 +375,7 @@ class Glm5NextProcessor(ProcessorMixin):
         self,
         image_processor=None,
         tokenizer=None,
+        video_processor=None,
         chat_template=None,
         **kwargs,
     ) -> None:
@@ -385,9 +390,18 @@ class Glm5NextProcessor(ProcessorMixin):
             if getattr(tokenizer, "image_token_id", None) is not None
             else tokenizer.convert_tokens_to_ids(self.image_token)
         )
+        self.video_token = "<|video|>"
+        self.video_token_id = tokenizer.convert_tokens_to_ids(self.video_token)
+        self.video_start_token_id = tokenizer.convert_tokens_to_ids(
+            "<|begin_of_video|>"
+        )
+        self.video_end_token_id = tokenizer.convert_tokens_to_ids(
+            "<|end_of_video|>"
+        )
         super().__init__(
             image_processor,
             tokenizer,
+            video_processor,
             chat_template=chat_template,
         )
 
@@ -402,12 +416,10 @@ class Glm5NextProcessor(ProcessorMixin):
         videos: VideoInput | None = None,
         **kwargs: Unpack[Glm5NextProcessorKwargs],
     ) -> BatchFeature:
-        if videos is not None:
-            raise NotImplementedError(
-                "GLM5Next video input is not supported by this image-only adapter"
+        if images is None and videos is None and text is None:
+            raise ValueError(
+                "At least one of images, videos, or text must be provided"
             )
-        if images is None and text is None:
-            raise ValueError("At least one of images or text must be provided")
 
         output_kwargs = self._merge_kwargs(
             Glm5NextProcessorKwargs,
@@ -423,6 +435,20 @@ class Glm5NextProcessor(ProcessorMixin):
         else:
             image_inputs = {}
             image_grid_thw = None
+        if videos is not None:
+            if self.video_processor is None:
+                raise RuntimeError(
+                    "GLM5Next video input requires the patched Transformers "
+                    "package that provides Glm5NextVideoProcessor"
+                )
+            video_inputs = self.video_processor(
+                videos=videos,
+                **output_kwargs["videos_kwargs"],
+            )
+            video_grid_thw = video_inputs["video_grid_thw"]
+        else:
+            video_inputs = {}
+            video_grid_thw = None
 
         if not isinstance(text, list):
             text = [text]
@@ -455,6 +481,32 @@ class Glm5NextProcessor(ProcessorMixin):
                 raise ValueError(
                     "Received more images than image placeholders in the prompt"
                 )
+        if video_grid_thw is not None:
+            video_index = 0
+            for text_index, value in enumerate(processed_text):
+                if value is None:
+                    raise ValueError("text must be provided when videos are used")
+                while self.video_token in value:
+                    if video_index >= len(video_grid_thw):
+                        raise ValueError(
+                            "Prompt contains more video placeholders than videos"
+                        )
+                    value = value.replace(
+                        self.video_token,
+                        "<|video_placeholder|>",
+                        1,
+                    )
+                    value = value.replace(
+                        "<|video_placeholder|>",
+                        self.replace_video_token(video_inputs, video_index),
+                        1,
+                    )
+                    video_index += 1
+                processed_text[text_index] = value
+            if video_index != len(video_grid_thw):
+                raise ValueError(
+                    "Received more videos than video placeholders in the prompt"
+                )
 
         return_tensors = output_kwargs["text_kwargs"].pop(
             "return_tensors",
@@ -468,17 +520,20 @@ class Glm5NextProcessor(ProcessorMixin):
             processed_text,
             **output_kwargs["text_kwargs"],
         )
-        self._check_special_mm_tokens(
-            processed_text,
-            text_inputs,
-            modalities=["image"],
-        )
+        if videos is None:
+            self._check_special_mm_tokens(
+                processed_text,
+                text_inputs,
+                modalities=["image"],
+            )
         if return_mm_token_type_ids:
             text_inputs["mm_token_type_ids"] = self.create_mm_token_type_ids(
                 text_inputs["input_ids"]
             )
+        if not kwargs.get("return_metadata"):
+            video_inputs.pop("video_metadata", None)
         return BatchFeature(
-            data={**text_inputs, **image_inputs},
+            data={**text_inputs, **image_inputs, **video_inputs},
             tensor_type=return_tensors,
         )
 
@@ -495,16 +550,51 @@ class Glm5NextProcessor(ProcessorMixin):
         )
         return self.image_token * num_image_tokens
 
+    def replace_video_token(
+        self,
+        video_inputs: dict,
+        video_idx: int,
+        **kwargs,
+    ) -> str:
+        """Build timestamped frame placeholders for one video."""
+        del kwargs
+        merge_length = self.video_processor.merge_size**2
+        grid = video_inputs["video_grid_thw"][video_idx]
+        num_frames = int(grid[0])
+        num_image_tokens = int(grid.prod()) // merge_length // num_frames
+        metadata = video_inputs["video_metadata"][video_idx]
+        timestamps = metadata.timestamps[
+            :: self.video_processor.temporal_patch_size
+        ]
+        selected_timestamps = list(timestamps[:num_frames])
+        while len(selected_timestamps) < num_frames:
+            selected_timestamps.append(
+                selected_timestamps[-1] if selected_timestamps else 0
+            )
+        return "".join(
+            self.replace_frame_token_id(
+                float(timestamp),
+                num_image_tokens=num_image_tokens,
+            )
+            for timestamp in selected_timestamps
+        )
+
+    def replace_frame_token_id(
+        self,
+        timestamp_sec: float,
+        num_image_tokens: int = 1,
+    ) -> str:
+        return (
+            f"<|begin_of_image|>{self.image_token * num_image_tokens}"
+            f"<|end_of_image|>{timestamp_sec:.1f} seconds"
+        )
+
     def _get_num_multimodal_tokens(
         self,
         image_sizes=None,
         video_sizes=None,
         **kwargs,
     ) -> MultiModalData:
-        if video_sizes is not None:
-            raise NotImplementedError(
-                "GLM5Next video input is not supported by this image-only adapter"
-            )
         vision_data = {}
         if image_sizes is not None:
             images_kwargs = dict(
@@ -529,6 +619,39 @@ class Glm5NextProcessor(ProcessorMixin):
                 ],
                 num_image_patches=num_image_patches,
             )
+        if video_sizes is not None:
+            if self.video_processor is None:
+                raise RuntimeError(
+                    "GLM5Next video input requires Glm5NextVideoProcessor"
+                )
+            processor = self.video_processor
+            factor = (
+                processor.patch_size
+                * processor.merge_size
+                * getattr(processor, "patch_expand_factor", 1)
+            )
+            num_video_tokens = []
+            for num_frames, height, width in video_sizes:
+                num_frames = min(int(num_frames), int(processor.max_frames))
+                num_frames += (-num_frames) % processor.temporal_patch_size
+                resized_height, resized_width = smart_resize(
+                    num_frames=num_frames,
+                    height=int(height),
+                    width=int(width),
+                    factor=factor,
+                    min_pixels=processor.min_image_tokens,
+                    max_pixels=processor.max_image_tokens,
+                    temporal_factor=processor.temporal_patch_size,
+                )
+                num_video_tokens.append(
+                    num_frames
+                    // processor.temporal_patch_size
+                    * resized_height
+                    * resized_width
+                    // processor.patch_size**2
+                    // processor.merge_size**2
+                )
+            vision_data["num_video_tokens"] = num_video_tokens
         return MultiModalData(**vision_data)
 
     @property
@@ -540,7 +663,18 @@ class Glm5NextProcessor(ProcessorMixin):
         for item in input_ids:
             array_ids = np.asarray(item)
             mm_token_types = np.zeros_like(array_ids)
-            mm_token_types[array_ids == self.image_token_id] = 1
+            starts = np.cumsum(
+                array_ids == self.video_start_token_id,
+                axis=0,
+            )
+            ends = np.cumsum(
+                array_ids == self.video_end_token_id,
+                axis=0,
+            )
+            is_video_modality = starts > ends
+            is_image_token = array_ids == self.image_token_id
+            mm_token_types[is_image_token & is_video_modality] = 2
+            mm_token_types[is_image_token & ~is_video_modality] = 1
             mm_token_type_ids.append(mm_token_types.tolist())
         return mm_token_type_ids
 
