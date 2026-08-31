@@ -498,8 +498,6 @@ def _can_use_triton(
         return False
     if query.shape[-1] != TRITON_HEAD_DIM:
         return False
-    if max_pool_seq_len > TRITON_MAX_POOL_SEQ_LEN:
-        return False
     return index_topk // index_kpool <= TRITON_MAX_POOL_TOPK
 
 
