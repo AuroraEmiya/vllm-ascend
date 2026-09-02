@@ -498,7 +498,7 @@ def _can_use_triton(
         return False
     if query.shape[-1] != TRITON_HEAD_DIM:
         return False
-    return index_topk // index_kpool <= TRITON_MAX_POOL_TOPK
+    return True
 
 
 def glm5_next_lightning_indexer_fake(
