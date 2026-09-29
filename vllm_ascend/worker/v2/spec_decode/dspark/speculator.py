@@ -134,9 +134,7 @@ class AscendDSparkSpeculator(DSparkSpeculator):
                 self.attn_architecture = "GQA"
             else:
                 self.attn_architecture = None
-            dflash_speculator.prepare_dflash_inputs = prepare_dflash_inputs_factory(
-                self.vllm_config.cache_config.block_size
-            )
+            dflash_speculator.prepare_dflash_inputs = prepare_dflash_inputs_factory(self.block_tables)
 
     def _prepare_draft_dcp_metadata_inputs(
         self, num_reqs: int, num_reqs_padded: int, step: int

@@ -314,6 +314,9 @@ def prepare_dflash_inputs_triton(
     num_reqs = input_batch.num_reqs
     assert num_reqs > 0
 
+    if physical_block_size <= 0 or block_size <= 0 or physical_block_size % block_size != 0:
+        raise ValueError("The physical KV block size must be positive and divisible by the kernel block size.")
+
     max_target_query_len = int(input_batch.num_scheduled_tokens.max())
 
     init_device_properties_triton()
@@ -331,13 +334,10 @@ def prepare_dflash_inputs_triton(
     )
 
     max_ctx_per_worker = triton.cdiv(max_target_query_len, workers_per_req)
-    block_size_kernel = min(
+    context_tile_size = min(
         _MAX_CONTEXT_BLOCK_SIZE,
         triton.next_power_of_2(max(2, max_ctx_per_worker)),
     )
-
-    if physical_block_size % block_size != 0:
-        raise ValueError("The physical KV block size must be divisible by the kernel block size.")
 
     _prepare_dflash_inputs_kernel[(num_reqs, workers_per_req)](
         input_buffers.input_ids,
@@ -376,7 +376,7 @@ def prepare_dflash_inputs_triton(
         PAD_SLOT_ID=PAD_SLOT_ID,
         CP_SIZE=cp_size,
         CP_INTERLEAVE=cp_interleave,
-        BLOCK_SIZE=block_size_kernel,
+        BLOCK_SIZE=context_tile_size,
         QUERY_BLOCK_SIZE=_QUERY_BLOCK_SIZE,
         SAMPLE_BLOCK_SIZE=_SAMPLE_BLOCK_SIZE,
         REQUEST_PADDING_BLOCK_SIZE=_REQUEST_PADDING_BLOCK_SIZE,
