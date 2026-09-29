@@ -19,16 +19,17 @@ from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
 from vllm_ascend.ops.triton.v2.spec_decode.prepare_dflash_inputs import prepare_dflash_inputs_triton
 from vllm_ascend.worker.v2.attn_utils import build_attn_metadata_wrapper
 
+# Positional index of block_table in upstream DFlash prepare_dflash_inputs.
+_BLOCK_TABLE_ARG_INDEX = 16
+
 
 def prepare_dflash_inputs_factory(block_tables: BlockTables) -> Callable[..., None]:
     physical_sizes_by_table = {
-        id(table): block_tables.block_sizes[gid]
-        for gid, table in enumerate(block_tables.input_block_tables)
+        id(table): block_tables.block_sizes[gid] for gid, table in enumerate(block_tables.input_block_tables)
     }
 
     def prepare_with_block_size(*args: Any, **kwargs: Any) -> None:
-        # Upstream passes the current gid's input block table at argument 16.
-        table = args[16] if len(args) > 16 else kwargs["block_table"]
+        table = args[_BLOCK_TABLE_ARG_INDEX] if len(args) > _BLOCK_TABLE_ARG_INDEX else kwargs["block_table"]
         try:
             physical_block_size = physical_sizes_by_table[id(table)]
         except KeyError as exc:
