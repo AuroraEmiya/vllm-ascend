@@ -10,9 +10,105 @@ import torch
 from vllm.v1.attention.backends.utils import PAD_SLOT_ID
 
 from vllm_ascend.ops.triton.v2.spec_decode.prepare_dflash_inputs import prepare_dflash_inputs_triton
+from vllm_ascend.worker.v2.spec_decode.dflash import speculator as ascend_dflash_speculator
 from vllm_ascend.worker.v2.spec_decode.dflash.speculator import prepare_dflash_inputs
 
 ACCURACY_CASES = [
+    {
+        "name": "equal_blocks_cp1",
+        "req_lens": [2],
+        "position_starts": [127],
+        "idx_mapping": [0],
+        "max_num_reqs": 2,
+        "max_num_tokens": 8,
+        "max_model_len": 1024,
+        "block_size": 128,
+        "num_query_per_req": 2,
+        "num_speculative_steps": 1,
+        "parallel_drafting_token_id": 123,
+        "expected_context_slots": [255, 256],
+        "expected_query_slots": [257, 258],
+    },
+    {
+        "name": "split_blocks_cp1",
+        "req_lens": [2],
+        "position_starts": [127],
+        "idx_mapping": [0],
+        "max_num_reqs": 2,
+        "max_num_tokens": 8,
+        "max_model_len": 1024,
+        "physical_block_size": 384,
+        "block_size": 128,
+        "kernel_blocks": [21, 22, 23],
+        "num_query_per_req": 2,
+        "num_speculative_steps": 1,
+        "parallel_drafting_token_id": 123,
+        "expected_context_slots": [2815, 2816],
+        "expected_query_slots": [2817, 2818],
+    },
+    *[
+        {
+            "name": f"split_blocks_dcp_rank{rank}",
+            "req_lens": [2],
+            "position_starts": [2047],
+            "idx_mapping": [0],
+            "max_num_reqs": 2,
+            "max_num_tokens": 8,
+            "max_model_len": 8192,
+            "physical_block_size": 384,
+            "block_size": 128,
+            "kernel_blocks": [21, 22, 23],
+            "cp_rank": rank,
+            "cp_size": 16,
+            "cp_interleave": 384,
+            "num_query_per_req": 2,
+            "num_speculative_steps": 1,
+            "parallel_drafting_token_id": 123,
+            "expected_context_slots": [2815, 2816] if rank == 5 else [PAD_SLOT_ID] * 2,
+            "expected_query_slots": [2817, 2818] if rank == 5 else [PAD_SLOT_ID] * 2,
+        }
+        for rank in (5, 0)
+    ],
+    {
+        "name": "split_blocks_physical_boundary",
+        "req_lens": [2],
+        "position_starts": [383],
+        "idx_mapping": [0],
+        "max_num_reqs": 2,
+        "max_num_tokens": 8,
+        "max_model_len": 8192,
+        "physical_block_size": 384,
+        "block_size": 128,
+        "kernel_blocks": [21, 22, 23],
+        "cp_rank": 1,
+        "cp_size": 16,
+        "cp_interleave": 384,
+        "num_query_per_req": 2,
+        "num_speculative_steps": 1,
+        "parallel_drafting_token_id": 123,
+        "expected_context_slots": [PAD_SLOT_ID, 2688],
+        "expected_query_slots": [2689, 2690],
+    },
+    {
+        "name": "split_blocks_virtual_boundary",
+        "req_lens": [2],
+        "position_starts": [6143],
+        "idx_mapping": [0],
+        "max_num_reqs": 2,
+        "max_num_tokens": 8,
+        "max_model_len": 8192,
+        "physical_block_size": 384,
+        "block_size": 128,
+        "kernel_blocks": [21, 22, 23, 24, 25, 26],
+        "cp_rank": 0,
+        "cp_size": 16,
+        "cp_interleave": 384,
+        "num_query_per_req": 2,
+        "num_speculative_steps": 1,
+        "parallel_drafting_token_id": 123,
+        "expected_context_slots": [PAD_SLOT_ID, 3072],
+        "expected_query_slots": [3073, 3074],
+    },
     {
         "name": "business_b8_t1626",
         "req_lens": [192, 197, 201, 205, 209, 211, 215, 196],
@@ -250,16 +346,18 @@ def _build_positions(req_lens, position_starts):
     return values
 
 
-def _local_slot(position, physical_block, block_size, cp_rank, cp_size, cp_interleave):
-    if physical_block == 0:
+def _local_slot(position, kernel_blocks, physical_block_size, kernel_block_size, cp_rank, cp_size, cp_interleave):
+    # Phase 1: the KV manager's physical block determines DCP ownership.
+    virtual_block, block_offset = divmod(position, physical_block_size * cp_size)
+    stripe, stripe_offset = divmod(block_offset, cp_interleave)
+    if stripe % cp_size != cp_rank:
         return PAD_SLOT_ID
-    block_offset = position % (block_size * cp_size)
-    if cp_size == 1:
-        return physical_block * block_size + block_offset
-    if (block_offset // cp_interleave) % cp_size != cp_rank:
-        return PAD_SLOT_ID
-    local_offset = (block_offset // (cp_interleave * cp_size)) * cp_interleave + block_offset % cp_interleave
-    return physical_block * block_size + local_offset
+    local_position = virtual_block * physical_block_size + (stripe // cp_size) * cp_interleave + stripe_offset
+
+    # Phase 2: the expanded table uses attention-kernel-sized blocks.
+    kernel_index, kernel_offset = divmod(local_position, kernel_block_size)
+    kernel_block = kernel_blocks[min(kernel_index, len(kernel_blocks) - 1)]
+    return PAD_SLOT_ID if kernel_block == 0 else kernel_block * kernel_block_size + kernel_offset
 
 
 def _allocate_outputs(max_num_reqs, max_num_tokens, num_speculative_steps, device):
@@ -334,6 +432,9 @@ def _build_inputs(case, device):
         dtype=torch.int32,
         device=device,
     ).view(max_num_reqs, block_table_width)
+    if "kernel_blocks" in case:
+        kernel_blocks = case["kernel_blocks"]
+        block_table[0, : len(kernel_blocks)] = torch.tensor(kernel_blocks, dtype=torch.int32, device=device)
     for req_idx, logical_block in case.get("null_blocks", []):
         block_table[req_idx, logical_block] = 0
 
@@ -362,7 +463,8 @@ def _build_reference(data, case):
     max_num_tokens = case["max_num_tokens"]
     num_query_per_req = case["num_query_per_req"]
     num_speculative_steps = case["num_speculative_steps"]
-    block_size = case["block_size"]
+    kernel_block_size = case["block_size"]
+    physical_block_size = case.get("physical_block_size", kernel_block_size)
     cp_rank = case.get("cp_rank", 0)
     cp_size = case.get("cp_size", 1)
     cp_interleave = case.get("cp_interleave", 1)
@@ -411,11 +513,15 @@ def _build_reference(data, case):
                 ref.context_slot_mapping[ctx_idx] = PAD_SLOT_ID
                 continue
             ctx_pos = positions[ctx_idx]
-            logical_block = min(ctx_pos // (block_size * cp_size), len(block_table[req_idx]) - 1)
-            physical_block = block_table[req_idx][logical_block]
             ref.context_positions[ctx_idx] = ctx_pos
             ref.context_slot_mapping[ctx_idx] = _local_slot(
-                ctx_pos, physical_block, block_size, cp_rank, cp_size, cp_interleave
+                ctx_pos,
+                block_table[req_idx],
+                physical_block_size,
+                kernel_block_size,
+                cp_rank,
+                cp_size,
+                cp_interleave,
             )
 
         query_base = req_idx * num_query_per_req
@@ -429,10 +535,14 @@ def _build_reference(data, case):
             query_pos = last_valid_pos + 1 + query_off
             ref.input_ids[query_idx] = bonus_token if query_off == 0 else case["parallel_drafting_token_id"]
             ref.query_positions[query_idx] = min(query_pos, max_model_len - 1)
-            logical_block = min(query_pos // (block_size * cp_size), len(block_table[req_idx]) - 1)
-            physical_block = block_table[req_idx][logical_block]
             ref.query_slot_mapping[query_idx] = _local_slot(
-                query_pos, physical_block, block_size, cp_rank, cp_size, cp_interleave
+                query_pos,
+                block_table[req_idx],
+                physical_block_size,
+                kernel_block_size,
+                cp_rank,
+                cp_size,
+                cp_interleave,
             )
 
         for sample_local in range(num_speculative_steps):
@@ -482,6 +592,9 @@ def _validate_outputs(data, case, ref):
     _assert_exact(outputs.query_slot_mapping, ref.query_slot_mapping)
     _assert_exact(outputs.context_positions[:total_context], ref.context_positions)
     _assert_exact(outputs.context_slot_mapping[:total_context], ref.context_slot_mapping)
+    if "expected_context_slots" in case:
+        _assert_exact(outputs.context_slot_mapping[:total_context], case["expected_context_slots"])
+        _assert_exact(outputs.query_slot_mapping[:total_query], case["expected_query_slots"])
     _assert_exact(outputs.sample_indices, ref.sample_indices)
     _assert_exact(outputs.sample_pos, ref.sample_pos)
     _assert_exact(outputs.sample_idx_mapping, ref.sample_idx_mapping)
@@ -534,7 +647,9 @@ def _cleanup():
 
 def _run_case(case):
     data = _build_inputs(case, "npu")
-    prepare_dflash_inputs_triton(*_impl_args(data, case))
+    prepare_dflash_inputs_triton(
+        *_impl_args(data, case), physical_block_size=case.get("physical_block_size", case["block_size"])
+    )
     _validate_outputs(data, case, _build_reference(data, case))
     _cleanup()
 
@@ -564,6 +679,35 @@ def test_prepare_dflash_inputs_partition_boundaries(num_reqs, context_len):
 def test_prepare_dflash_inputs_wrapper_forwards_dcp():
     case = next(case for case in ACCURACY_CASES if case["name"] == "dcp_rank1_interleave4")
     data = _build_inputs(case, "npu")
-    prepare_dflash_inputs(*_impl_args(data, case))
+    prepare_dflash_inputs(
+        *_impl_args(data, case), physical_block_size=case.get("physical_block_size", case["block_size"])
+    )
     _validate_outputs(data, case, _build_reference(data, case))
     _cleanup()
+
+
+def test_prepare_dflash_inputs_factory_uses_current_group(monkeypatch):
+    tables = [object(), object()]
+    block_tables = SimpleNamespace(input_block_tables=tables, block_sizes=[384, 128])
+    seen = []
+    monkeypatch.setattr(
+        ascend_dflash_speculator,
+        "prepare_dflash_inputs",
+        lambda *args, **kwargs: seen.append(kwargs["physical_block_size"]),
+    )
+    prepare = ascend_dflash_speculator.prepare_dflash_inputs_factory(block_tables)
+    for table in tables:
+        prepare(*([None] * 16), table, 128)
+    assert seen == [384, 128]
+    with pytest.raises(ValueError, match="outside its KV cache groups"):
+        prepare(*([None] * 16), object(), 128)
+
+
+@pytest.mark.parametrize("physical_block_size,kernel_block_size", [(0, 128), (-128, 128), (384, 0), (385, 128)])
+def test_prepare_dflash_inputs_rejects_invalid_block_sizes(physical_block_size, kernel_block_size):
+    case = ACCURACY_CASES[0]
+    data = _build_inputs(case, "cpu")
+    args = _impl_args(data, case)
+    args[17] = kernel_block_size
+    with pytest.raises(ValueError, match="positive and divisible"):
+        prepare_dflash_inputs_triton(*args, physical_block_size=physical_block_size)
