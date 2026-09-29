@@ -19,12 +19,11 @@
       path retains at least one context token per request. For an unexpected
       fully rejected span, the optimized kernel defensively uses
       `positions[ctx_start] - 1` instead of reading the preceding request.
-    - Context/query KV slot:
-      `logical_block = min(position // (block_size * cp_size), block_table_stride - 1)`,
-      `physical_block = block_table[req, logical_block]`,
-      `slot = PAD_SLOT_ID` when `physical_block == 0` or the DCP rank does not
-      own the position; otherwise the rank-local slot follows vLLM's
-      `cp_local_slot` interleave and local-offset rules.
+    - Context/query KV slot: first use `physical_block_size` to transform the
+      global position into DCP rank ownership and a rank-local position. Then
+      use `kernel_block_size` to index the expanded block table and calculate
+      the offset within that kernel block. A non-owned position or null block
+      maps to `PAD_SLOT_ID`.
     - Query construction:
       `query_pos = last_valid_pos + 1 + query_offset`;
       query offset `0` uses the request bonus token, and subsequent offsets use
@@ -55,8 +54,22 @@
 
 > [!NOTE]
 >
-> The wrapper forwards `cp_rank`, `cp_size`, and `cp_interleave` to the optimized
-> kernel. The kernel uses the same `cp_local_slot` rule as main's scalar kernel.
+> The wrapper forwards `cp_rank`, `cp_size`, and `cp_interleave` and binds the
+> current block table to `block_tables.block_sizes[gid]`. Upstream passes
+> `block_tables.kernel_block_sizes[gid]` as `block_size` for the same `gid`.
+
+`physical_block_size` (or KV-manager block size) is the allocation and DCP
+ownership granularity. `kernel_block_size` is the attention kernel's block
+size and the unit of the expanded block table; upstream names this argument
+`block_size`. The internal Triton Context tile size controls vectorization
+only and is unrelated to either KV-cache block size.
+
+For example, a physical block of 384 tokens with ID 7 and a kernel block of
+128 tokens expands to kernel block IDs `[21, 22, 23]`. With `cp_size=16` and
+`cp_interleave=384`, positions 2047 and 2048 both belong to rank 5. Their
+rank-local positions are 127 and 128, so they use kernel block IDs 21 and 22
+and map to slots 2815 and 2816. The kernel-block boundary at 2048 does not
+change DCP ownership.
 
 | Parameter | Input/Output/Attribute | Description | Data type | Data format |
 | --- | --- | --- | --- | --- |
@@ -76,8 +89,9 @@
 | `next_prefill_tokens` | Input | Persistent next-prefill token ID per request-state slot, used when `num_sampled == 0` | int32 | dense tensor |
 | `input_temperature` | Input | Source sampling temperature per request-state slot | float32 | dense tensor |
 | `input_seeds` | Input | Source sampling seed per request-state slot | int64 | dense tensor |
-| `block_table` | Input | Request-to-physical-KV-block table, shape `[max_num_reqs, max_num_blocks]` | int32 | dense tensor |
-| `block_size` | Input/Attribute | Number of tokens in one KV block | int | scalar |
+| `block_table` | Input | Request-to-kernel-block table expanded from physical KV blocks, shape `[max_num_reqs, max_num_blocks]` | int32 | dense tensor |
+| `block_size` | Input/Attribute | Kernel block size supplied by upstream from `kernel_block_sizes[gid]` | int | scalar |
+| `physical_block_size` | Input/Attribute | KV-manager block size for the same `gid`, supplied by the Ascend wrapper | int | scalar |
 | `cp_rank` | Input/Attribute | DCP rank that owns local KV slots | int | scalar |
 | `cp_size` | Input/Attribute | Number of DCP ranks used in block indexing and slot ownership | int | scalar |
 | `cp_interleave` | Input/Attribute | Number of adjacent positions assigned to one DCP rank per round | int | scalar |
@@ -102,7 +116,9 @@
 - `input_batch.num_scheduled_tokens` contains one host-side scheduled-token count per request. Its maximum is used by the launcher to select Context parallelism and `BLOCK_SIZE`.
 - `num_sampled` and `num_rejected` are int32 and contain at least `num_reqs` entries. The upstream DFlash path supplies `0 <= num_rejected[req] < ctx_len[req]`; when `num_sampled[req] == 0` during chunked prefill, `num_rejected[req] == 0`.
 - `last_sampled`, `next_prefill_tokens`, `input_temperature`, and `input_seeds` contain at least `max_num_reqs` request-state entries.
-- `block_table` is int32 with shape `[max_num_reqs, max_num_blocks]`; `block_size > 0`.
+- `block_table` is int32 with shape `[max_num_reqs, max_num_blocks]`.
+  `physical_block_size > 0`, `block_size > 0`, and
+  `physical_block_size % block_size == 0`.
 - `query_slot_mapping` and `context_slot_mapping` are int32. Query/context positions and `sample_indices`/`sample_pos` are int64. `sample_idx_mapping` is int32.
 - The legacy DFlash path uses `sample_from_anchor=False` and `num_query_per_req == num_speculative_steps + 1`.
 - `num_reqs * num_query_per_req <= max_num_tokens`.
@@ -113,9 +129,11 @@
 
 ## Upstream Compatibility
 
-The worker wrapper has one vLLM 0.30.0 signature and forwards DFlash and DCP
-inputs to the optimized 2-D launcher. Multimodal input positions are
-unsupported because KV slots currently derive from scalar position IDs.
+The worker wrapper preserves the vLLM 0.30.0 call signature and forwards
+DFlash and DCP inputs to the optimized 2-D launcher. It selects the physical
+size from the BlockTables group whose input table upstream passes to this
+call. Multimodal input positions are unsupported because KV slots currently
+derive from scalar position IDs.
 
 ## Origin and Differences
 
@@ -126,7 +144,7 @@ unsupported because KV slots currently derive from scalar position IDs.
     - Graph-padding work is distributed across the complete launch grid instead of being serialized by a single request/program.
     - `workers_per_req` is derived from the detected VectorCore count and the Context/Query/Sample vector-width requirements rather than a hard-coded device core count.
     - The worker wrapper follows the current-main signature and forwards DCP parameters.
-    - CP-aware block indexing and `cp_local_slot` preserve main's rank ownership and local-offset semantics.
+    - DCP ownership uses the physical KV block size; expanded block-table lookup uses the kernel block size, matching main's general slot-mapping semantics.
 
 ## Test Cases
 
@@ -145,11 +163,24 @@ The cases cover the captured DFlash inference shapes plus branch-specific cases:
 - full-capacity execution with minimal graph padding.
 - DCP ranks 0, 1, and 2; interleave sizes 1, 2, and 4; cross-block positions,
   non-owned positions, and null physical blocks.
+- Equal physical/kernel blocks with CP=1; split blocks with CP=1 and CP=16;
+  positions 2047/2048 on ranks 5 and 0; physical and DCP virtual block
+  boundaries. These cases prevent kernel block size from being reused for
+  DCP ownership.
 
 The test compares Context mapping, Query construction, Sample mapping, per-request sampling state, and all graph-padding regions against an independent Python reference. Since this operator performs integer indexing and direct state copies, the unified precision requirement is bit-exact (`rtol=0, atol=0`).
 
 ```bash
 pytest -sv tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_prepare_dflash_inputs.py
+```
+
+The standalone split-block reproduction runs against the Ascend kernel or the
+installed upstream vLLM implementation. Run each implementation in a fresh
+process so the Ascend runtime patch cannot change the upstream function:
+
+```bash
+python tests/manual/repro_prepare_dflash_split_block.py --implementation ascend
+python tests/manual/repro_prepare_dflash_split_block.py --implementation upstream
 ```
 
 ## Example
@@ -186,5 +217,6 @@ prepare_dflash_inputs_triton(
     max_num_tokens=8192,
     max_model_len=8192,
     sample_from_anchor=False,
+    physical_block_size=128,
 )
 ```
