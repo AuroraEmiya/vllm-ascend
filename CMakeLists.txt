@@ -78,6 +78,11 @@ else()
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/aclnn_torch_adapter/*.cpp)
 endif()
 
+# Serial Compressor Vector kernels are packaged only for A3.
+if(NOT SOC_VERSION MATCHES "ascend910_93.*")
+  list(REMOVE_ITEM VLLM_ASCEND_SRC ${CMAKE_CURRENT_SOURCE_DIR}/csrc/compressor_serial.cpp)
+endif()
+
 # Sparse KV cache offloading is currently supported on Atlas A3 only.
 if(SOC_VERSION MATCHES "ascend910_93.*")
   find_package(OpenMP REQUIRED)
