@@ -22,12 +22,22 @@ struct CompressorMetadata {
   TBuf<TPosition::VECCALC> cuBuf, startBuf, usedBuf, pageBuf;
   LocalTensor<int32_t> cu, start, used, page;
   uint32_t batches, tableCols, ratio, hasUsed;
+  uint32_t groupRequest, groupBase, groupStop, tokenRequest;
+  int32_t groupFirstEnd, tokenBegin, tokenStop;
+  bool groupBoundsReady, tokenBoundsReady;
   __aicore__ inline void Init(TPipe& pipe, GM_ADDR cuIn, GM_ADDR startsInput, GM_ADDR usedIn, GM_ADDR tableIn,
                               uint32_t b, uint32_t cols, uint32_t r, uint32_t hu) {
     batches = b;
     tableCols = cols;
     ratio = r;
     hasUsed = hu;
+    // Per-invocation state: Graph replay must reread updated metadata.
+    groupRequest = 0;
+    groupBase = 0;
+    groupStop = 0;
+    tokenRequest = 0;
+    groupBoundsReady = false;
+    tokenBoundsReady = false;
     pipe.InitBuffer(cuBuf, 264 * 4);
     pipe.InitBuffer(startBuf, 264 * 4);
     pipe.InitBuffer(usedBuf, 264 * 4);
@@ -55,21 +65,40 @@ struct CompressorMetadata {
     MteToScalar();
     return page.GetValue(0);
   }
+  // Cyclic task assignment gives each AIV nondecreasing group/token queries.
+  // Cache one request at a time; repeated channel groups remain on that request.
   __aicore__ inline int32_t Group(uint32_t group, int32_t& end) {
-    uint32_t base = 0;
-    for (uint32_t b = 0; b < batches; b++) {
-      int32_t s = start.GetValue(b), n = (s + Count(b)) / ratio - s / ratio;
-      if (group < base + n) {
-        end = (s / ratio + int32_t(group - base) + 1) * ratio;
-        return b;
+    while (groupRequest < batches) {
+      if (!groupBoundsReady) {
+        const int32_t position = start.GetValue(groupRequest);
+        const int32_t firstWindow = position / int32_t(ratio);
+        const int32_t count = (position + Count(groupRequest)) / int32_t(ratio) - firstWindow;
+        groupStop = groupBase + uint32_t(count);
+        groupFirstEnd = (firstWindow + 1) * int32_t(ratio);
+        groupBoundsReady = true;
       }
-      base += n;
+      if (group < groupStop) {
+        end = groupFirstEnd + int32_t(group - groupBase) * int32_t(ratio);
+        return int32_t(groupRequest);
+      }
+      groupBase = groupStop;
+      groupRequest++;
+      groupBoundsReady = false;
     }
     return -1;
   }
   __aicore__ inline int32_t Token(uint32_t token) {
-    for (uint32_t b = 0; b < batches; b++)
-      if (token >= cu.GetValue(b) && token < cu.GetValue(b) + Count(b)) return b;
+    while (tokenRequest < batches) {
+      if (!tokenBoundsReady) {
+        tokenBegin = cu.GetValue(tokenRequest);
+        tokenStop = tokenBegin + Count(tokenRequest);
+        tokenBoundsReady = true;
+      }
+      if (token < uint32_t(tokenBegin)) return -1;
+      if (token < uint32_t(tokenStop)) return int32_t(tokenRequest);
+      tokenRequest++;
+      tokenBoundsReady = false;
+    }
     return -1;
   }
 };

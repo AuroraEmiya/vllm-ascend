@@ -1,9 +1,11 @@
 add_op_to_compiled_list()
+set(compressor_serial_finalize_depends attention/compressor_serial_common CACHE INTERNAL
+    "Shared kernel sources for compressor_serial_finalize")
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnn PRIVATE compressor_serial_finalize_def.cpp)
 endif()
 add_ops_compile_options(OP_NAME CompressorSerialFinalize OPTIONS -Wno-deprecated-declarations)
-add_ops_compile_options(OP_NAME CompressorSerialFinalize OPTIONS -I${OPS_TRANSFORMER_DIR}/attention)
+add_ops_compile_options(OP_NAME CompressorSerialFinalize OPTIONS -I${OPS_TRANSFORMER_DIR}/attention/compressor_serial_common/op_kernel)
 if(NOT BUILD_OPS_RTY_KERNEL)
     add_modules_sources(OPTYPE compressor_serial_finalize ACLNNTYPE aclnn)
 endif()

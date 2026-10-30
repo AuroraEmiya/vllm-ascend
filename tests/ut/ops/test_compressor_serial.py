@@ -287,19 +287,35 @@ def test_vector_meta():
     assert pool.dtype == torch.float32 and result.dtype == torch.bfloat16
 
 
-def _business_cases(long_prefill=False):
+def _business_cases(long_prefill=False, stress=False, selected=None):
+    descriptions = []
     for hidden in (4096, 7168):
         for family, ratio, coff, dim in _FAMILIES:
             modes = [
-                ("decode1", [1], [ratio - 1]),
-                ("decode16", [1] * 16, [ratio - 1] * 16),
-                ("prefill256", [256], [0]),
-                ("prefill1024", [1024], [0]),
+                (f"decode{batch}", [1] * batch, [ratio - 1] * batch) for batch in (1, 2, 4, 8, 16, 32, 64, 128, 256)
             ]
+            prefill = (64, 128, 256, 512, 1024, 2048)
             if long_prefill:
-                modes += [("prefill4096", [4096], [0]), ("prefill8192", [8192], [0])]
+                prefill += (4096, 8192)
+            if stress:
+                prefill += (16384,)
+            modes += [(f"prefill{tokens}", [tokens], [0]) for tokens in prefill]
+            modes += [
+                ("mixed2-t256", [1, 255], [ratio - 1, 0]),
+                ("ragged4-t1024", [1, 31, 127, 865], [4095, 4096, 4097, 0]),
+                (
+                    "ragged8-t2048",
+                    [1, 7, 31, 63, 127, 255, 511, 1053],
+                    [ratio - 1, 0, ratio, 2 * ratio - 1, 128, 255, 1024, 0],
+                ),
+            ]
             for mode, lengths, starts in modes:
-                yield f"h{hidden}-{family}-{mode}", _make_case(lengths, starts, ratio, coff, dim, hidden=hidden)
+                name = f"h{hidden}-{family}-{mode}"
+                if selected is None or selected == name:
+                    macs = 2 * sum(lengths) * hidden * coff * dim
+                    descriptions.append((macs, name, hidden, ratio, coff, dim, lengths, starts))
+    for _, name, hidden, ratio, coff, dim, lengths, starts in sorted(descriptions):
+        yield name, _make_case(lengths, starts, ratio, coff, dim, hidden=hidden)
 
 
 def _graph_times(functions, values):
@@ -341,11 +357,12 @@ def _main():
     parser.add_argument("--profile", choices=("original", "candidate"))
     parser.add_argument("--case")
     parser.add_argument("--long-prefill", action="store_true")
+    parser.add_argument("--stress", action="store_true")
     parser.add_argument("--output", default="compressor_serial_graph.json")
     args = parser.parse_args()
     importlib.import_module("vllm_ascend.vllm_ascend_C")
     records = []
-    for name, cpu in _business_cases(args.long_prefill):
+    for name, cpu in _business_cases(args.long_prefill, args.stress, args.case):
         if args.case is not None and args.case != name:
             continue
         values, guard = _device_case(cpu)
@@ -394,6 +411,74 @@ def _main():
         print(name, "Graph fused/candidate", round(speed, 4), flush=True)
     if not records:
         raise ValueError("no matching case")
+
+
+@pytest.mark.parametrize("family", _FAMILIES, ids=lambda f: f[0])
+@pytest.mark.parametrize("dtype", (torch.bfloat16, torch.float16))
+@pytest.mark.parametrize("batches", (15, 16, 17, 255, 256))
+def test_request_lookup_boundaries(family, dtype, batches):
+    _, ratio, coff, dim = family
+    lengths = [0, 1, 3, 2] * (batches // 4) + [1] * (batches % 4)
+    starts = [ratio - 1 if index % 2 else 0 for index in range(batches)]
+    cpu = list(_make_case(lengths, starts, ratio, coff, dim))
+    for index in (0, 1, 2):
+        cpu[index] = cpu[index].to(dtype)
+    cpu[10] = torch.tensor(
+        [max(0, length - (index % 3 == 0)) for index, length in enumerate(lengths)], dtype=torch.int32
+    )
+    values, guard = _device_case(cpu)
+    packed = prepare_compressor_serial_weights(values[1], values[2])
+    output = compressor_serial(*values, packed_weight=packed)
+    torch.npu.synchronize()
+    _assert_result(output, values, cpu, _reference(cpu), guard)
+
+
+@pytest.mark.parametrize("family", _FAMILIES, ids=lambda f: f[0])
+@pytest.mark.parametrize("dtype", (torch.bfloat16, torch.float16))
+@pytest.mark.parametrize("tokens", (39, 40, 41, 639, 640, 641, 1279, 1280, 1281))
+def test_a3_state_tile_boundaries(family, dtype, tokens):
+    # Current A3 has 40 AIV cores; include long state-task and page tails.
+    _, ratio, coff, dim = family
+    cpu = list(_make_case([tokens], [ratio - 1], ratio, coff, dim, block_size=127))
+    for index in (0, 1, 2):
+        cpu[index] = cpu[index].to(dtype)
+    values, guard = _device_case(cpu)
+    packed = prepare_compressor_serial_weights(values[1], values[2])
+    output = compressor_serial(*values, packed_weight=packed)
+    torch.npu.synchronize()
+    _assert_result(output, values, cpu, _reference(cpu), guard)
+
+
+@pytest.mark.parametrize("family", _FAMILIES, ids=lambda f: f[0])
+@pytest.mark.parametrize("dtype", (torch.bfloat16, torch.float16))
+def test_graph_reads_updated_request_metadata(family, dtype):
+    _, ratio, coff, dim = family
+    batches = 17
+    cpu = list(_make_case([2] * batches, [ratio - 1] * batches, ratio, coff, dim))
+    for index in (0, 1, 2):
+        cpu[index] = cpu[index].to(dtype)
+    cpu[10] = torch.full((batches,), 2, dtype=torch.int32)
+    values, guard = _device_case(cpu)
+    packed = prepare_compressor_serial_weights(values[1], values[2])
+    function = partial(compressor_serial, packed_weight=packed)
+    function(*values)
+    torch.npu.synchronize()
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        output = function(*values)
+    for step in range(3):
+        lengths = [1, 3] + [2] * (batches - 2) if step == 1 else [2] * batches
+        cpu[9] = torch.tensor([0, *torch.tensor(lengths).cumsum(0).tolist()], dtype=torch.int32)
+        cpu[10] = torch.tensor(
+            [length if (index + step) % 3 else 0 for index, length in enumerate(lengths)], dtype=torch.int32
+        )
+        cpu[11] = torch.full((batches,), ratio - 1 - (step == 1), dtype=torch.int32)
+        for index in (9, 10, 11):
+            values[index].copy_(cpu[index])
+        values[3].copy_(cpu[3])
+        graph.replay()
+        torch.npu.synchronize()
+        _assert_result(output, values, cpu, _reference(cpu), guard)
 
 
 if __name__ == "__main__":
