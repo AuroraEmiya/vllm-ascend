@@ -1,0 +1,11 @@
+add_op_to_compiled_list()
+set(compressor_serial_pool_depends attention/compressor_serial_common CACHE INTERNAL
+    "Shared kernel sources for compressor_serial_pool")
+if(BUILD_OPEN_PROJECT)
+    target_sources(op_host_aclnn PRIVATE compressor_serial_pool_def.cpp)
+endif()
+add_ops_compile_options(OP_NAME CompressorSerialPool OPTIONS -Wno-deprecated-declarations)
+add_ops_compile_options(OP_NAME CompressorSerialPool OPTIONS -I${OPS_TRANSFORMER_DIR}/attention/compressor_serial_common/op_kernel)
+if(NOT BUILD_OPS_RTY_KERNEL)
+    add_modules_sources(OPTYPE compressor_serial_pool ACLNNTYPE aclnn)
+endif()
