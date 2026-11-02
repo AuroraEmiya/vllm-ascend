@@ -94,10 +94,7 @@ private:
         PipeBarrier<PIPE_V>();
         Adds(f2, f2, eps, 8);
         PipeBarrier<PIPE_V>();
-        Sqrt(f3, f2, 8);
-        Duplicate(f4, 1.0f, 8);
-        PipeBarrier<PIPE_V>();
-        Div(f3, f4, f3, 8);
+        Rsqrt(f3, f2, 8);
         Sync<HardEvent::V_S>();
         const float inverse = f3.GetValue(0);
         Muls(f0, f0, inverse, width);

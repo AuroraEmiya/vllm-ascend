@@ -22,7 +22,7 @@ index metadata before copying/replaying it. A CPU helper checks this preconditio
 the hot path performs no host reads or synchronization. The device also guards
 slot bounds. Quantization, PA_NZ, empty batches and prefill are outside this scope.
 
-The kernel uses complete per-row FP32 RMS reductions, `Sqrt` plus `Div`, and BF16
+The kernel uses complete per-row FP32 RMS reductions, `Rsqrt` for the reciprocal, and BF16
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
@@ -107,10 +107,17 @@ preparation or hidden intermediate rounding is changed. Public schema/API:
 [op-plugin declaration](https://gitcode.com/Ascend/op-plugin/blob/7.3.0/op_plugin/config/op_plugin_functions.yaml),
 [ACLNN contract](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/aolapi/context/ops-nn/aclnnTransposeBatchMatMul.md).
 
-Candidate8 prepares the two merged-down/up weights as contiguous transposed ND
+Candidate8 (rejected for severe small-batch regressions) prepares the two merged-down/up weights as contiguous transposed ND
 format2 and uses public `torch.nn.functional.linear` for these two matrix stages.
 Preparation and refresh include transpose, contiguous storage and format cast;
 the stable-address refresh contract is unchanged. This is an actual matrix-route
 candidate: kernel versions and all internal tasks are determined from complete
 profiling, not inferred from the API name or layout. Candidate7 head projection
 and every own V stage are unchanged.
+
+Candidate9 restores the retained candidate7 NZ matrix route and replaces only the FP32 `Sqrt` plus `Div` RMS reciprocal with public
+Ascend C `Rsqrt`. Reduction, gamma multiplication and BF16 RINT outputs are
+unchanged. No FP32 inverse-RMS auxiliary value is part of this public operator's
+observable outputs. Acceptance still uses the frozen independent FP64 reference
+and all same-address Graph/cache checks; approximate-instruction precision is
+not assumed to pass and the thresholds are not relaxed.

@@ -4,7 +4,6 @@
 import math
 
 import torch
-import torch.nn.functional as F
 import torch_npu
 
 QUERY_RANK = 1536
@@ -12,7 +11,7 @@ KV_RANK = 512
 NOPE_DIM = 128
 ROPE_DIM = 64
 MAX_BATCH = 128
-MATRIX_FORMAT = 2
+FRACTAL_NZ = 29
 ALLOWED_HIDDEN = (1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192)
 ALLOWED_HEADS = (1, 2, 4, 8, 16, 32, 64, 128)
 ALLOWED_BLOCK_SIZE = (16, 128)
@@ -39,10 +38,10 @@ def _check_tensor(tensor, shape, device, name, dtype=torch.bfloat16):
 
 
 class MlaPrologSerial:
-    """Decode implementation with explicitly prepared, address-stable ND weights.
+    """Decode implementation with explicitly prepared, address-stable NZ weights.
 
     After changing any source matrix, call refresh_weights outside Graph replay.
-    The method updates existing ND buffers without changing captured addresses.
+    The method updates existing NZ buffers without changing captured addresses.
     Gamma and head-projection matrices remain direct references.
     Recreate this object and recapture when addresses, shapes or metadata change.
     Kernels support the decode subdomain documented in the accompanying README.
@@ -71,20 +70,16 @@ class MlaPrologSerial:
         self.weight_dq, self.weight_uq_qr, self.weight_uk = weight_dq, weight_uq_qr, weight_uk
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
-        self._matrix_prepared = tuple(
-            torch_npu.npu_format_cast(value, MATRIX_FORMAT) for value in self._matrix_values()
-        )
+        self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in self._matrix_values())
         self._check_prepared_formats()
         self.dummy = torch.empty(1, dtype=torch.bfloat16, device=self.device)
 
     def _check_prepared_formats(self):
-        if any(torch_npu.get_npu_format(value) != MATRIX_FORMAT for value in self._matrix_prepared):
-            raise RuntimeError("prepared matrix weights require actual ND format2")
+        if any(torch_npu.get_npu_format(value) != FRACTAL_NZ for value in self._matrix_nz):
+            raise RuntimeError("prepared matrix weights require actual FRACTAL_NZ format29")
 
     def _matrix_values(self):
-        return torch.cat(
-            (self.weight_dq, self.weight_dkv_kr), dim=1
-        ).t().contiguous(), self.weight_uq_qr.t().contiguous()
+        return torch.cat((self.weight_dq, self.weight_dkv_kr), dim=1), self.weight_uq_qr
 
     def refresh_weights(self):
         """Refresh all prepared matrices on the current stream, outside capture.
@@ -93,11 +88,11 @@ class MlaPrologSerial:
         this stream before a Graph replay on another stream. No synchronization
         or preparation occurs inside the captured forward.
         """
-        addresses = tuple(value.data_ptr() for value in self._matrix_prepared)
-        for source, target in zip(self._matrix_values(), self._matrix_prepared):
-            target.copy_(torch_npu.npu_format_cast(source, MATRIX_FORMAT))
+        addresses = tuple(value.data_ptr() for value in self._matrix_nz)
+        for source, target in zip(self._matrix_values(), self._matrix_nz):
+            target.copy_(torch_npu.npu_format_cast(source, FRACTAL_NZ))
         self._check_prepared_formats()
-        if addresses != tuple(value.data_ptr() for value in self._matrix_prepared):
+        if addresses != tuple(value.data_ptr() for value in self._matrix_nz):
             raise RuntimeError("refresh changed captured weight addresses")
 
     def prepared_weight_info(self):
@@ -108,7 +103,7 @@ class MlaPrologSerial:
                 "data_ptr": value.data_ptr(),
                 "storage_bytes": value.untyped_storage().nbytes(),
             }
-            for name, value in zip(("wdq_wdkv_t", "wuq_t"), self._matrix_prepared)
+            for name, value in zip(("wdq_wdkv", "wuq"), self._matrix_nz)
         }
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
@@ -134,7 +129,7 @@ class MlaPrologSerial:
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
 
-        down_q_kv = F.linear(x, self._matrix_prepared[0])
+        down_q_kv = torch.mm(x, self._matrix_nz[0])
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q_kv,
@@ -153,7 +148,7 @@ class MlaPrologSerial:
             cache_kr_flat,
         )
 
-        up = F.linear(normalized_q, self._matrix_prepared[1])
+        up = torch.mm(normalized_q, self._matrix_nz[1])
         head_q = torch.empty((self.heads, rows, NOPE_DIM), device=self.device, dtype=torch.bfloat16)
         query_rope = torch.empty((rows, self.heads, ROPE_DIM), device=self.device, dtype=torch.bfloat16)
         self._vector(
