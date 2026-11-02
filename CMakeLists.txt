@@ -51,6 +51,12 @@ endif()
 
 include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)
 
+option(VLLM_ASCEND_BUILD_HC_ONLY "Build only registered HC Ascend C stages" OFF)
+if(VLLM_ASCEND_BUILD_HC_ONLY)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/hc_serial.cmake)
+  return()
+endif()
+
 file(GLOB KERNEL_FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/*.cpp)
 
