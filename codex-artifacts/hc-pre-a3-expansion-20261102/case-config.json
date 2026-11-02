@@ -1,0 +1,2326 @@
+{
+  "schema_version": 1,
+  "operator": "hc_pre",
+  "configuration_kind": "Minimal execution projection of the unchanged formal24-case manifest",
+  "source_manifest_sha256": "d0cdce48b21164a9fcb86176429721cf46fbd1be6511baec0606d1d20437a842",
+  "prepared_case_count": 24,
+  "phase_counts": {
+    "decode": 8,
+    "prefill": 16
+  },
+  "source_evidence_tier": "Official CPU template; no real runtime model-input capture",
+  "template_label_limitation": "Recorded template API is npu_hc_pre_v2; actual paired comparison uses external_pre_mix 5-input/4-output v3. The original label-to-fixed-source gap is retained.",
+  "precision_acceptance": "DEFERRED_BY_USER",
+  "performance_protocol": "10 adjacent 256 MiB ArgMax / synchronize / whole graph replay / synchronize; sum all tasks per invocation, then median; median of per-invocation C/(C+V)",
+  "cases": [
+    {
+      "id": "hc-pre-dsv41-decode-norm1e-20-t4",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 4,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          4,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          4,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          4,
+          5120
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs4-seq128",
+          "model_batch": 4,
+          "model_seq": 128,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "8cf5f3ef63725161eaa974d7e098e5d7ec8ea4f928bcb806d657468845032e50",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-decode-norm1e-20-t8",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 8,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          8,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          8,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          8,
+          5120
+        ],
+        [
+          8,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ],
+        [
+          8,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs8-seq128",
+          "model_batch": 8,
+          "model_seq": 128,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "8508c8c5daa0ad7ef4b309e20d33c1f7cb58a9d4bb35d886438e672e78560915",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-norm1e-20-t16",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 16,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          16,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          16,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          16,
+          5120
+        ],
+        [
+          16,
+          4
+        ],
+        [
+          16,
+          4,
+          4
+        ],
+        [
+          16,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs16-seq16384",
+          "model_batch": 16,
+          "model_seq": 16384,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "faf0c167696d0e7e730dfc4658cd236d5ecd34f61314b55d2f2fec62109aeeb8"
+        },
+        {
+          "run": "dsv41-decode-bs16-seq128",
+          "model_batch": 16,
+          "model_seq": 128,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "24190b464ddabcdecc4871a88ebb60fccb229c19582b1f11d9f7a83592f04f7d",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-norm1e-20-t32",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 32,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          32,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          32,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          32,
+          5120
+        ],
+        [
+          32,
+          4
+        ],
+        [
+          32,
+          4,
+          4
+        ],
+        [
+          32,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs32-seq131072",
+          "model_batch": 32,
+          "model_seq": 131072,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "6e25a8110baa9f1a8fc307265082a2b27a17fff7338ba3dbd368a4169dd6f5a9"
+        },
+        {
+          "run": "dsv41-decode-bs32-seq16384",
+          "model_batch": 32,
+          "model_seq": 16384,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "b62beab0264b38f6c8093dc505f31055994b951de76cfb9be799daf930b83545"
+        },
+        {
+          "run": "dsv41-decode-bs32-seq128",
+          "model_batch": 32,
+          "model_seq": 128,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "89fbe4ebd440c93ecd5f522dedd6c199c97c19707503abda25eea13be07bdc9c",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-decode-norm1e-20-t64",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 64,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          64,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          64,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          64,
+          5120
+        ],
+        [
+          64,
+          4
+        ],
+        [
+          64,
+          4,
+          4
+        ],
+        [
+          64,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs64-seq128",
+          "model_batch": 64,
+          "model_seq": 128,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "30b680986c64c6d8cd1da96893ee6dcd54b1c359e29e84190b59d0bbbe795818",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-decode-norm1e-20-t128",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 128,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          128,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          128,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          128,
+          5120
+        ],
+        [
+          128,
+          4
+        ],
+        [
+          128,
+          4,
+          4
+        ],
+        [
+          128,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs128-seq128",
+          "model_batch": 128,
+          "model_seq": 128,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "b64909db36ec577ecf3abcb7f84b5374b6921b5a1822d367e588665155d50b9d",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-decode-norm1e-20-t256",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 256,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          256,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          256,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          256,
+          5120
+        ],
+        [
+          256,
+          4
+        ],
+        [
+          256,
+          4,
+          4
+        ],
+        [
+          256,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs256-seq32",
+          "model_batch": 256,
+          "model_seq": 32,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "291f37bc5da6a04c7202727b8dcfdefabba2fabf623706993512a6ce666758ec",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-decode-norm1e-20-t512",
+      "operator": "hc_pre",
+      "phase": "decode",
+      "axes": {
+        "T": 512,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          512,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          512,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          512,
+          5120
+        ],
+        [
+          512,
+          4
+        ],
+        [
+          512,
+          4,
+          4
+        ],
+        [
+          512,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-decode-bs512-seq32",
+          "model_batch": 512,
+          "model_seq": 32,
+          "TP": 1,
+          "DP": 16,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "fe329c708d9f053f3120677c3008cc0da6a3c3c9fe31bce4654d840a82e08717",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t768",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 768,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          768,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          768,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          768,
+          5120
+        ],
+        [
+          768,
+          4
+        ],
+        [
+          768,
+          4,
+          4
+        ],
+        [
+          768,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq768",
+          "model_batch": 1,
+          "model_seq": 768,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "5222f84474db268244ef4e37f0306a606fdaa307161ab4ac8daad9335d181355",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t1024",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 1024,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          1024,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          1024,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          1024,
+          5120
+        ],
+        [
+          1024,
+          4
+        ],
+        [
+          1024,
+          4,
+          4
+        ],
+        [
+          1024,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq1024",
+          "model_batch": 1,
+          "model_seq": 1024,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "0e42353010b41f2e896cab31cbc36b1f3b17eb586d5582f0b1b2778a7801fbbe",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t1536",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 1536,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          1536,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          1536,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          1536,
+          5120
+        ],
+        [
+          1536,
+          4
+        ],
+        [
+          1536,
+          4,
+          4
+        ],
+        [
+          1536,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq1536",
+          "model_batch": 1,
+          "model_seq": 1536,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "ea9ab3d1235c1ea46af8d82b4812668f367cb7bcd6caf988cecf593d6c886b2b",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t2048",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 2048,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          2048,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          2048,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          2048,
+          5120
+        ],
+        [
+          2048,
+          4
+        ],
+        [
+          2048,
+          4,
+          4
+        ],
+        [
+          2048,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq2048",
+          "model_batch": 1,
+          "model_seq": 2048,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "663d32453218fb387807f7f6341f9635b9b385ba411e29a3bdd4954a0fac2e34",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t3072",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 3072,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          3072,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          3072,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          3072,
+          5120
+        ],
+        [
+          3072,
+          4
+        ],
+        [
+          3072,
+          4,
+          4
+        ],
+        [
+          3072,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq3072",
+          "model_batch": 1,
+          "model_seq": 3072,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "2ea1b8d8dbcda432fb69ccda6110588607d84ea754a29d771615944e20659eab",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t4096",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 4096,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          4096,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          4096,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          4096,
+          5120
+        ],
+        [
+          4096,
+          4
+        ],
+        [
+          4096,
+          4,
+          4
+        ],
+        [
+          4096,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq4096",
+          "model_batch": 1,
+          "model_seq": 4096,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "086a49e258c0e4f6e4af53a38f93b6eade6c94af4cb4e5012e263b2a4ceff51a",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t6144",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 6144,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          6144,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          6144,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          6144,
+          5120
+        ],
+        [
+          6144,
+          4
+        ],
+        [
+          6144,
+          4,
+          4
+        ],
+        [
+          6144,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq6144",
+          "model_batch": 1,
+          "model_seq": 6144,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "b9e21721307813bd8b6879c66d3100af1dba3da79c4dd32a7aec1dd473247e01",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t8192",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 8192,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          8192,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          8192,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          8192,
+          5120
+        ],
+        [
+          8192,
+          4
+        ],
+        [
+          8192,
+          4,
+          4
+        ],
+        [
+          8192,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq8192",
+          "model_batch": 1,
+          "model_seq": 8192,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "8329cc0277eeb7be8066247a69ce739002f00053eef8b5888e398284141125ba",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t12288",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 12288,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          12288,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          12288,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          12288,
+          5120
+        ],
+        [
+          12288,
+          4
+        ],
+        [
+          12288,
+          4,
+          4
+        ],
+        [
+          12288,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq12288",
+          "model_batch": 1,
+          "model_seq": 12288,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "f615d0c3b48b677da9e56d38965d019b4aeb2769c417fc0fd7e407f00fdc6c8c",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-norm1e-20-t16384",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 16384,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          16384,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          16384,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          16384,
+          5120
+        ],
+        [
+          16384,
+          4
+        ],
+        [
+          16384,
+          4,
+          4
+        ],
+        [
+          16384,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq16384",
+          "model_batch": 1,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "4bd920895ed0b201bf8fc31090443d5c8348fbd79dbba66170cb734990345b9d"
+        },
+        {
+          "run": "dsv41-prefill-bs1-seq16384",
+          "model_batch": 1,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "378ab21bb68680f545e6bd97c7334d428350f21e5c07652d8ec8a865d312593c",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t24576",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 24576,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          24576,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          24576,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          24576,
+          5120
+        ],
+        [
+          24576,
+          4
+        ],
+        [
+          24576,
+          4,
+          4
+        ],
+        [
+          24576,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq24576",
+          "model_batch": 1,
+          "model_seq": 24576,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "169e9c57ac8a5e785db95a2662cebca52ec34b743550ca5641a93e43a3ed88fc",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-norm1e-20-t32768",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 32768,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          32768,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          32768,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          32768,
+          5120
+        ],
+        [
+          32768,
+          4
+        ],
+        [
+          32768,
+          4,
+          4
+        ],
+        [
+          32768,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs2-seq16384",
+          "model_batch": 2,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "d824605a757cbdbbe3d3712b9ca39b90bde0ca8524b268e0e00f3819a1e099f9"
+        },
+        {
+          "run": "dsv41-prefill-bs2-seq16384",
+          "model_batch": 2,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "e8c6d4fdc1c8d7a2c56b34fbcbd8638a104c3f7ff0e2f7f8aba00236c5604da9",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t49152",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 49152,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          49152,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          49152,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          49152,
+          5120
+        ],
+        [
+          49152,
+          4
+        ],
+        [
+          49152,
+          4,
+          4
+        ],
+        [
+          49152,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs3-seq16384",
+          "model_batch": 3,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "26b5a04d22ee71d43132289bcb7513b91aab866f80a287638ef22241f6a3e7dd",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-norm1e-20-t65536",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 65536,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          65536,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          65536,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          65536,
+          5120
+        ],
+        [
+          65536,
+          4
+        ],
+        [
+          65536,
+          4,
+          4
+        ],
+        [
+          65536,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs4-seq16384",
+          "model_batch": 4,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "21777ca11623722b948cbe04d4816c81e7948ff69eb5732cd29c598682d5b3e0"
+        },
+        {
+          "run": "dsv41-prefill-bs4-seq16384",
+          "model_batch": 4,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "848243a86865dfcd537a9e9d5e12aab2a940a9cc3edc3eb2c236e2bee58ec1cb",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-prefill-norm1e-20-t98304",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 98304,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          98304,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          98304,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          98304,
+          5120
+        ],
+        [
+          98304,
+          4
+        ],
+        [
+          98304,
+          4,
+          4
+        ],
+        [
+          98304,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs6-seq16384",
+          "model_batch": 6,
+          "model_seq": 16384,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "966f6d232257bc158f88b90602d7be2dde498bee44fa9c61cc04e632a7137d7b",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    },
+    {
+      "id": "hc-pre-dsv41-norm1e-20-t131072",
+      "operator": "hc_pre",
+      "phase": "prefill",
+      "axes": {
+        "T": 131072,
+        "hc_mult": 4,
+        "H": 5120,
+        "norm_eps": 1e-20,
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_shapes": [
+        [
+          131072,
+          4,
+          5120
+        ],
+        [
+          24,
+          20480
+        ],
+        [
+          3
+        ],
+        [
+          24
+        ],
+        [
+          131072,
+          4
+        ]
+      ],
+      "input_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "output_shapes": [
+        [
+          131072,
+          5120
+        ],
+        [
+          131072,
+          4
+        ],
+        [
+          131072,
+          4,
+          4
+        ],
+        [
+          131072,
+          4
+        ]
+      ],
+      "output_dtypes": [
+        "bfloat16",
+        "float32",
+        "float32",
+        "float32"
+      ],
+      "measured": false,
+      "pre_mix": "external tensor input",
+      "official_kwargs": {
+        "norm_eps": 1e-20
+      },
+      "runner_defaults_not_explicit_in_template": {
+        "hc_eps": 1e-06,
+        "hc_sinkhorn_iters": 20
+      },
+      "input_sampler": "existing hc_pre/model.py::_make_case; seed 1024+T; shared by serial and baseline",
+      "input_values_are_model_captured": false,
+      "correctness": "DEFERRED_BY_USER",
+      "source_runs": [
+        {
+          "run": "dsv41-prefill-bs1-seq131072",
+          "model_batch": 1,
+          "model_seq": 131072,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "6b48f8a47b27ccb485b51c7571e0f1960279e319748c03f9a7c187f4cc018e56"
+        },
+        {
+          "run": "dsv41-prefill-bs1-seq131072",
+          "model_batch": 1,
+          "model_seq": 131072,
+          "TP": 4,
+          "DP": 4,
+          "official_api": [
+            "_C_ascend.npu_hc_pre_v2.default"
+          ],
+          "raw_csv_sha256": "3a43b211dfea7a5d0b9d6ce8a9f48a07f2e6cc7036f9d54e84da38e6c662c63c",
+          "template_kind": "packaged real-model template",
+          "workload_origin": "user-requested parameter sweep; not real request capture"
+        }
+      ]
+    }
+  ]
+}
