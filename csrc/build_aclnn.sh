@@ -158,6 +158,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "moe_gating_top_k_hash"
         "add_rms_norm_bias"
         "rms_norm_cast"
+        "x_tgr_vector"
         "transpose_kv_cache_by_block"
         "copy_and_expand_eagle_inputs"
         "lightning_indexer_quant"

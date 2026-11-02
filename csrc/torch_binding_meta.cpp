@@ -37,6 +37,15 @@
 namespace vllm_ascend {
 namespace meta {
 const int64_t INT4_NUMS_IN_INT32 = 8;
+
+void npu_tgr_vector_out(const at::Tensor& x, const at::Tensor& gamma,
+                        const at::Tensor& aux, const at::Tensor& gate,
+                        int64_t mode, int64_t channels, double eps,
+                        at::Tensor y, at::Tensor inv, at::Tensor inject)
+{
+    // Outputs are allocated by the Python pipeline; this is an out operator.
+}
+
 constexpr int64_t DSA_SLOT_MAPPING_FLAT = 1;
 constexpr int64_t DSA_SLOT_MAPPING_BLOCK_OFFSET = 2;
 
@@ -1913,6 +1922,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     // Add_Rms_Norm_Bias
     ops.impl("npu_add_rms_norm_bias", &vllm_ascend::meta::npu_add_rms_norm_bias_meta);
     ops.impl("npu_rms_norm_cast", &vllm_ascend::meta::npu_rms_norm_cast_meta);
+    ops.impl("npu_tgr_vector_out", &vllm_ascend::meta::npu_tgr_vector_out);
     // transpose_kv_cache_by_block
     ops.impl("transpose_kv_cache_by_block", &vllm_ascend::meta::transpose_kv_cache_by_block_meta);
     // npu_sign_bits_pack

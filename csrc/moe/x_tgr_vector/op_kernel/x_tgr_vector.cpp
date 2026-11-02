@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * Licensed under CANN Open Software License Agreement Version 2.0.
+ */
 #include "kernel_operator.h"
 #include "x_tgr_vector_tiling.h"
 
@@ -108,7 +112,7 @@ private:
 
 extern "C" __global__ __aicore__ void x_tgr_vector(GM_ADDR x, GM_ADDR gamma, GM_ADDR aux, GM_ADDR gate, GM_ADDR y, GM_ADDR inv, GM_ADDR inject, GM_ADDR workspace, GM_ADDR tiling) {
     REGISTER_TILING_DEFAULT(XTgrVectorTilingData);
-    GET_TILING_DATA(tilingData, tiling);
+    GET_TILING_DATA_WITH_STRUCT(XTgrVectorTilingData, tilingData, tiling);
     TgrVector op;
     op.Init(x,gamma,aux,gate,y,inv,inject,tilingData);
     op.Process();
