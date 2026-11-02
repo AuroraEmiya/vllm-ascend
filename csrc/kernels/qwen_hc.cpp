@@ -110,7 +110,7 @@ public:
 };
 
 template<typename T>
-class Silu {
+class HcSilu {
 public:
     __aicore__ inline void Run(GM_ADDR input, GM_ADDR output, HcParams p) {
         GlobalTensor<T> in, out;
@@ -188,7 +188,7 @@ extern "C" __global__ __aicore__ void qwen_hc_combine_norm(
 }
 extern "C" __global__ __aicore__ void qwen_hc_silu(GM_ADDR x,GM_ADDR y,HcParams p) {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    Silu<bfloat16_t> kernel;kernel.Run(x,y,p);
+    HcSilu<bfloat16_t> kernel;kernel.Run(x,y,p);
 }
 extern "C" __global__ __aicore__ void qwen_hc_gate_mix(GM_ADDR x,GM_ADDR g,GM_ADDR y,HcParams p) {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
