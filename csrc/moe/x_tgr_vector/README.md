@@ -18,6 +18,21 @@ the public package's optional return convention. `need_backward=True` requests
 forward auxiliary tensors; autograd backward is outside this implementation.
 No inputs or caller-owned state are modified.
 
+With a gate, the prepared class packs the down and gate weights into BF16
+`[336,10240]`: 320 down rows, 4 gate rows, and 12 zero padding rows. A single
+public `torch.mm` computes these projections, then owned V computes SiLU and
+the write gate. Preparation allocates 6,881,280 extra bytes and is measured by
+the harness. The up projection remains a separate public `torch.mm`.
+
+After changing down/gate weight contents, the caller must invoke
+`prepared.refresh_weights_()` before replay, on the same stream or with an
+explicit stream dependency. The refresh copies only weights into the existing
+prepared address; input-dependent computation remains inside every Graph.
+New source weight addresses/metadata require a new object and recapture.
+Same-address update tests invoke and time this explicit refresh outside the
+forward latency, as allowed for the weight preparation stage. Down auxiliary
+output is a strided view of the live projection columns.
+
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model
 trace. Performance acceptance is decode only: `S=1`, with batch sizes

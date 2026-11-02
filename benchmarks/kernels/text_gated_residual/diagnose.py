@@ -22,7 +22,7 @@ def main():
     case = next(c for c in json.loads(Path(__file__).with_name("cases.json").read_text()) if c["id"] == args.case_id)
     cpu = make_inputs(case)
     refs = oracle(cpu, case)
-    tensors, calls, _ = make_calls(cpu, case)
+    tensors, calls, _, serial = make_calls(cpu, case)
     print("EAGER_BEGIN", args.implementation, args.case_id, flush=True)
     outputs = calls[args.implementation]()
     torch.npu.synchronize()
@@ -48,6 +48,7 @@ def main():
             for tensor, value in zip(tensors, updated):
                 if tensor is not None:
                     tensor.copy_(value)
+            serial.refresh_weights_()
             graph.replay()
             stream.synchronize()
             result["graph_updated_same_address"] = check_outputs(graph_outputs, oracle(updated, case))

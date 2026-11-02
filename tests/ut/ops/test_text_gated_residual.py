@@ -56,3 +56,18 @@ def test_prepared_weight_views_follow_same_address_updates(weights):
     assert op.w_up.data_ptr() == up.data_ptr()
     assert torch.equal(op.w_down, down.t())
     assert torch.equal(op.w_up, up.t())
+
+
+def test_prepared_gate_weights_refresh_without_changing_address(weights):
+    down, up = weights
+    down.fill_(1)
+    gate = torch.ones(4, 10240, dtype=torch.bfloat16)
+    op = TextGatedResidualSerial(down, up, gate)
+    pointer = op.packed_weight.data_ptr()
+    down.fill_(2)
+    gate.fill_(3)
+    op.refresh_weights_()
+    assert op.packed_weight.data_ptr() == pointer
+    assert torch.equal(op.packed_weight[:320], down)
+    assert torch.equal(op.packed_weight[320:324], gate)
+    assert torch.count_nonzero(op.packed_weight[324:]) == 0

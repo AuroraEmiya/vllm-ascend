@@ -33,6 +33,7 @@ public:
         for (uint32_t unit=GetBlockIdx(); unit<t.units; unit+=GetBlockNum()) {
             if(t.mode==0) Norm(unit);
             else if(t.mode==1) Activation(unit);
+            else if(t.mode==3) PackedActivation(unit);
             else Mix(unit);
         }
     }
@@ -89,6 +90,28 @@ private:
         Muls(q,z,1.0f,n); Barrier(); Sigmoid(q,n);
         Mul(z,z,q,n); Barrier(); Cast(yb,z,RoundMode::CAST_RINT,n); Fence<HardEvent::V_MTE3>();
         DataCopy(yG[off],yb,n); Fence<HardEvent::MTE3_MTE2>();
+    }
+    __aicore__ inline void PackedActivation(uint32_t row) {
+        // One aligned projection contains [down320, gate4, zero padding12].
+        // The complete reduction remains in public mm. This V stage owns the
+        // activation and gate outputs for its row and reads only live columns.
+        auto xb=b0.Get<bfloat16_t>(),yb=b1.Get<bfloat16_t>();
+        auto z=f0.Get<float>(),q=f1.Get<float>();
+        DataCopy(xb,xG[row*t.width],320);
+        DataCopyExtParams cp{1,8,0,0,0};
+        DataCopyPadExtParams<bfloat16_t> pad{true,0,0,(bfloat16_t)0};
+        DataCopyPad(xb[320],xG[row*t.width+320],cp,pad);
+        Fence<HardEvent::MTE2_V>();
+        Cast(z,xb,RoundMode::CAST_NONE,320); Barrier();
+        Muls(z,z,1.0f/t.channels,320); Barrier();
+        Muls(q,z,1.0f,320); Barrier(); Sigmoid(q,320);
+        Mul(z,z,q,320); Barrier(); Cast(yb,z,RoundMode::CAST_RINT,320);
+        Fence<HardEvent::V_MTE3>(); DataCopy(yG[row*320],yb,320);
+        Cast(q,xb[320],RoundMode::CAST_NONE,4); Barrier();
+        Muls(q,q,1.0f/t.channels,4); Barrier(); Sigmoid(q,4);
+        Muls(q,q,2.0f,4); Barrier(); Cast(xb,q,RoundMode::CAST_RINT,4);
+        Fence<HardEvent::V_MTE3>(); DataCopyPad(injectG[row*4],xb,cp);
+        Fence<HardEvent::MTE3_MTE2>();
     }
     __aicore__ inline void Mix(uint32_t unit) {
         uint32_t h=t.width/t.channels,tiles=(h+t.tile-1)/t.tile;

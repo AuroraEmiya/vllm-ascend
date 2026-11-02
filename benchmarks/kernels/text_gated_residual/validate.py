@@ -152,10 +152,11 @@ def make_calls(cpu, case):
         {"fused": fused, "serial": candidate},
         {
             "wall_us": prep_us,
-            "description": "caller-owned weight views and dummy tensors; no input-dependent precomputation",
-            "persistent_tensor_bytes": 6,
-            "rebuild": "new prepared object for changed weight address/metadata",
+            "description": "caller-owned down/gate weight packing and views; no input-dependent precomputation",
+            "persistent_tensor_bytes": 6 + (0 if serial.packed_weight is None else serial.packed_weight.numel() * 2),
+            "rebuild": "refresh_weights_ after contents update; replace object and recapture for new address/metadata",
         },
+        serial,
     )
 
 
@@ -200,7 +201,7 @@ def graph_samples(graphs, stream):
 def check_case(case, timing):
     cpu = make_inputs(case)
     refs = oracle(cpu, case)
-    tensors, calls, prep = make_calls(cpu, case)
+    tensors, calls, prep, serial = make_calls(cpu, case)
     stream = torch.npu.Stream()
     stream.wait_stream(torch.npu.current_stream())
     result = {
@@ -238,6 +239,10 @@ def check_case(case, timing):
         for t, c in zip(tensors, updated):
             if t is not None:
                 t.copy_(c)
+        before_refresh = time.perf_counter()
+        serial.refresh_weights_()
+        stream.synchronize()
+        result["preparation"]["same_address_refresh_wall_us"] = (time.perf_counter() - before_refresh) * 1e6
         updated_refs = oracle(updated, case)
         for name in calls:
             graphs[name].replay()
@@ -248,6 +253,7 @@ def check_case(case, timing):
         for t, c in zip(tensors, cpu):
             if t is not None:
                 t.copy_(c)
+        serial.refresh_weights_()
         for name in calls:
             graphs[name].replay()
         stream.synchronize()
@@ -267,7 +273,7 @@ def check_case(case, timing):
 
 def profile(case, out):
     cpu = make_inputs(case)
-    tensors, calls, prep = make_calls(cpu, case)
+    tensors, calls, prep, _ = make_calls(cpu, case)
     stream = torch.npu.Stream()
     stream.wait_stream(torch.npu.current_stream())
     with torch.npu.stream(stream):

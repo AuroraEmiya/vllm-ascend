@@ -16,9 +16,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     const int64_t mode = *a->GetInt(0), channels = *a->GetInt(1);
     const float eps = *a->GetFloat(2);
     if (s.GetDimNum()!=2 || s.GetDim(0)<1 || s.GetDim(0)>2048 ||
-        channels!=4 || mode<0 || mode>2 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
+        channels!=4 || mode<0 || mode>3 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
     const uint32_t n=s.GetDim(0), d=s.GetDim(1);
-    if ((mode==1 && d!=320) || (mode!=1 && d!=10240)) return ge::GRAPH_FAILED;
+    if ((mode==1 && d!=320) || (mode==3 && d!=336) || ((mode==0 || mode==2) && d!=10240)) return ge::GRAPH_FAILED;
     const auto gammaSize=context->GetInputShape(1)->GetStorageShape().GetShapeSize();
     const auto gateSize=context->GetInputShape(3)->GetStorageShape().GetShapeSize();
     if (mode==0 && gammaSize!=1 && gammaSize!=d) return ge::GRAPH_FAILED;
@@ -38,7 +38,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         tile=std::min(2560u,std::max(256u,((n*d+40*32-1)/(40*32))*32));
     }
     t.set_tile(tile);
-    t.set_units(mode==0 ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile())));
+    t.set_units(mode==3 ? n : (mode==0 ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));
     auto p=platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ub=0; p.GetCoreMemSize(platform_ascendc::CoreMemType::UB,ub);
     if (ub<51232 || p.GetCoreNumAiv()==0) return ge::GRAPH_FAILED;

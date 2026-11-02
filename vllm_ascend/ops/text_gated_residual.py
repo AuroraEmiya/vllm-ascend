@@ -15,6 +15,7 @@ CHANNELS = 4
 BRANCH_HIDDEN = 2560
 WIDTH = CHANNELS * BRANCH_HIDDEN
 LOW_RANK = 320
+PACKED_WIDTH = 336
 MAX_TOKENS = 2048
 
 
@@ -25,8 +26,11 @@ class TextGatedResidualSerial:
     are empty tensors. ``need_backward`` requests forward auxiliary tensors;
     this class does not implement autograd backward.
 
-    Weight transposes are views, so same-address weight updates remain visible
-    during Graph replay. Create a new object when replacing a weight tensor.
+    Down/gate weights are prepared together when gate is present. Call
+    ``refresh_weights_`` after changing their contents and before Graph replay;
+    this updates the prepared buffer at its existing address. Up weights and
+    gate-free down weights remain views. Replace the object and recapture when
+    replacing a source weight tensor. Preparation never depends on input x.
     """
 
     def __init__(self, w_down, w_up, w_gate=None, channels=CHANNELS, eps=1e-6):
@@ -51,10 +55,28 @@ class TextGatedResidualSerial:
         self.w_down = w_down.t()
         self.w_up = w_up.t()
         self.w_gate = None if w_gate is None else w_gate.t()
+        self.source_down = w_down
+        self.source_gate = w_gate
         self.device = w_down.device
         self.eps = eps
         self.dummy = torch.empty(1, device=self.device, dtype=torch.bfloat16)
         self.dummy_gamma = torch.empty(1, device=self.device, dtype=torch.float32)
+        self.packed_weight = (
+            None if w_gate is None else torch.zeros((PACKED_WIDTH, WIDTH), device=self.device, dtype=torch.bfloat16)
+        )
+        self.refresh_weights_()
+
+    def refresh_weights_(self):
+        """Repack changed weight contents during load/update, outside forward.
+
+        The caller orders this operation before replay on the same stream, or
+        uses a stream dependency. The prepared address and captured Graph stay
+        valid. All per-forward input work remains inside the Graph.
+        """
+        if self.packed_weight is not None:
+            self.packed_weight[:LOW_RANK].copy_(self.source_down)
+            self.packed_weight[LOW_RANK : LOW_RANK + CHANNELS].copy_(self.source_gate)
+        return self
 
     def __call__(self, x, gamma=None, need_backward=False):
         if (
@@ -96,17 +118,26 @@ class TextGatedResidualSerial:
             inv_rms,
             empty,
         )
-        down = torch.mm(norm, self.w_down)
-        activation = torch.empty_like(down)
-        torch.ops._C_ascend.npu_tgr_vector_out(
-            down, self.dummy_gamma, self.dummy, self.dummy, 1, CHANNELS, self.eps, activation, empty_fp32, empty
-        )
-        up = torch.mm(activation, self.w_up)
-        gate = self.dummy if self.w_gate is None else torch.mm(norm, self.w_gate)
-        mixed = x.new_empty((tokens, BRANCH_HIDDEN))
+        projected = torch.mm(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
+        down = projected if self.packed_weight is None else projected[:, :LOW_RANK]
+        activation = x.new_empty((tokens, LOW_RANK))
         inject = empty if self.w_gate is None else x.new_empty((tokens, CHANNELS))
         torch.ops._C_ascend.npu_tgr_vector_out(
-            norm, self.dummy_gamma, up, gate, 2, CHANNELS, self.eps, mixed, empty_fp32, inject
+            projected,
+            self.dummy_gamma,
+            self.dummy,
+            self.dummy,
+            1 if self.packed_weight is None else 3,
+            CHANNELS,
+            self.eps,
+            activation,
+            empty_fp32,
+            inject,
+        )
+        up = torch.mm(activation, self.w_up)
+        mixed = x.new_empty((tokens, BRANCH_HIDDEN))
+        torch.ops._C_ascend.npu_tgr_vector_out(
+            norm, self.dummy_gamma, up, self.dummy, 2, CHANNELS, self.eps, mixed, empty_fp32, empty
         )
         return (
             mixed.view(batch, sequence, BRANCH_HIDDEN),
