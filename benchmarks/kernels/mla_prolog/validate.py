@@ -121,7 +121,8 @@ def paired_timing(graphs, stream):
     }
 
 
-def run_case(case, timing=True, profile=None):
+def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_format=True):
+    torch.npu.config.allow_internal_format = True
     data, initial_kv, initial_kr = build_case(case)
     expected = oracle(data, case["heads"], initial_kv, initial_kr)
     device = {name: value.npu() for name, value in data.items()}
@@ -130,6 +131,7 @@ def run_case(case, timing=True, profile=None):
     formats = {name: torch_npu.get_npu_format(value) for name, value in fused_weights.items()}
     if set(formats.values()) != {29}:
         raise AssertionError(f"baseline weights did not use documented NZ: {formats}")
+    torch.npu.config.allow_internal_format = internal_format
     candidate = MlaPrologSerial(
         device["wdq"], device["wuq"], device["wuk"], device["wdkv"], device["gq"], device["gkv"]
     )
@@ -141,7 +143,10 @@ def run_case(case, timing=True, profile=None):
         return candidate(device["x"], device["sin"], device["cos"], device["index"], *caches["serial"])
 
     def fused():
-        return torch_npu.npu_mla_prolog(
+        baseline = (
+            torch.ops._C_ascend.mla_prolog_fused_public if baseline_route == "aclnn" else torch_npu.npu_mla_prolog
+        )
+        return baseline(
             device["x"],
             fused_weights["wdq"],
             fused_weights["wuq"],
@@ -165,7 +170,13 @@ def run_case(case, timing=True, profile=None):
     stream = torch.npu.Stream()
     stream.wait_stream(torch.npu.current_stream())
     graphs, captured = {}, {}
-    result = {"case": case, "baseline_weight_formats": formats, "checks": {}, "timing": None}
+    result = {
+        "case": case,
+        "baseline_weight_formats": formats,
+        "baseline_route": baseline_route,
+        "checks": {},
+        "timing": None,
+    }
     with torch.npu.stream(stream):
         for name, function in functions.items():
             outputs = function()
@@ -250,7 +261,7 @@ def run_case(case, timing=True, profile=None):
     return result
 
 
-def identity(source_commit):
+def identity(source_commit, baseline_route, internal_format):
     loaded = sorted(
         {
             row.split()[-1]
@@ -264,7 +275,8 @@ def identity(source_commit):
         "torch": torch.__version__,
         "torch_npu": torch_npu.__version__,
         "soc": torch.npu.get_device_name(0),
-        "allow_internal_format_requested": True,
+        "allow_internal_format_requested": internal_format,
+        "baseline_route": baseline_route,
         "schema": str(torch.ops._C_ascend.mla_prolog_vector_out.default._schema),
         "loaded_libraries": [
             {"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
@@ -281,6 +293,8 @@ if __name__ == "__main__":
     parser.add_argument("--case-id", action="append")
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--profile", choices=("serial", "fused"))
+    parser.add_argument("--baseline-route", choices=("aclnn", "torch"), default="aclnn")
+    parser.add_argument("--internal-format", choices=("true", "false"), default="true")
     args = parser.parse_args()
     torch.npu.set_device(0)
     torch.npu.config.allow_internal_format = True
@@ -291,7 +305,13 @@ if __name__ == "__main__":
     report = {"protocol": manifest["protocol"], "cases": [], "identity": None}
     for case in cases:
         try:
-            value = run_case(case, timing=not args.no_timing, profile=args.profile)
+            value = run_case(
+                case,
+                timing=not args.no_timing,
+                profile=args.profile,
+                baseline_route=args.baseline_route,
+                internal_format=args.internal_format == "true",
+            )
         except Exception as error:
             value = {
                 "case": case,
@@ -313,7 +333,7 @@ if __name__ == "__main__":
             ),
             flush=True,
         )
-        report["identity"] = identity(args.source_commit)
+        report["identity"] = identity(args.source_commit, args.baseline_route, args.internal_format == "true")
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(report, indent=2) + "\n")
     raise SystemExit(0 if all(case["status"] == "PASS" for case in report["cases"]) else 1)
