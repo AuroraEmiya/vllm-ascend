@@ -17,13 +17,16 @@ class PreparedWeights:
     """Explicit load-time transpose; rebuild after any source weight update."""
 
     def __init__(self, down: torch.Tensor, up: torch.Tensor, backend: str = "mm"):
-        if backend not in ("mm", "singleton_gmm"):
+        if backend not in ("mm", "singleton_gmm", "singleton_gmm_nz"):
             raise ValueError("Unsupported public HC matmul backend")
         self.backend = backend
         self.sources = (down, up)
         self.versions = (down._version, up._version)
         self.down = down.t().contiguous()
         self.up = up.t().contiguous()
+        if backend == "singleton_gmm_nz":
+            self.down = torch_npu.npu_format_cast(self.down, 29)
+            self.up = torch_npu.npu_format_cast(self.up, 29)
 
     def check(self, down: torch.Tensor, up: torch.Tensor) -> None:
         if self.sources[0] is not down or self.sources[1] is not up:
@@ -74,7 +77,7 @@ def combine_and_mix(
         prepared_weights.check(down_weight, up_weight)
         down = (
             torch_npu.npu_grouped_matmul([normalized], [prepared_weights.down], split_item=0, group_type=-1)[0]
-            if prepared_weights.backend == "singleton_gmm"
+            if prepared_weights.backend.startswith("singleton_gmm")
             else torch.mm(normalized, prepared_weights.down)
         )
     else:
@@ -84,7 +87,7 @@ def combine_and_mix(
     if prepared_weights is not None:
         gate = (
             torch_npu.npu_grouped_matmul([lowrank], [prepared_weights.up], split_item=0, group_type=-1)[0]
-            if prepared_weights.backend == "singleton_gmm"
+            if prepared_weights.backend.startswith("singleton_gmm")
             else torch.mm(lowrank, prepared_weights.up)
         )
     else:

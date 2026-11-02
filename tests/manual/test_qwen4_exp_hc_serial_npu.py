@@ -67,17 +67,18 @@ def implementations(extension=None, weights="original"):
     def candidate(*inputs, **kw):
         return serial.combine_and_mix(*inputs, **kw)
 
-    if weights in ("pretransposed", "singleton-gmm"):
+    if weights in ("pretransposed", "singleton-gmm", "singleton-gmm-nz"):
 
         def bind(inputs):
-            if weights == "singleton-gmm" and (
+            if weights.startswith("singleton-gmm") and (
                 inputs[0].shape[0] == 0 or any(n % 16 for n in (*inputs[4].shape, *inputs[5].shape))
             ):
                 return candidate
             torch.npu.synchronize()
             started = time.perf_counter()
+            allocated_before = torch.npu.memory_allocated()
             prepared = serial.prepare_weights(
-                inputs[4], inputs[5], backend="singleton_gmm" if weights == "singleton-gmm" else "mm"
+                inputs[4], inputs[5], backend=weights.replace("-", "_") if weights.startswith("singleton-gmm") else "mm"
             )
             torch.npu.synchronize()
             elapsed = (time.perf_counter() - started) * 1e6
@@ -90,7 +91,9 @@ def implementations(extension=None, weights="original"):
                 "public_c_backend": prepared.backend,
                 "two_c_calls": "two separate singleton calls; group_type=-1; no grouping of Down and Up",
                 "wall_us": elapsed,
-                "retained_bytes": sum(t.numel() * t.element_size() for t in (prepared.down, prepared.up)),
+                "retained_bytes": torch.npu.memory_allocated() - allocated_before,
+                "logical_weight_bytes": sum(t.numel() * t.element_size() for t in (prepared.down, prepared.up)),
+                "weight_formats": [torch_npu.get_npu_format(t) for t in (prepared.down, prepared.up)],
                 "rebuild_on": "source tensor identity or version change",
             }
             return bound
@@ -334,7 +337,9 @@ def main():
     parser.add_argument("--cases", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--mode", choices=("smoke", "validate", "bench", "profile"), default="validate")
-    parser.add_argument("--weights", choices=("original", "pretransposed", "singleton-gmm"), default="original")
+    parser.add_argument(
+        "--weights", choices=("original", "pretransposed", "singleton-gmm", "singleton-gmm-nz"), default="original"
+    )
     parser.add_argument("--case")
     parser.add_argument("--impl", choices=("ascendc_serial", "triton_serial"), default="ascendc_serial")
     args = parser.parse_args()
