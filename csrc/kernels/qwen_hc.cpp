@@ -86,21 +86,15 @@ public:
                 // Reuse that block in every lane/repeat, keeping the reduction
                 // result in V rather than stalling the scalar pipeline.
                 Brcb(bc, sc, 1, {1, 8}); PipeBarrier<PIPE_V>();
-                Mul(t, t, bc, uint64_t(64), (p.hidden + 63) / 64,
+                MulAddDst(x, t, bc, uint64_t(64), (p.hidden + 63) / 64,
                     {1, 1, 0, 8, 8, 0}); PipeBarrier<PIPE_V>();
             }
-            Add(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
+            if (!p.has_injection) { Add(x, x, t, p.hidden); PipeBarrier<PIPE_V>(); }
             // Preserve the original low-precision combine materialization before RMS.
             Cast(lr, x, RoundMode::CAST_RINT, p.hidden); PipeBarrier<PIPE_V>();
             Cast(x, lr, RoundMode::CAST_NONE, p.hidden); PipeBarrier<PIPE_V>();
             Mul(t, x, x, p.hidden); PipeBarrier<PIPE_V>();
-            if(p.hidden%512==0 && p.hidden<=4096) {
-                WholeReduceSum(ws,t,64,p.hidden/64,1,1,8); PipeBarrier<PIPE_V>();
-                WholeReduceSum(sc,ws,p.hidden/64,1,8,1,p.hidden/512);
-            } else {
-                ReduceSum(sc,t,ws,static_cast<int32_t>(p.hidden));
-            }
-            PipeBarrier<PIPE_V>();
+            ReduceSum(sc, t, ws, static_cast<int32_t>(p.hidden)); PipeBarrier<PIPE_V>();
             Muls(sc, sc, 1.0f / p.hidden, 8); PipeBarrier<PIPE_V>();
             Adds(sc, sc, p.eps, 8); PipeBarrier<PIPE_V>();
             Sqrt(sc, sc, 8); PipeBarrier<PIPE_V>();
@@ -110,8 +104,7 @@ public:
             Mul(x, x, bc, uint64_t(64), (p.hidden + 63) / 64,
                 {1, 1, 0, 8, 8, 0});
             Cast(t, lw, RoundMode::CAST_NONE, p.hidden); PipeBarrier<PIPE_V>();
-            Mul(t, x, t, p.hidden); PipeBarrier<PIPE_V>();
-            Add(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
+            MulAddDst(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
             Cast(ln, x, RoundMode::CAST_RINT, p.hidden);
             Sync<HardEvent::V_MTE3>();
             Store(s, g * p.hidden, lr, p.hidden);
@@ -245,26 +238,16 @@ public:
             PipeBarrier<PIPE_V>();
             Brcb(bc,sc,1,{1,8});PipeBarrier<PIPE_V>();
             for(uint32_t j=0;j<p.row_batch;j++) {
-                Mul(t[j*p.hidden],ws,bc[j*8],uint64_t(64),p.hidden/64,
+                MulAddDst(x[j*p.hidden],ws,bc[j*8],uint64_t(64),p.hidden/64,
                     {1,1,0,8,8,0});
             }
             PipeBarrier<PIPE_V>();
-            Add(x,x,t,flat);PipeBarrier<PIPE_V>();
             Cast(lr,x,RoundMode::CAST_RINT,flat);PipeBarrier<PIPE_V>();
             Cast(x,lr,RoundMode::CAST_NONE,flat);PipeBarrier<PIPE_V>();
             Mul(t,x,x,flat);PipeBarrier<PIPE_V>();
-            if(p.hidden%512==0 && p.hidden<=4096) {
-                // Reduce [branches,H/64,64] in two V instructions.
-                // First-stage results are contiguous; second stage leaves
-                // each branch result at its own aligned 8-float block.
-                WholeReduceSum(ws,t,64,flat/64,1,1,8); PipeBarrier<PIPE_V>();
-                WholeReduceSum(sc,ws,p.hidden/64,p.row_batch,8,1,p.hidden/512);
+            for(uint32_t j=0;j<p.row_batch;j++) {
+                ReduceSum(sc[j*8],t[j*p.hidden],ws,static_cast<int32_t>(p.hidden));
                 PipeBarrier<PIPE_V>();
-            } else {
-                for(uint32_t j=0;j<p.row_batch;j++) {
-                    ReduceSum(sc[j*8],t[j*p.hidden],ws,static_cast<int32_t>(p.hidden));
-                    PipeBarrier<PIPE_V>();
-                }
             }
             const uint32_t scalars=p.row_batch*8;
             Muls(sc,sc,1.0f/p.hidden,scalars);PipeBarrier<PIPE_V>();
@@ -279,14 +262,13 @@ public:
             if(p.shared_weight) {
                 Cast(ws,lw,RoundMode::CAST_NONE,p.hidden);PipeBarrier<PIPE_V>();
                 for(uint32_t j=0;j<p.row_batch;j++) {
-                    Mul(t[j*p.hidden],x[j*p.hidden],ws,p.hidden);
+                    MulAddDst(x[j*p.hidden],x[j*p.hidden],ws,p.hidden);
                 }
                 PipeBarrier<PIPE_V>();
             } else {
                 Cast(t,lw,RoundMode::CAST_NONE,flat);PipeBarrier<PIPE_V>();
-                Mul(t,x,t,flat);PipeBarrier<PIPE_V>();
+                MulAddDst(x,x,t,flat);PipeBarrier<PIPE_V>();
             }
-            Add(x,x,t,flat);PipeBarrier<PIPE_V>();
             Cast(ln,x,RoundMode::CAST_RINT,flat);
             Sync<HardEvent::V_MTE3>();
             Store(s,row*p.groups*p.hidden+first*p.hidden,lr,flat);
