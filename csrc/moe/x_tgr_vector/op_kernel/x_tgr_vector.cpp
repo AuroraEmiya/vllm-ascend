@@ -22,11 +22,13 @@ public:
         yG.SetGlobalBuffer((__gm__ bfloat16_t*)y);
         invG.SetGlobalBuffer((__gm__ float*)inv);
         injectG.SetGlobalBuffer((__gm__ bfloat16_t*)inject);
-        // Peak 51,232 bytes. All buffers are aligned; reduction scratch is a
-        // full FP32 branch, reused as gate/activation temporary in other modes.
-        pipe.InitBuffer(b0,2560*2); pipe.InitBuffer(b1,2560*2);
-        pipe.InitBuffer(f0,2560*4); pipe.InitBuffer(f1,2560*4);
-        pipe.InitBuffer(f2,2560*4); pipe.InitBuffer(f3,2560*4);
+        // Mix stages all four branches together. Other modes retain the
+        // 51,232-byte layout. Tiling validates the mode-specific UB demand.
+        const uint32_t count=t.mode==2?t.channels*t.tile:2560;
+        const uint32_t sumCount=t.mode==2?t.tile:2560;
+        pipe.InitBuffer(b0,count*2); pipe.InitBuffer(b1,count*2);
+        pipe.InitBuffer(f0,count*4); pipe.InitBuffer(f1,count*4);
+        pipe.InitBuffer(f2,sumCount*4); pipe.InitBuffer(f3,count*4);
         pipe.InitBuffer(scalar,32);
     }
     __aicore__ inline void Process() {
@@ -119,14 +121,16 @@ private:
         n=n<t.tile?n:t.tile;
         auto xb=b0.Get<bfloat16_t>(),ub=b1.Get<bfloat16_t>();
         auto z=f0.Get<float>(),q=f1.Get<float>(),sum=f2.Get<float>();
-        Duplicate(sum,0.0f,n); Barrier();
-        for(uint32_t c=0;c<t.channels;++c) {
-            if(c) Fence<HardEvent::V_MTE2>();
-            uint32_t off=row*t.width+c*h+col;
-            DataCopy(xb,xG[off],n); DataCopy(ub,uG[off],n); Fence<HardEvent::MTE2_V>();
-            Cast(z,xb,RoundMode::CAST_NONE,n); Cast(q,ub,RoundMode::CAST_NONE,n); Barrier();
-            Sigmoid(q,n); Mul(z,z,q,n); Barrier(); Add(sum,sum,z,n); Barrier();
-        }
+        // DataCopy strides and lengths are in 32-byte blocks. All supported
+        // tiles divide the hidden width and are multiples of 16 BF16 values.
+        const DataCopyParams cp{static_cast<uint16_t>(t.channels),
+            static_cast<uint16_t>(n/16),static_cast<uint16_t>((h-n)/16),0};
+        const uint32_t off=row*t.width+col,all=n*t.channels;
+        DataCopy(xb,xG[off],cp); DataCopy(ub,uG[off],cp); Fence<HardEvent::MTE2_V>();
+        Cast(z,xb,RoundMode::CAST_NONE,all); Cast(q,ub,RoundMode::CAST_NONE,all); Barrier();
+        Sigmoid(q,all); Mul(z,z,q,all); Barrier();
+        Add(sum,z,z[n],n); Barrier();
+        Add(sum,sum,z[2*n],n); Barrier(); Add(sum,sum,z[3*n],n); Barrier();
         Muls(sum,sum,1.0f/t.channels,n); Barrier();
         Cast(xb,sum,RoundMode::CAST_RINT,n); Fence<HardEvent::V_MTE3>();
         DataCopy(yG[row*h+col],xb,n);

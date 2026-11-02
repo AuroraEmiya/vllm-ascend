@@ -37,11 +37,17 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     } else if (mode==1) {
         tile=std::min(2560u,std::max(256u,((n*d+40*32-1)/(40*32))*32));
     }
-    t.set_tile(tile);
-    t.set_units(mode==3 ? n : (mode==0 ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));
     auto p=platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ub=0; p.GetCoreMemSize(platform_ascendc::CoreMemType::UB,ub);
     if (ub<51232 || p.GetCoreNumAiv()==0) return ge::GRAPH_FAILED;
+    // Two BF16 and three FP32 four-branch tiles, one FP32 sum tile,
+    // plus a 32-byte scalar block: at most 174,112 bytes on this path.
+    if (mode==2) {
+        while (tile>32 && 68ull*tile+32>ub) tile/=2;
+        if (68ull*tile+32>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
+    }
+    t.set_tile(tile);
+    t.set_units(mode==3 ? n : (mode==0 ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));
     t.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(t.GetDataSize());
     context->SetBlockDim(std::min(t.get_units(),p.GetCoreNumAiv()));

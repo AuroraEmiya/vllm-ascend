@@ -33,6 +33,13 @@ Same-address update tests invoke and time this explicit refresh outside the
 forward latency, as allowed for the weight preparation stage. Down auxiliary
 output is a strided view of the live projection columns.
 
+The mix stage loads the four branch segments with a strided DMA, evaluates
+their sigmoids together, then accumulates branch products in FP32 branch order.
+Each core owns disjoint token/hidden tiles. Its UB demand is `68*tile + 32`
+bytes, at most 174,112 bytes; tiling queries the available UB and reduces the
+tile if needed. Other stages use 51,232 bytes. DMA/vector dependencies use
+paired hardware events, with vector barriers between dependent operations.
+
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model
 trace. Performance acceptance is decode only: `S=1`, with batch sizes

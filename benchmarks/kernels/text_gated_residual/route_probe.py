@@ -13,7 +13,7 @@ import torch
 import torch_npu
 
 BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256)
-PROJECTIONS = (("down", 10240, 320), ("up", 320, 10240), ("write_gate", 10240, 4))
+PROJECTIONS = (("down", 10240, 320), ("down_gate", 10240, 336), ("up", 320, 10240), ("write_gate", 10240, 4))
 CALLS = 10
 SAMPLES = 20
 
@@ -24,6 +24,7 @@ def routes(a, weight):
         "matmul": lambda: torch.matmul(a, weight.t()),
         "linear": lambda: torch_npu.npu_linear(a, weight),
         "bmm": lambda: torch.bmm(a.unsqueeze(0), weight.t().unsqueeze(0)).squeeze(0),
+        "gmm": lambda: torch_npu.npu_grouped_matmul([a], [weight.t()], split_item=0, group_type=-1)[0],
     }
     if a.shape[0] == 1:
         choices["mv"] = lambda: torch.mv(weight, a[0]).unsqueeze(0)
@@ -104,7 +105,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch", type=int, action="append", choices=BATCHES)
     parser.add_argument("--projection", choices=tuple(p[0] for p in PROJECTIONS))
-    parser.add_argument("--route", choices=("mm", "matmul", "linear", "bmm", "mv"))
+    parser.add_argument("--route", choices=("mm", "matmul", "linear", "bmm", "mv", "gmm"))
     parser.add_argument("--weight-format", choices=("nd", "nz"), default="nd")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
