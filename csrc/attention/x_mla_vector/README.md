@@ -1,15 +1,20 @@
 # Independent MLA Prolog V stages
 
 This operator implements the V stages for BF16 decode MLA Prolog. Its companion
-Python wrapper uses public `torch.mm` and `torch.bmm` for all matrix products.
+Python wrapper uses public `torch.mm` or `torch.nn.functional.linear` for the
+down/up projections, selected by the fixed candidate10 batch rule below. The
+head projection uses public `torch.bmm` for B=1 and
+`torch_npu.npu_transpose_batchmatmul` for B>1.
 The implementation was authored from the public mathematical and API contract;
 the fused kernel, tiling, golden and computation tests were not read.
 
 Mode 0 normalizes query down-projection and KV down-projection, multiplies gamma
 directly, writes KV at valid distinct cache indices, and rotates/writes KR.
 Mode 1 produces head-major non-RoPE queries and rotated query-RoPE output.
-Mode 2 restores batch-major final query layout. For B=1, that final change is a
-contiguous view, so mode 2 is omitted. All remaining layouts count in Graph time.
+Mode 2 is retained for earlier candidates that restore batch-major query layout
+after bmm. Candidate10 does not call it: the public transposed-bmm interface
+returns the final layout for B>1, and B=1 uses a contiguous view. All layouts
+executed by the selected matrix interface count in complete Graph time.
 RoPE first places even positions before odd positions, then uses rotate-half;
 this convention was confirmed by a structured black-box probe.
 Mode 3 performs the same normalization and cache work as mode0 while reading
@@ -37,7 +42,7 @@ Build inside the repository's CANN-enabled A3 Docker:
 
 ```bash
 cd csrc
-bash build.sh --pkg --ops=x_mla_vector --soc=ascend910_93 --vendor_name=mla_serial --ccache false -j4
+bash build.sh --pkg --ops=x_mla_vector --soc=ascend910_93 --vendor_name=mla_serial_transformer --ccache false -j4
 ```
 
 Install the resulting package under `vllm_ascend/_cann_ops_custom` and build the
