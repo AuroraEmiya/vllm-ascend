@@ -39,9 +39,11 @@ Each core owns disjoint token/hidden tiles. Its UB demand is `52*tile + 64`
 bytes, at most 133,184 bytes; tiling queries the available UB and reduces the
 tile if needed. Norm uses 51,232 bytes. DMA/vector dependencies use
 paired hardware events, with vector barriers between dependent operations.
-Inference without auxiliary outputs uses the same precise normalization but
-omits the unused inverse-RMS allocation and scalar global-memory stores.
-Requests for auxiliary outputs retain the FP32 inverse-RMS output and checks.
+Inference without auxiliary outputs uses basic FP32 `Rsqrt` for its internal
+scale and omits the unused inverse-RMS allocation and scalar global-memory
+stores. This mode ends at BF16 outputs and retains the same frozen BF16 oracle
+checks. Requests for auxiliary outputs retain the precise `Sqrt+Div` path,
+the FP32 inverse-RMS output, and its stricter checks.
 The normalization scale stays on the vector pipeline through `Brcb` and a
 zero-stride multiply. The internal write-gate buffer uses 16 BF16 values per
 row to separate each core's small store into its own 32-byte block. The API

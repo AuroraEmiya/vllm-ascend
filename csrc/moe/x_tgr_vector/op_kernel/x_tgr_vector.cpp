@@ -65,11 +65,16 @@ private:
         Mul(q,z,z,h); Barrier();
         ReduceSum(r,q,tmp,h); Barrier();
         Muls(r,r,1.0f/h,1); Barrier(); Adds(r,r,t.eps,1); Barrier();
-        // The basic FP32 Rsqrt approximation does not meet the auxiliary
-        // inverse-RMS contract. Sqrt+Div is the documented precise path.
-        Sqrt(r,r,1); Barrier();
-        Duplicate(q,1.0f,8); Barrier();
-        Div(r,q,r,1); Barrier();
+        if(t.mode==4) {
+            // No FP32 scale is returned in this inference mode. Its output
+            // path is checked against the unchanged BF16 oracle thresholds.
+            Rsqrt(r,r,1); Barrier();
+        } else {
+            // The FP32 auxiliary uses the precise Sqrt+Div path.
+            Sqrt(r,r,1); Barrier();
+            Duplicate(q,1.0f,8); Barrier();
+            Div(r,q,r,1); Barrier();
+        }
         // Broadcast r[0] into the first FP32 block, then reuse that block
         // across all vector repeats. No V-to-scalar round trip is needed.
         Brcb(q,r,1,{1,8}); Barrier();
