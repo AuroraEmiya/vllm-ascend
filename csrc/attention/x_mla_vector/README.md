@@ -42,9 +42,10 @@ Build inside the repository's CANN-enabled A3 Docker:
 
 ```bash
 cd csrc
-bash build.sh --pkg --ops=x_mla_vector --soc=ascend910_93 --vendor_name=mla_serial_transformer --ccache false -j4
+bash build.sh --pkg --ops=x_mla_vector --soc=ascend910_93 --vendor_name=mla_serial --ccache false -j4
 ```
 
+The build suffix produces vendor directory `mla_serial_transformer`.
 Install the resulting package under `vllm_ascend/_cann_ops_custom` and build the
 repository's standard `vllm_ascend_C` target. The native adapter uses the existing
 `EXEC_NPU_CMD` queue and registers PrivateUse1 and a preallocated-output Meta
