@@ -33,7 +33,7 @@ public:
     }
     __aicore__ inline void Process() {
         for (uint32_t unit=GetBlockIdx(); unit<t.units; unit+=GetBlockNum()) {
-            if(t.mode==0) Norm(unit);
+            if(t.mode==0 || t.mode==4) Norm(unit);
             else if(t.mode==1) Activation(unit);
             else if(t.mode==3) PackedActivation(unit);
             else Mix(unit);
@@ -76,7 +76,9 @@ private:
         }
         Cast(yb,z,RoundMode::CAST_RINT,h); Fence<HardEvent::V_MTE3>();
         DataCopy(yG[off],yb,h);
-        DataCopyExtParams cp{1,4,0,0,0}; DataCopyPad(invG[row],r,cp);
+        if(t.mode==0) {
+            DataCopyExtParams cp{1,4,0,0,0}; DataCopyPad(invG[row],r,cp);
+        }
         // Both the BF16 output and FP32 scalar are still read by MTE3.
         // Order the next iteration's input DMA after those reads complete.
         Fence<HardEvent::MTE3_MTE2>();

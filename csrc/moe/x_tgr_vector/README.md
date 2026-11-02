@@ -39,6 +39,9 @@ Each core owns disjoint token/hidden tiles. Its UB demand is `68*tile + 32`
 bytes, at most 174,112 bytes; tiling queries the available UB and reduces the
 tile if needed. Other stages use 51,232 bytes. DMA/vector dependencies use
 paired hardware events, with vector barriers between dependent operations.
+Inference without auxiliary outputs uses the same precise normalization but
+omits the unused inverse-RMS allocation and scalar global-memory stores.
+Requests for auxiliary outputs retain the FP32 inverse-RMS output and checks.
 
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model

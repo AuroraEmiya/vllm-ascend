@@ -105,13 +105,13 @@ class TextGatedResidualSerial:
         empty = x.new_empty(0)
         empty_fp32 = x.new_empty(0, dtype=torch.float32)
         norm = torch.empty_like(flat)
-        inv_rms = x.new_empty((tokens, CHANNELS), dtype=torch.float32)
+        inv_rms = x.new_empty((tokens, CHANNELS), dtype=torch.float32) if need_backward else empty_fp32
         torch.ops._C_ascend.npu_tgr_vector_out(
             flat,
             self.dummy_gamma if gamma is None else gamma,
             self.dummy,
             self.dummy,
-            0,
+            0 if need_backward else 4,
             CHANNELS,
             self.eps,
             norm,

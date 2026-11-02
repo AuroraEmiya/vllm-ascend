@@ -16,12 +16,12 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     const int64_t mode = *a->GetInt(0), channels = *a->GetInt(1);
     const float eps = *a->GetFloat(2);
     if (s.GetDimNum()!=2 || s.GetDim(0)<1 || s.GetDim(0)>2048 ||
-        channels!=4 || mode<0 || mode>3 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
+        channels!=4 || mode<0 || mode>4 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
     const uint32_t n=s.GetDim(0), d=s.GetDim(1);
-    if ((mode==1 && d!=320) || (mode==3 && d!=336) || ((mode==0 || mode==2) && d!=10240)) return ge::GRAPH_FAILED;
+    if ((mode==1 && d!=320) || (mode==3 && d!=336) || ((mode==0 || mode==2 || mode==4) && d!=10240)) return ge::GRAPH_FAILED;
     const auto gammaSize=context->GetInputShape(1)->GetStorageShape().GetShapeSize();
     const auto gateSize=context->GetInputShape(3)->GetStorageShape().GetShapeSize();
-    if (mode==0 && gammaSize!=1 && gammaSize!=d) return ge::GRAPH_FAILED;
+    if ((mode==0 || mode==4) && gammaSize!=1 && gammaSize!=d) return ge::GRAPH_FAILED;
     if (mode==2 && context->GetInputShape(2)->GetStorageShape().GetShapeSize()!=n*d) return ge::GRAPH_FAILED;
     if (mode==2 && gateSize!=1 && gateSize!=n*channels) return ge::GRAPH_FAILED;
     t.set_rows(n); t.set_width(d); t.set_channels(channels); t.set_mode(mode); t.set_eps(eps);
@@ -47,7 +47,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         if (68ull*tile+32>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
     }
     t.set_tile(tile);
-    t.set_units(mode==3 ? n : (mode==0 ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));
+    t.set_units(mode==3 ? n : ((mode==0 || mode==4) ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));
     t.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(t.GetDataSize());
     context->SetBlockDim(std::min(t.get_units(),p.GetCoreNumAiv()));
