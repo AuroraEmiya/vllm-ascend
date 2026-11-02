@@ -65,7 +65,16 @@ std::tuple<at::Tensor,at::Tensor> combine(
     auto r=residual.data_ptr(),b=block.data_ptr(),w=weight.data_ptr();
     auto i=injection ? injection->data_ptr() : nullptr;
     auto s=std::get<0>(result).data_ptr(),n=std::get<1>(result).data_ptr();
-    const uint32_t cores=std::min(A3_VECTOR_CORES,p.rows*p.groups);
+    p.row_batch=1;
+    if(p.hidden%64==0 && p.groups==4 && p.rows>=16) {
+        const uint32_t preferred=p.rows<=16?2:4;
+        if((14*preferred+6)*p.hidden+2464<=180*1024) {
+            p.row_batch=preferred;
+        } else if((14*2+6)*p.hidden+2464<=180*1024) {
+            p.row_batch=2;
+        }
+    }
+    const uint32_t cores=std::min(A3_VECTOR_CORES,p.rows*(p.groups/p.row_batch));
     at_npu::native::OpCommand cmd;cmd.Name("qwen_hc_combine_norm");
     cmd.SetCustomHandler([=](){qwen_hc_combine_norm_launch(cores,stream,r,b,i,w,s,n,p);return 0;});
     cmd.Run();return result;

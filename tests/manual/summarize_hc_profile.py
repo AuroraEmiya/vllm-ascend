@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Ascend project
 """Retain complete HC profiler call sequences and classify every execution task."""
+
 import argparse
 import csv
 import json
-from pathlib import Path
 import statistics
+from pathlib import Path
 
 START = {"qwen_hc_combine_norm", "_hc_combine_norm_kernel"}
 END = {"qwen_hc_gate_mix", "_hc_gate_mix_kernel"}
@@ -45,32 +46,54 @@ def summarize(path, retained_calls=16):
         classes = [classify(r) for r in call]
         matmuls = sum(c == "C_all_matmul" for c in classes)
         stage_order = [c for c in classes if c in ("C_all_matmul", "V_owned_stage")]
-        complete = (bool(call) and call[-1]["Op Name"] in END and matmuls == 2
-                    and stage_order == ["V_owned_stage", "C_all_matmul", "V_owned_stage",
-                                        "C_all_matmul", "V_owned_stage"]
-                    and "unclassified" not in classes)
-        c_us = sum(numeric(r["Task Duration(us)"]) for r, c in zip(call, classes)
-                   if c == "C_all_matmul")
-        v_us = sum(numeric(r["Task Duration(us)"]) for r, c in zip(call, classes)
-                   if c.startswith("V_"))
-        sequences.append({
-            "complete": complete, "c_total_us": c_us, "v_total_us": v_us,
-            "task_sum_us": c_us + v_us, "names": names, "classification": classes,
-            "tasks": [{"name": r["Op Name"], "duration_us": numeric(r["Task Duration(us)"]),
-                       "start_us": numeric(r["Task Start Time(us)"]), "class": c,
-                       "model_id": r["Model ID"], "stream_id": r["Stream ID"],
-                       "task_id": r["Task ID"]} for r, c in zip(call, classes)]})
+        complete = (
+            bool(call)
+            and call[-1]["Op Name"] in END
+            and matmuls == 2
+            and stage_order == ["V_owned_stage", "C_all_matmul", "V_owned_stage", "C_all_matmul", "V_owned_stage"]
+            and "unclassified" not in classes
+        )
+        c_us = sum(numeric(r["Task Duration(us)"]) for r, c in zip(call, classes) if c == "C_all_matmul")
+        v_us = sum(numeric(r["Task Duration(us)"]) for r, c in zip(call, classes) if c.startswith("V_"))
+        sequences.append(
+            {
+                "complete": complete,
+                "c_total_us": c_us,
+                "v_total_us": v_us,
+                "task_sum_us": c_us + v_us,
+                "names": names,
+                "classification": classes,
+                "tasks": [
+                    {
+                        "name": r["Op Name"],
+                        "duration_us": numeric(r["Task Duration(us)"]),
+                        "start_us": numeric(r["Task Start Time(us)"]),
+                        "class": c,
+                        "model_id": r["Model ID"],
+                        "stream_id": r["Stream ID"],
+                        "task_id": r["Task ID"],
+                    }
+                    for r, c in zip(call, classes)
+                ],
+            }
+        )
     valid = len(sequences) == retained_calls and all(x["complete"] for x in sequences)
     c_mean = statistics.mean(s["c_total_us"] for s in sequences) if valid else None
     v_mean = statistics.mean(s["v_total_us"] for s in sequences) if valid else None
-    return {"raw_trace": str(path), "valid": valid, "complete_sequences": sequences,
-            "retained_calls": len(sequences), "requested_calls": retained_calls,
-            "c_total_us": c_mean, "v_total_us": v_mean,
-            "task_sum_us": c_mean + v_mean if valid else None,
-            "c_share_pct": 100*c_mean/(c_mean+v_mean) if valid else None,
-            "aggregation": "mean of per-complete-call task sums; Graph event latency separate",
-            "all_execution_rows": len(rows),
-            "omitted_prefix_rows": selected[0] if selected else len(rows)}
+    return {
+        "raw_trace": str(path),
+        "valid": valid,
+        "complete_sequences": sequences,
+        "retained_calls": len(sequences),
+        "requested_calls": retained_calls,
+        "c_total_us": c_mean,
+        "v_total_us": v_mean,
+        "task_sum_us": c_mean + v_mean if valid else None,
+        "c_share_pct": 100 * c_mean / (c_mean + v_mean) if valid else None,
+        "aggregation": "mean of per-complete-call task sums; Graph event latency separate",
+        "all_execution_rows": len(rows),
+        "omitted_prefix_rows": selected[0] if selected else len(rows),
+    }
 
 
 def main():
@@ -80,12 +103,10 @@ def main():
     args = parser.parse_args()
     reports = []
     for path in sorted(args.profile_root.glob("decode-*/PROF_*/mindstudio_profiler_output/op_summary*.csv")):
-        reports.append({"label": path.relative_to(args.profile_root).parts[0],
-                        **summarize(path)})
+        reports.append({"label": path.relative_to(args.profile_root).parts[0], **summarize(path)})
     args.out.write_text(json.dumps({"profiles": reports}, indent=2))
     for report in reports:
-        print(json.dumps({k: report[k] for k in
-                          ("label", "valid", "c_total_us", "v_total_us", "c_share_pct")}))
+        print(json.dumps({k: report[k] for k in ("label", "valid", "c_total_us", "v_total_us", "c_share_pct")}))
     if not reports or any(not r["valid"] for r in reports):
         raise SystemExit(1)
 

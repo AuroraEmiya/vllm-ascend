@@ -187,6 +187,100 @@ public:
         Sync<HardEvent::MTE3_S>();
     }
 };
+// Whole rows of HC branches share block DMA and the flat elementwise chain.
+// Each branch keeps its own RMS reduction and the BF16 combine boundary.
+template<typename T>
+class BatchedCombineNorm {
+public:
+    __aicore__ inline void Run(GM_ADDR residual,GM_ADDR block,GM_ADDR injection,
+        GM_ADDR weight,GM_ADDR combined,GM_ADDR normalized,HcParams p) {
+        GlobalTensor<T> r,b,i,w,s,n;
+        r.SetGlobalBuffer((__gm__ T*)residual);b.SetGlobalBuffer((__gm__ T*)block);
+        i.SetGlobalBuffer((__gm__ T*)injection);w.SetGlobalBuffer((__gm__ T*)weight);
+        s.SetGlobalBuffer((__gm__ T*)combined);n.SetGlobalBuffer((__gm__ T*)normalized);
+        const uint32_t flat=p.row_batch*p.hidden;
+        TPipe pipe;
+        TBuf<TPosition::VECCALC> rt,bt,wt,nt,it,xf,tmp,work,small,broad;
+        pipe.InitBuffer(rt,flat*sizeof(T)+256);
+        pipe.InitBuffer(bt,p.hidden*sizeof(T)+256);
+        pipe.InitBuffer(wt,flat*sizeof(T)+256);
+        pipe.InitBuffer(nt,flat*sizeof(T)+256);
+        pipe.InitBuffer(it,16*sizeof(T)+256);
+        pipe.InitBuffer(xf,flat*sizeof(float)+256);
+        pipe.InitBuffer(tmp,flat*sizeof(float)+256);
+        pipe.InitBuffer(work,p.hidden*sizeof(float)+256);
+        pipe.InitBuffer(small,32*sizeof(float));
+        pipe.InitBuffer(broad,64*sizeof(float));
+        auto lr=rt.Get<T>();auto lb=bt.Get<T>();auto lw=wt.Get<T>();
+        auto ln=nt.Get<T>();auto li=it.Get<T>();
+        auto x=xf.Get<float>();auto t=tmp.Get<float>();auto ws=work.Get<float>();
+        auto sc=small.Get<float>();auto bc=broad.Get<float>();
+        const uint32_t chunks=p.groups/p.row_batch;
+        for(uint32_t task=GetBlockIdx();task<p.rows*chunks;task+=GetBlockNum()) {
+            const uint32_t row=task/chunks,first=(task%chunks)*p.row_batch;
+            Sync<HardEvent::MTE3_MTE2>();
+            Load(lr,r,row*p.residual_stride+first*p.hidden,flat);
+            Load(lb,b,row*p.block_stride,p.hidden);
+            Load(lw,w,p.shared_weight?0:first*p.hidden,p.shared_weight?p.hidden:flat);
+            if(p.has_injection)Load(li,i,row*p.injection_stride+first,p.row_batch);
+            Sync<HardEvent::MTE2_V>();
+            Cast(x,lr,RoundMode::CAST_NONE,flat);
+            Cast(ws,lb,RoundMode::CAST_NONE,p.hidden);
+            if(p.has_injection) {
+                Cast(sc,li,RoundMode::CAST_NONE,16);PipeBarrier<PIPE_V>();
+                Muls(sc,sc,-1.0f/p.groups,16);PipeBarrier<PIPE_V>();
+                Exp(sc,sc,16);PipeBarrier<PIPE_V>();
+                Adds(sc,sc,1.0f,16);PipeBarrier<PIPE_V>();
+                Reciprocal(sc,sc,16);PipeBarrier<PIPE_V>();
+                Muls(sc,sc,2.0f,16);
+            } else {
+                Duplicate(sc,1.0f,16);
+            }
+            PipeBarrier<PIPE_V>();
+            Brcb(bc,sc,1,{1,8});PipeBarrier<PIPE_V>();
+            for(uint32_t j=0;j<p.row_batch;j++) {
+                Mul(t[j*p.hidden],ws,bc[j*8],uint64_t(64),p.hidden/64,
+                    {1,1,0,8,8,0});
+            }
+            PipeBarrier<PIPE_V>();
+            Add(x,x,t,flat);PipeBarrier<PIPE_V>();
+            Cast(lr,x,RoundMode::CAST_RINT,flat);PipeBarrier<PIPE_V>();
+            Cast(x,lr,RoundMode::CAST_NONE,flat);PipeBarrier<PIPE_V>();
+            Mul(t,x,x,flat);PipeBarrier<PIPE_V>();
+            for(uint32_t j=0;j<p.row_batch;j++) {
+                ReduceSum(sc[j*8],t[j*p.hidden],ws,static_cast<int32_t>(p.hidden));
+                PipeBarrier<PIPE_V>();
+            }
+            const uint32_t scalars=p.row_batch*8;
+            Muls(sc,sc,1.0f/p.hidden,scalars);PipeBarrier<PIPE_V>();
+            Adds(sc,sc,p.eps,scalars);PipeBarrier<PIPE_V>();
+            Sqrt(sc,sc,scalars);PipeBarrier<PIPE_V>();
+            Reciprocal(sc,sc,scalars);PipeBarrier<PIPE_V>();
+            for(uint32_t j=0;j<p.row_batch;j++) {
+                Brcb(bc,sc[j*8],1,{1,8});PipeBarrier<PIPE_V>();
+                Mul(x[j*p.hidden],x[j*p.hidden],bc,uint64_t(64),p.hidden/64,
+                    {1,1,0,8,8,0});PipeBarrier<PIPE_V>();
+            }
+            if(p.shared_weight) {
+                Cast(ws,lw,RoundMode::CAST_NONE,p.hidden);PipeBarrier<PIPE_V>();
+                for(uint32_t j=0;j<p.row_batch;j++) {
+                    Mul(t[j*p.hidden],x[j*p.hidden],ws,p.hidden);
+                }
+                PipeBarrier<PIPE_V>();
+            } else {
+                Cast(t,lw,RoundMode::CAST_NONE,flat);PipeBarrier<PIPE_V>();
+                Mul(t,x,t,flat);PipeBarrier<PIPE_V>();
+            }
+            Add(x,x,t,flat);PipeBarrier<PIPE_V>();
+            Cast(ln,x,RoundMode::CAST_RINT,flat);
+            Sync<HardEvent::V_MTE3>();
+            Store(s,row*p.groups*p.hidden+first*p.hidden,lr,flat);
+            Store(n,row*p.groups*p.hidden+first*p.hidden,ln,flat);
+        }
+        Sync<HardEvent::MTE3_S>();
+    }
+};
+
 template<typename T>
 class BatchedSilu {
 public:
@@ -287,7 +381,11 @@ public:
 extern "C" __global__ __aicore__ void qwen_hc_combine_norm(
     GM_ADDR r,GM_ADDR b,GM_ADDR i,GM_ADDR w,GM_ADDR s,GM_ADDR n,HcParams p) {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    CombineNorm<bfloat16_t> kernel; kernel.Run(r,b,i,w,s,n,p);
+    if(p.row_batch>1) {
+        BatchedCombineNorm<bfloat16_t> kernel;kernel.Run(r,b,i,w,s,n,p);
+    } else {
+        CombineNorm<bfloat16_t> kernel;kernel.Run(r,b,i,w,s,n,p);
+    }
 }
 extern "C" __global__ __aicore__ void qwen_hc_silu(GM_ADDR x,GM_ADDR y,HcParams p) {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);

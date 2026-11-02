@@ -5,6 +5,7 @@
 Load vllm_ascend_C or the HC-only vllm_ascend_hc_C extension before calling.
 Forward does not compile code or retain a hidden cache.
 """
+
 from __future__ import annotations
 
 import torch
@@ -30,7 +31,6 @@ class PreparedWeights:
 def prepare_weights(down: torch.Tensor, up: torch.Tensor) -> PreparedWeights:
     """Run once after weight loading, outside forward and graph capture."""
     return PreparedWeights(down, up)
-
 
 
 def combine_and_mix(
@@ -73,8 +73,7 @@ def combine_and_mix(
         down = F.linear(normalized, down_weight)
     lowrank = torch.ops._C_ascend.qwen_hc_silu(down[:, :rank], hc_count)
     next_injection = down[:, rank : rank + hc_count] if use_combine else None
-    gate = (torch.mm(lowrank, prepared_weights.up) if prepared_weights is not None
-            else F.linear(lowrank, up_weight))
+    gate = torch.mm(lowrank, prepared_weights.up) if prepared_weights is not None else F.linear(lowrank, up_weight)
     block_input = torch.ops._C_ascend.qwen_hc_gate_mix(normalized, gate, hc_count)
     return combined, block_input, next_injection
 
@@ -86,11 +85,7 @@ def combine_and_mix_module(
     prev_injection: torch.Tensor | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Explicit adapter for an unquantized replicated GatedResidual module."""
-    down = (
-        module.input_mix_weight_down_block_inject
-        if module.use_combine
-        else module.input_mix_weight_down
-    )
+    down = module.input_mix_weight_down_block_inject if module.use_combine else module.input_mix_weight_down
     return combine_and_mix(
         hidden_states,
         prev_block_output,
