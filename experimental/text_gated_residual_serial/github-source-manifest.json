@@ -13,7 +13,7 @@
   "torch_ext/tgr_ops/csrc/ops_common.h": "e86e65d1184f5f861940b733b67766b9f67a445845d282461bea3015b1f08159",
   "torch_ext/tgr_ops/csrc/vector.cpp": "30b69b2e9a825f31deac4218556ae42258e420fb03dc7b9345024503abb28d1d",
   "serial_tgr.py": "a201ea38f5fbb8da90af029885a70591d0b5596c20493ed5b4e802650438eb9b",
-  "cases.json": "d920332d8c48e459fe479c162df94c2d9c944af4538fc26fac3d3710900b0b2c",
+  "cases.json": "defec47713a9ecffa2a97bfe36e00df39af41e0926446a872d050178fcec3de7",
   "vector-op.json": "66c5de8ce8da616462dd080da835f113cadca44c8a9ed9948096cc6e7f510182",
   "README.md": "3e1c413536034513c69c8b5024c39e23bf2f4ed49d4456196e70d0997ddee68b"
 }
