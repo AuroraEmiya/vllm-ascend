@@ -10,6 +10,7 @@ constexpr uint32_t KV_RANK = 512;
 constexpr uint32_t NOPE_DIM = 128;
 constexpr uint32_t ROPE_DIM = 64;
 constexpr uint32_t UP_HEAD_WIDTH = NOPE_DIM + ROPE_DIM;
+constexpr uint32_t HEAD_TILE = 16;
 
 template <HardEvent EVENT>
 __aicore__ inline void Sync()
@@ -36,7 +37,13 @@ public:
         qrGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(queryRope));
         kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
         krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
-        pipe.InitBuffer(b0Buf, QUERY_RANK * sizeof(bfloat16_t));
+        if (t.mode == 2) {
+            pipe.InitBuffer(b0Buf, t.heads * KV_RANK * sizeof(bfloat16_t));
+            b0 = b0Buf.Get<bfloat16_t>();
+            return;
+        }
+        // A tile packs sixteen 128-element non-RoPE heads in one DMA.
+        pipe.InitBuffer(b0Buf, HEAD_TILE * NOPE_DIM * sizeof(bfloat16_t));
         pipe.InitBuffer(b1Buf, QUERY_RANK * sizeof(bfloat16_t));
         pipe.InitBuffer(b2Buf, QUERY_RANK * sizeof(bfloat16_t));
         pipe.InitBuffer(b3Buf, QUERY_RANK * sizeof(bfloat16_t));
@@ -158,22 +165,89 @@ private:
             krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
     }
 
-    __aicore__ inline void SplitAndRope(uint32_t unit)
+    __aicore__ inline void BroadcastHalf(const LocalTensor<float>& source)
     {
-        const uint32_t row = unit / t.heads, head = unit % t.heads;
-        const uint64_t source = static_cast<uint64_t>(unit) * UP_HEAD_WIDTH;
-        DataCopy(b0, xGm[source], NOPE_DIM);
-        Sync<HardEvent::MTE2_MTE3>();
-        DataCopy(yGm[(head * t.rows + row) * NOPE_DIM], b0, NOPE_DIM);
-        Rope(xGm, source + NOPE_DIM, row, qrGm, static_cast<uint64_t>(unit) * ROPE_DIM);
+        // One repeat contains two heads' 32-element halves. Subsequent vector
+        // repeats reuse these 64 coefficients through src1RepStride=0.
+        Adds(f0, source, 0.0f, ROPE_DIM / 2);
+        Adds(f0[ROPE_DIM / 2], source, 0.0f, ROPE_DIM / 2);
+        PipeBarrier<PIPE_V>();
     }
 
-    __aicore__ inline void RestoreLayout(uint32_t unit)
+    __aicore__ inline void SplitAndRope(uint32_t unit)
     {
-        const uint32_t row = unit / t.heads, head = unit % t.heads;
-        DataCopy(b0, xGm[(head * t.rows + row) * KV_RANK], KV_RANK);
+        const uint32_t tiles = (t.heads + HEAD_TILE - 1) / HEAD_TILE;
+        const uint32_t row = unit / tiles;
+        const uint32_t head = (unit % tiles) * HEAD_TILE;
+        const uint32_t headCount = t.heads - head < HEAD_TILE ? t.heads - head : HEAD_TILE;
+        const uint64_t source = static_cast<uint64_t>(row * t.heads + head) * UP_HEAD_WIDTH;
+        DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
+        DataCopyExtParams copyQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
+            ROPE_DIM * sizeof(bfloat16_t), 0, 0};
+        DataCopyPad(b0, xGm[source], copyQ, noPad);
         Sync<HardEvent::MTE2_MTE3>();
-        DataCopy(yGm[static_cast<uint64_t>(unit) * KV_RANK], b0, KV_RANK);
+        DataCopyExtParams writeQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
+            0, static_cast<uint32_t>((t.rows - 1) * NOPE_DIM * sizeof(bfloat16_t)), 0};
+        DataCopyPad(yGm[(head * t.rows + row) * NOPE_DIM], b0, writeQ);
+        Sync<HardEvent::MTE3_MTE2>();
+
+        DataCopyExtParams copyRope{static_cast<uint16_t>(headCount), ROPE_DIM * sizeof(bfloat16_t),
+            NOPE_DIM * sizeof(bfloat16_t), 0, 0};
+        DataCopyPad(b0, xGm[source + NOPE_DIM], copyRope, noPad);
+        DataCopy(b1, sinGm[row * ROPE_DIM], ROPE_DIM);
+        DataCopy(b2, cosGm[row * ROPE_DIM], ROPE_DIM);
+        Sync<HardEvent::MTE2_V>();
+        const uint32_t count = headCount * ROPE_DIM;
+        const uint32_t halfCount = count / 2;
+        Cast(f0, b0, RoundMode::CAST_NONE, count);
+        Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
+        Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
+        PipeBarrier<PIPE_V>();
+        uint64_t reserved = 0;
+        GatherMask(f3, f0, static_cast<uint8_t>(1), true, count,
+            GatherMaskParams(1, 1, 8, 0), reserved);
+        GatherMask(f3[halfCount], f0, static_cast<uint8_t>(2), true, count,
+            GatherMaskParams(1, 1, 8, 0), reserved);
+        PipeBarrier<PIPE_V>();
+
+        const uint64_t mask = headCount == 1 ? ROPE_DIM / 2 : ROPE_DIM;
+        const uint8_t repeats = headCount <= 2 ? 1 : headCount / 2;
+        BinaryRepeatParams broadcast(1, 1, 1, 8, 8, 0);
+        BroadcastHalf(f2);
+        Mul(f4, f3, f0, mask, repeats, broadcast);
+        PipeBarrier<PIPE_V>();
+        BroadcastHalf(f2[ROPE_DIM / 2]);
+        Mul(f4[halfCount], f3[halfCount], f0, mask, repeats, broadcast);
+        PipeBarrier<PIPE_V>();
+        BroadcastHalf(f1);
+        Mul(f3[halfCount], f3[halfCount], f0, mask, repeats, broadcast);
+        PipeBarrier<PIPE_V>();
+        Sub(f4, f4, f3[halfCount], halfCount);
+        PipeBarrier<PIPE_V>();
+        BroadcastHalf(f1[ROPE_DIM / 2]);
+        Mul(f3, f3, f0, mask, repeats, broadcast);
+        PipeBarrier<PIPE_V>();
+        Add(f4[halfCount], f4[halfCount], f3, halfCount);
+        PipeBarrier<PIPE_V>();
+        Cast(b3, f4, RoundMode::CAST_RINT, count);
+        Sync<HardEvent::V_MTE3>();
+        DataCopyExtParams writeRope{static_cast<uint16_t>(headCount),
+            (ROPE_DIM / 2) * sizeof(bfloat16_t), 0, (ROPE_DIM / 2) * sizeof(bfloat16_t), 0};
+        const uint64_t ropeOffset = static_cast<uint64_t>(row * t.heads + head) * ROPE_DIM;
+        DataCopyPad(qrGm[ropeOffset], b3, writeRope);
+        DataCopyPad(qrGm[ropeOffset + ROPE_DIM / 2], b3[halfCount], writeRope);
+    }
+
+    __aicore__ inline void RestoreLayout(uint32_t row)
+    {
+        // Read all heads of one row with a strided GM DMA, then write one
+        // contiguous batch-major row. The UB-only mode needs no vector buffers.
+        DataCopyExtParams copy{static_cast<uint16_t>(t.heads), KV_RANK * sizeof(bfloat16_t),
+            static_cast<uint32_t>((t.rows - 1) * KV_RANK * sizeof(bfloat16_t)), 0, 0};
+        DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
+        DataCopyPad(b0, xGm[row * KV_RANK], copy, noPad);
+        Sync<HardEvent::MTE2_MTE3>();
+        DataCopy(yGm[static_cast<uint64_t>(row) * t.heads * KV_RANK], b0, t.heads * KV_RANK);
     }
 
     XMlaVectorTilingData t;

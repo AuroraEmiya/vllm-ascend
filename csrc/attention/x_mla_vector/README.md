@@ -47,3 +47,12 @@ the same address are visible. Reconstruct and recapture after weight addresses
 or shape/layout metadata changes. The wrapper intentionally returns the same
 cache tensors it updates; only the documented input-cache mutation and values
 are required for comparison, not an undocumented baseline return alias.
+
+Candidate 2 batches sixteen heads per mode-1 tile. Strided DMA packs/scatters
+non-RoPE query data; vector repeats broadcast the same per-row coefficients over
+packed even and odd head halves. Two strided stores restore each head's RoPE
+halves without a scalar per-head loop. Mode 2 transposes a whole row using a
+strided load and contiguous write. Mode 0 is unchanged. Mode 0/1 UB uses44,064
+bytes; mode 2 allocates only heads*512*2 bytes (at most131,072 bytes), checked
+against the runtime platform UB size. Matrix calls and weight semantics stay
+unchanged. All batching and layout work remains inside the complete Graph.
