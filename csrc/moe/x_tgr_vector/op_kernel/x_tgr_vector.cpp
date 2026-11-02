@@ -38,6 +38,8 @@ public:
             else if(t.mode==3 || t.mode==5) PackedActivation(unit);
             else Mix(unit);
         }
+        // Drain the last output DMA after the inference normalization loop.
+        if(t.mode==4 && t.units>GetBlockNum()) Fence<HardEvent::MTE3_MTE2>();
     }
 private:
     __aicore__ inline void Barrier() { PipeBarrier<PIPE_V>(); }
@@ -82,14 +84,25 @@ private:
         if(t.hasGamma) {
             Adds(g,g,1.0f,h); Barrier(); Mul(z,z,g,h); Barrier();
         }
+        // Inference has no MTE3 reader of r. Its input b0/gamma and output
+        // b1 are separate buffers, so the next input DMA can overlap the
+        // current output DMA. Wait before reusing b1, rather than before
+        // loading the independent input. Auxiliary mode retains its scalar
+        // store dependency and the original conservative loop fence.
+        const bool overlap=t.mode==4 && t.units>GetBlockNum();
+        if(overlap) Fence<HardEvent::MTE3_V>();
         Cast(yb,z,RoundMode::CAST_RINT,h); Fence<HardEvent::V_MTE3>();
         DataCopy(yG[off],yb,h);
         if(t.mode==0) {
             DataCopyExtParams cp{1,4,0,0,0}; DataCopyPad(invG[row],r,cp);
         }
-        // Both the BF16 output and FP32 scalar are still read by MTE3.
-        // Order the next iteration's input DMA after those reads complete.
-        Fence<HardEvent::MTE3_MTE2>();
+        if(overlap) {
+            // The next MTE2 write must still wait for V to finish reading
+            // the old input/gamma. MTE3 reads only the separate b1 buffer.
+            Fence<HardEvent::V_MTE2>();
+        } else {
+            Fence<HardEvent::MTE3_MTE2>();
+        }
     }
     __aicore__ inline void Activation(uint32_t unit) {
         uint32_t off=unit*t.tile,n=t.rows*t.width-off;

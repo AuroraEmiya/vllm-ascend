@@ -53,6 +53,12 @@ Sigmoid uses FP32 `Reciprocal` after adding one to the exponential, without
 constructing an all-ones tensor. Its BF16 output path uses the frozen BF16
 precision checks. The FP32 inverse-RMS auxiliary keeps precise `Sqrt+Div`.
 
+For no-auxiliary normalization with multiple branch rows per core, input and
+output DMA can overlap because their BF16 buffers are disjoint. A `V_MTE2`
+event protects input/gamma reuse, and `MTE3_V` protects the output buffer before
+the next cast. The loop drains its final output DMA. Auxiliary mode and a
+single row per core retain the original `MTE3_MTE2` ordering.
+
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model
 trace. Performance acceptance is decode only: `S=1`, with batch sizes
