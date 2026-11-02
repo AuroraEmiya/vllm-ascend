@@ -120,11 +120,11 @@ public:
     __aicore__ inline void Run(GM_ADDR input, GM_ADDR output, HcParams p) {
         GlobalTensor<T> in, out;
         in.SetGlobalBuffer((__gm__ T*)input); out.SetGlobalBuffer((__gm__ T*)output);
-        TPipe pipe; TBuf<TPosition::VECCALC> it, ot, xf, tf;
+        TPipe pipe; TBuf<TPosition::VECCALC> it, out_buf, xf, tf;
         const uint32_t size = Align(p.hidden);
-        pipe.InitBuffer(it, size * sizeof(T)); pipe.InitBuffer(ot, size * sizeof(T));
+        pipe.InitBuffer(it, size * sizeof(T)); pipe.InitBuffer(out_buf, size * sizeof(T));
         pipe.InitBuffer(xf, size * 4); pipe.InitBuffer(tf, size * 4);
-        auto a = it.Get<T>(); auto b = ot.Get<T>();
+        auto a = it.Get<T>(); auto b = out_buf.Get<T>();
         auto x = xf.Get<float>(); auto t = tf.Get<float>();
         for (uint32_t row = GetBlockIdx(); row < p.rows; row += GetBlockNum()) {
             Sync<HardEvent::MTE3_MTE2>();
@@ -152,11 +152,11 @@ public:
         GlobalTensor<T> in, gate, out;
         in.SetGlobalBuffer((__gm__ T*)values);gate.SetGlobalBuffer((__gm__ T*)gates);
         out.SetGlobalBuffer((__gm__ T*)output);
-        TPipe pipe; TBuf<TPosition::VECCALC> it, gt, ot, xf, tf, af;
+        TPipe pipe; TBuf<TPosition::VECCALC> it, gt, out_buf, xf, tf, af;
         pipe.InitBuffer(it, TILE * sizeof(T)); pipe.InitBuffer(gt, TILE * sizeof(T));
-        pipe.InitBuffer(ot, TILE * sizeof(T)); pipe.InitBuffer(xf, TILE * 4);
+        pipe.InitBuffer(out_buf, TILE * sizeof(T)); pipe.InitBuffer(xf, TILE * 4);
         pipe.InitBuffer(tf, TILE * 4);pipe.InitBuffer(af, TILE * 4);
-        auto a=it.Get<T>(); auto b=gt.Get<T>(); auto o=ot.Get<T>();
+        auto a=it.Get<T>(); auto b=gt.Get<T>(); auto o=out_buf.Get<T>();
         auto x=xf.Get<float>(); auto t=tf.Get<float>(); auto acc=af.Get<float>();
         const uint32_t tiles = (p.hidden + TILE - 1) / TILE;
         for (uint32_t task=GetBlockIdx();task<p.rows*tiles;task+=GetBlockNum()) {
@@ -287,12 +287,12 @@ public:
         out.SetGlobalBuffer((__gm__ T*)output);
         const uint32_t capacity = p.row_batch * p.hidden;
         TPipe pipe;
-        TBuf<TPosition::VECCALC> it, ot, xf, tf;
+        TBuf<TPosition::VECCALC> it, out_buf, xf, tf;
         pipe.InitBuffer(it, capacity * sizeof(T) + 256);
-        pipe.InitBuffer(ot, capacity * sizeof(T) + 256);
+        pipe.InitBuffer(out_buf, capacity * sizeof(T) + 256);
         pipe.InitBuffer(xf, capacity * sizeof(float) + 256);
         pipe.InitBuffer(tf, capacity * sizeof(float) + 256);
-        auto a=it.Get<T>(); auto b=ot.Get<T>();
+        auto a=it.Get<T>(); auto b=out_buf.Get<T>();
         auto x=xf.Get<float>(); auto t=tf.Get<float>();
         const uint32_t tasks=(p.rows+p.row_batch-1)/p.row_batch;
         for(uint32_t task=GetBlockIdx();task<tasks;task+=GetBlockNum()) {
@@ -331,15 +331,15 @@ public:
         gate.SetGlobalBuffer((__gm__ T*)gates);
         out.SetGlobalBuffer((__gm__ T*)output);
         TPipe pipe;
-        TBuf<TPosition::VECCALC> it,gt,ot,xf,tf,af;
+        TBuf<TPosition::VECCALC> it,gt,out_buf,xf,tf,af;
         const uint32_t capacity=p.groups*p.tile;
         pipe.InitBuffer(it,capacity*sizeof(T)+256);
         pipe.InitBuffer(gt,capacity*sizeof(T)+256);
-        pipe.InitBuffer(ot,p.tile*sizeof(T)+256);
+        pipe.InitBuffer(out_buf,p.tile*sizeof(T)+256);
         pipe.InitBuffer(xf,capacity*sizeof(float)+256);
         pipe.InitBuffer(tf,capacity*sizeof(float)+256);
         pipe.InitBuffer(af,p.tile*sizeof(float)+256);
-        auto a=it.Get<T>(); auto b=gt.Get<T>(); auto o=ot.Get<T>();
+        auto a=it.Get<T>(); auto b=gt.Get<T>(); auto o=out_buf.Get<T>();
         auto x=xf.Get<float>();auto t=tf.Get<float>();auto acc=af.Get<float>();
         const uint32_t tiles=(p.hidden+p.tile-1)/p.tile;
         for(uint32_t task=GetBlockIdx();task<p.rows*tiles;task+=GetBlockNum()) {

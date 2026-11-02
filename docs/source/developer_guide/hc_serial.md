@@ -28,7 +28,7 @@ by a final mixer. Inputs are read only. The result has three values:
 - Next injection [M,K], a view into down projection storage, or None for a final
   mixer. Its row stride includes the discarded alignment padding.
 
-Combine is BF16(residual + block * scale), where scale is
+Combine is `BF16(residual + block * scale)`, where scale is
 2*sigmoid(previous_injection/K), or one without injection. This BF16 boundary
 occurs before grouped RMSNorm. For each H group, z=combined*rsqrt(mean(square)
 +epsilon), and the Gemma affine is BF16(z+z*norm_weight).
