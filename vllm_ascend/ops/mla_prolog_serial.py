@@ -168,26 +168,16 @@ class MlaPrologSerial:
             cache_kr_flat,
         )
 
-        head_query = torch.bmm(head_q, self.weight_uk)
         if rows == 1:
-            query = head_query.view(rows, self.heads, KV_RANK)
+            query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
         else:
-            query = torch.empty((rows, self.heads, KV_RANK), device=self.device, dtype=torch.bfloat16)
-            self._vector(
-                head_query.view(self.heads * rows, KV_RANK),
-                self.dummy,
-                self.dummy,
-                self.dummy,
-                sine,
-                cosine,
-                index,
-                2,
-                rows,
-                slots,
-                query,
-                self.dummy,
-                cache_kv_flat,
-                cache_kr_flat,
+            query = torch_npu.npu_transpose_batchmatmul(
+                head_q,
+                self.weight_uk,
+                perm_x1=[0, 1, 2],
+                perm_x2=[0, 1, 2],
+                perm_y=[1, 0, 2],
+                batch_split_factor=1,
             )
         return (
             query.view(rows, 1, self.heads, KV_RANK),

@@ -96,3 +96,13 @@ batches. The32-head tile amortizes vector coefficient broadcasts, events and
 strided stores across more heads. Working FP32 and BF16 buffers are enlarged
 to hold2048 RoPE values; total UB remains59,424 bytes and is checked against
 the runtime platform. B31/B32/B33 protect the explicit workload threshold.
+
+Candidate7 uses the public `torch_npu.npu_transpose_batchmatmul` for B>1,
+with input `[heads,B,128]`, weight `[heads,128,512]`, identity input permutations,
+and output permutation `[1,0,2]`. Its output is directly `[B,heads,512]`, removing
+the separate mode2 layout kernel. B=1 keeps public bmm plus a contiguous view.
+All actual tasks launched inside this public matrix call remain part of Graph
+and full profiling, including any implementation layout work. No head weight
+preparation or hidden intermediate rounding is changed. Public schema/API:
+[op-plugin declaration](https://gitcode.com/Ascend/op-plugin/blob/7.3.0/op_plugin/config/op_plugin_functions.yaml),
+[ACLNN contract](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/aolapi/context/ops-nn/aclnnTransposeBatchMatMul.md).

@@ -183,7 +183,7 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         "case": case,
         "baseline_weight_formats": formats,
         "baseline_route": baseline_route,
-        "serial_pipeline": "merged-down-mm",
+        "serial_pipeline": "merged-down-transpose-bmm",
         "serial_weight_preparation": {
             "contract": "Explicit NZ preparation; refresh_weights after source changes, outside Graph.",
             "prepare_host_synchronized_us": prepare_us,
