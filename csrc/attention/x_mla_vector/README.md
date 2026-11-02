@@ -26,8 +26,9 @@ The kernel uses complete per-row FP32 RMS reductions, `Sqrt` plus `Div`, and BF1
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-Mode 0/1 UB allocation is44,064 bytes: one2048-element BF16 buffer, three
-1536-element BF16 buffers, five1536-element FP32 buffers, and32 index bytes.
+Mode 0/1/3 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
+1536-element BF16 buffers, one2048-element BF16 buffer, five2048-element FP32
+buffers, and32 index bytes.
 Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
 order MTE2, V, scalar and MTE3, including buffer reuse. No cross-core dependency
 or barrier is required.
@@ -83,9 +84,15 @@ recorded. All BF16 outputs and cache state after same-address weight refresh
 must pass the original independent FP64 thresholds, including any matmul
 rounding differences caused by the wider output matrix.
 
-Candidate5 gives query normalization, KV normalization and KR RoPE independent
+Candidate5 (rejected after complete-Graph timing) gives query normalization, KV normalization and KR RoPE independent
 work units. Every unit owns its UB and writes a separate output tensor; valid
 distinct indices preserve at least128-byte separation between KR rows and
 1024-byte separation between KV rows. No communication or cross-core barrier
 is required. This removes the sequential normalization/RoPE dependency within
 one KV work unit while preserving the exact same arithmetic and buffer sizes.
+
+Candidate6 restores candidate4 two-owner normalization/cache and uses32-head RoPE/DMA tiles when B>=32 and16-head tiles for smaller
+batches. The32-head tile amortizes vector coefficient broadcasts, events and
+strided stores across more heads. Working FP32 and BF16 buffers are enlarged
+to hold2048 RoPE values; total UB remains59,424 bytes and is checked against
+the runtime platform. B31/B32/B33 protect the explicit workload threshold.

@@ -10,7 +10,9 @@ constexpr uint32_t KV_RANK = 512;
 constexpr uint32_t NOPE_DIM = 128;
 constexpr uint32_t ROPE_DIM = 64;
 constexpr uint32_t UP_HEAD_WIDTH = NOPE_DIM + ROPE_DIM;
-constexpr uint32_t HEAD_TILE = 16;
+constexpr uint32_t HEAD_TILE = 32;
+constexpr uint32_t SMALL_HEAD_TILE = 16;
+constexpr uint32_t WORK_WIDTH = HEAD_TILE * ROPE_DIM;
 
 template <HardEvent EVENT>
 __aicore__ inline void Sync()
@@ -42,16 +44,16 @@ public:
             b0 = b0Buf.Get<bfloat16_t>();
             return;
         }
-        // A tile packs sixteen 128-element non-RoPE heads in one DMA.
+        // A large-batch tile packs up to32 heads in one strided DMA.
         pipe.InitBuffer(b0Buf, HEAD_TILE * NOPE_DIM * sizeof(bfloat16_t));
         pipe.InitBuffer(b1Buf, QUERY_RANK * sizeof(bfloat16_t));
         pipe.InitBuffer(b2Buf, QUERY_RANK * sizeof(bfloat16_t));
-        pipe.InitBuffer(b3Buf, QUERY_RANK * sizeof(bfloat16_t));
-        pipe.InitBuffer(f0Buf, QUERY_RANK * sizeof(float));
-        pipe.InitBuffer(f1Buf, QUERY_RANK * sizeof(float));
-        pipe.InitBuffer(f2Buf, QUERY_RANK * sizeof(float));
-        pipe.InitBuffer(f3Buf, QUERY_RANK * sizeof(float));
-        pipe.InitBuffer(f4Buf, QUERY_RANK * sizeof(float));
+        pipe.InitBuffer(b3Buf, WORK_WIDTH * sizeof(bfloat16_t));
+        pipe.InitBuffer(f0Buf, WORK_WIDTH * sizeof(float));
+        pipe.InitBuffer(f1Buf, WORK_WIDTH * sizeof(float));
+        pipe.InitBuffer(f2Buf, WORK_WIDTH * sizeof(float));
+        pipe.InitBuffer(f3Buf, WORK_WIDTH * sizeof(float));
+        pipe.InitBuffer(f4Buf, WORK_WIDTH * sizeof(float));
         pipe.InitBuffer(indexBuf, 32);
         b0 = b0Buf.Get<bfloat16_t>(); b1 = b1Buf.Get<bfloat16_t>();
         b2 = b2Buf.Get<bfloat16_t>(); b3 = b3Buf.Get<bfloat16_t>();
@@ -145,12 +147,8 @@ private:
 
     __aicore__ inline void NormAndCache(uint32_t unit)
     {
-        // Three independent owners write query, KV and KR respectively.
-        // Group by operation so a cyclic core assignment does not pin each
-        // core permanently to one cost class when core count is divisible by3.
-        const uint32_t row = unit % t.rows;
-        const uint32_t kind = unit / t.rows;
-        if (kind == 0) {
+        const uint32_t row = unit / 2;
+        if ((unit & 1u) == 0) {
             const uint32_t inputWidth = t.mode == 3 ? QUERY_RANK + KV_RANK + ROPE_DIM : QUERY_RANK;
             Normalize(xGm, row * inputWidth, gammaQGm, QUERY_RANK, t.epsQ,
                 yGm, row * QUERY_RANK);
@@ -166,20 +164,14 @@ private:
         if (slot < 0 || slot >= t.slots) return;
         if (t.mode == 3) {
             const uint64_t offset = row * (QUERY_RANK + KV_RANK + ROPE_DIM) + QUERY_RANK;
-            if (kind == 1) {
-                Normalize(xGm, offset, gammaKvGm, KV_RANK, t.epsKv,
-                    kvGm, static_cast<uint64_t>(slot) * KV_RANK);
-            } else {
-                Rope(xGm, offset + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
-            }
+            Normalize(xGm, offset, gammaKvGm, KV_RANK, t.epsKv,
+                kvGm, static_cast<uint64_t>(slot) * KV_RANK);
+            Rope(xGm, offset + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
         } else {
-            if (kind == 1) {
-                Normalize(auxGm, row * (KV_RANK + ROPE_DIM), gammaKvGm, KV_RANK, t.epsKv,
-                    kvGm, static_cast<uint64_t>(slot) * KV_RANK);
-            } else {
-                Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row,
-                    krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
-            }
+            Normalize(auxGm, row * (KV_RANK + ROPE_DIM), gammaKvGm, KV_RANK, t.epsKv,
+                kvGm, static_cast<uint64_t>(slot) * KV_RANK);
+            Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row,
+                krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
         }
     }
 
@@ -194,10 +186,11 @@ private:
 
     __aicore__ inline void SplitAndRope(uint32_t unit)
     {
-        const uint32_t tiles = (t.heads + HEAD_TILE - 1) / HEAD_TILE;
+        const uint32_t tileSize = t.rows >= 32 ? HEAD_TILE : SMALL_HEAD_TILE;
+        const uint32_t tiles = (t.heads + tileSize - 1) / tileSize;
         const uint32_t row = unit / tiles;
-        const uint32_t head = (unit % tiles) * HEAD_TILE;
-        const uint32_t headCount = t.heads - head < HEAD_TILE ? t.heads - head : HEAD_TILE;
+        const uint32_t head = (unit % tiles) * tileSize;
+        const uint32_t headCount = t.heads - head < tileSize ? t.heads - head : tileSize;
         const uint64_t source = static_cast<uint64_t>(row * t.heads + head) * UP_HEAD_WIDTH;
         DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
         DataCopyExtParams copyQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),

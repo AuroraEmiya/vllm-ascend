@@ -28,12 +28,14 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         context->GetInputShape(6)->GetStorageShape().GetShapeSize() != rows)) return ge::GRAPH_FAILED;
     XMlaVectorTilingData tiling;
     tiling.set_mode(mode); tiling.set_rows(rows); tiling.set_heads(heads); tiling.set_slots(slots);
-    tiling.set_units((mode == 0 || mode == 3) ? rows * 3 : (mode == 1 ? rows * ((heads + 15) / 16) : rows));
+    const uint32_t headTile = rows >= 32 ? 32 : 16;
+    tiling.set_units((mode == 0 || mode == 3) ? rows * 2 :
+        (mode == 1 ? rows * ((heads + headTile - 1) / headTile) : rows));
     tiling.set_epsQ(epsQ); tiling.set_epsKv(epsKv);
     platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     uint64_t ubBytes = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
-    const uint64_t requiredUb = mode == 2 ? heads * 512 * sizeof(uint16_t) : 44064;
+    const uint64_t requiredUb = mode == 2 ? heads * 512 * sizeof(uint16_t) : 59424;
     if (ubBytes < requiredUb || platform.GetCoreNumAiv() < 1) return ge::GRAPH_FAILED;
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
