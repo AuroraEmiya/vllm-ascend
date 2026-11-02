@@ -82,3 +82,10 @@ the concatenation and NZ conversion; persistent and peak extra allocation are
 recorded. All BF16 outputs and cache state after same-address weight refresh
 must pass the original independent FP64 thresholds, including any matmul
 rounding differences caused by the wider output matrix.
+
+Candidate5 gives query normalization, KV normalization and KR RoPE independent
+work units. Every unit owns its UB and writes a separate output tensor; valid
+distinct indices preserve at least128-byte separation between KR rows and
+1024-byte separation between KV rows. No communication or cross-core barrier
+is required. This removes the sequential normalization/RoPE dependency within
+one KV work unit while preserving the exact same arithmetic and buffer sizes.

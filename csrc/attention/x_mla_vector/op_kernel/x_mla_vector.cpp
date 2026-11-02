@@ -145,8 +145,12 @@ private:
 
     __aicore__ inline void NormAndCache(uint32_t unit)
     {
-        const uint32_t row = unit / 2;
-        if ((unit & 1u) == 0) {
+        // Three independent owners write query, KV and KR respectively.
+        // Group by operation so a cyclic core assignment does not pin each
+        // core permanently to one cost class when core count is divisible by3.
+        const uint32_t row = unit % t.rows;
+        const uint32_t kind = unit / t.rows;
+        if (kind == 0) {
             const uint32_t inputWidth = t.mode == 3 ? QUERY_RANK + KV_RANK + ROPE_DIM : QUERY_RANK;
             Normalize(xGm, row * inputWidth, gammaQGm, QUERY_RANK, t.epsQ,
                 yGm, row * QUERY_RANK);
@@ -162,14 +166,20 @@ private:
         if (slot < 0 || slot >= t.slots) return;
         if (t.mode == 3) {
             const uint64_t offset = row * (QUERY_RANK + KV_RANK + ROPE_DIM) + QUERY_RANK;
-            Normalize(xGm, offset, gammaKvGm, KV_RANK, t.epsKv,
-                kvGm, static_cast<uint64_t>(slot) * KV_RANK);
-            Rope(xGm, offset + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+            if (kind == 1) {
+                Normalize(xGm, offset, gammaKvGm, KV_RANK, t.epsKv,
+                    kvGm, static_cast<uint64_t>(slot) * KV_RANK);
+            } else {
+                Rope(xGm, offset + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+            }
         } else {
-            Normalize(auxGm, row * (KV_RANK + ROPE_DIM), gammaKvGm, KV_RANK, t.epsKv,
-                kvGm, static_cast<uint64_t>(slot) * KV_RANK);
-            Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row,
-                krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+            if (kind == 1) {
+                Normalize(auxGm, row * (KV_RANK + ROPE_DIM), gammaKvGm, KV_RANK, t.epsKv,
+                    kvGm, static_cast<uint64_t>(slot) * KV_RANK);
+            } else {
+                Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row,
+                    krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+            }
         }
     }
 

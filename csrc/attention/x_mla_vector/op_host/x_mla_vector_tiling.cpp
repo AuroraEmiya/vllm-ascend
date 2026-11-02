@@ -28,7 +28,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         context->GetInputShape(6)->GetStorageShape().GetShapeSize() != rows)) return ge::GRAPH_FAILED;
     XMlaVectorTilingData tiling;
     tiling.set_mode(mode); tiling.set_rows(rows); tiling.set_heads(heads); tiling.set_slots(slots);
-    tiling.set_units((mode == 0 || mode == 3) ? rows * 2 : (mode == 1 ? rows * ((heads + 15) / 16) : rows));
+    tiling.set_units((mode == 0 || mode == 3) ? rows * 3 : (mode == 1 ? rows * ((heads + 15) / 16) : rows));
     tiling.set_epsQ(epsQ); tiling.set_epsKv(epsKv);
     platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     uint64_t ubBytes = 0;
