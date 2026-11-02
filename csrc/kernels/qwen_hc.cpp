@@ -197,11 +197,11 @@ extern "C" __global__ __aicore__ void qwen_hc_gate_mix(GM_ADDR x,GM_ADDR g,GM_AD
 void qwen_hc_combine_norm_launch(uint32_t cores, void* stream,void* r,void* b,void* i,
                                 void* w,void* s,void* n,HcParams p) {
     qwen_hc_combine_norm<<<cores,nullptr,stream>>>((GM_ADDR)r,(GM_ADDR)b,(GM_ADDR)i,
-                                                  (GM_ADDR)w,(GM_ADDR)s,(GM_ADDR)n,p);
+                                                  (GM_ADDR)w,(GM_ADDR)s,(GM_ADDR)n,&p);
 }
 void qwen_hc_silu_launch(uint32_t cores,void* stream,void* x,void* y,HcParams p) {
-    qwen_hc_silu<<<cores,nullptr,stream>>>((GM_ADDR)x,(GM_ADDR)y,p);
+    qwen_hc_silu<<<cores,nullptr,stream>>>((GM_ADDR)x,(GM_ADDR)y,&p);
 }
 void qwen_hc_gate_mix_launch(uint32_t cores,void* stream,void* x,void* g,void* y,HcParams p) {
-    qwen_hc_gate_mix<<<cores,nullptr,stream>>>((GM_ADDR)x,(GM_ADDR)g,(GM_ADDR)y,p);
+    qwen_hc_gate_mix<<<cores,nullptr,stream>>>((GM_ADDR)x,(GM_ADDR)g,(GM_ADDR)y,&p);
 }
