@@ -106,3 +106,11 @@ and full profiling, including any implementation layout work. No head weight
 preparation or hidden intermediate rounding is changed. Public schema/API:
 [op-plugin declaration](https://gitcode.com/Ascend/op-plugin/blob/7.3.0/op_plugin/config/op_plugin_functions.yaml),
 [ACLNN contract](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/aolapi/context/ops-nn/aclnnTransposeBatchMatMul.md).
+
+Candidate8 prepares the two merged-down/up weights as contiguous transposed ND
+format2 and uses public `torch.nn.functional.linear` for these two matrix stages.
+Preparation and refresh include transpose, contiguous storage and format cast;
+the stable-address refresh contract is unchanged. This is an actual matrix-route
+candidate: kernel versions and all internal tasks are determined from complete
+profiling, not inferred from the API name or layout. Candidate7 head projection
+and every own V stage are unchanged.
