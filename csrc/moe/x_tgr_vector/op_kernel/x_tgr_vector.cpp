@@ -54,7 +54,11 @@ private:
         Mul(q,z,z,h); Barrier();
         ReduceSum(r,q,tmp,h); Barrier();
         Muls(r,r,1.0f/h,1); Barrier(); Adds(r,r,t.eps,1); Barrier();
-        Rsqrt(r,r,1); Barrier();
+        // The basic FP32 Rsqrt approximation does not meet the auxiliary
+        // inverse-RMS contract. Sqrt+Div is the documented precise path.
+        Sqrt(r,r,1); Barrier();
+        auto one=f3.Get<float>(); Duplicate(one,1.0f,8); Barrier();
+        Div(r,one,r,1); Barrier();
         float scale=r.GetValue(0);
         Muls(z,z,scale,h); Barrier();
         if(t.hasGamma) {

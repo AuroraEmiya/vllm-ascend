@@ -26,7 +26,18 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     if (mode==2 && gateSize!=1 && gateSize!=n*channels) return ge::GRAPH_FAILED;
     t.set_rows(n); t.set_width(d); t.set_channels(channels); t.set_mode(mode); t.set_eps(eps);
     t.set_hasGamma((gammaSize==d)); t.set_hasGate((mode==2 && gateSize==n*channels));
-    t.set_tile(256);
+    // Keep enough independent work for small decode batches. At larger
+    // batches, process a larger tile to amortize each DMA/vector fence.
+    uint32_t tile=256;
+    if (mode==2) {
+        if (n>=40) tile=2560;
+        else if (n>=20) tile=1280;
+        else if (n>=10) tile=640;
+        else if (n>=5) tile=320;
+    } else if (mode==1) {
+        tile=std::min(2560u,std::max(256u,((n*d+40*32-1)/(40*32))*32));
+    }
+    t.set_tile(tile);
     t.set_units(mode==0 ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile())));
     auto p=platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ub=0; p.GetCoreMemSize(platform_ascendc::CoreMemType::UB,ub);
