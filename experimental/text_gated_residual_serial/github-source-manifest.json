@@ -1,0 +1,19 @@
+{
+  "native/build.sh": "f68084b81a393705932e9b3b7e991d7ff1b81dc6e9c7a15ebd92c01513b3d5f3",
+  "native/CMakeLists.txt": "0506ce4b8bce408669284c46cf2e2e5b29ef0057a5969253455cba6081844671",
+  "native/CMakePresets.json": "bc592dbc8f2dfb2da4c56691d144ff067fbe4754c0f1c21d092b6f6a7361ada0",
+  "native/op_host/CMakeLists.txt": "d92879a2277cfe6724c3e3d0b244f521300e2c35de4da668eaec97432fa4fbd1",
+  "native/op_host/x_tgr_vector.cpp": "97c42c3c1e21b6148902352dba145669b59d6fe6e4f4267378687f574dbad1d6",
+  "native/op_kernel/CMakeLists.txt": "7d7ac7a08b0b7bf4ae37a53ce1ec328bcd3277451e3f661cdceb891d9028e22c",
+  "native/op_kernel/x_tgr_vector.cpp": "7f4e209dbee413de0ee10f438bc3406318c9294946da3d0fc457aac59204cdbc",
+  "native/op_kernel/x_tgr_vector_tiling.h": "b9d08e0aa85d47c1c1f1c21d11a52be556a52121d4e6cc56eaab5acd8fff1b4b",
+  "torch_ext/setup.py": "e1da86101d30b90f075dd21d167fdfe8233cc9f10fa03e7051e0a880574d18b0",
+  "torch_ext/tgr_ops/__init__.py": "105e5160fbd977cd8c9462360a12b7c0a58f7c57abdefa3980e8ea77e53d2ef9",
+  "torch_ext/tgr_ops/csrc/ops_common.cpp": "fdec64f82f285eb6836271778108fbe73ea50058fed871d4176cd4feedea33f1",
+  "torch_ext/tgr_ops/csrc/ops_common.h": "e86e65d1184f5f861940b733b67766b9f67a445845d282461bea3015b1f08159",
+  "torch_ext/tgr_ops/csrc/vector.cpp": "30b69b2e9a825f31deac4218556ae42258e420fb03dc7b9345024503abb28d1d",
+  "serial_tgr.py": "a201ea38f5fbb8da90af029885a70591d0b5596c20493ed5b4e802650438eb9b",
+  "cases.json": "d920332d8c48e459fe479c162df94c2d9c944af4538fc26fac3d3710900b0b2c",
+  "vector-op.json": "66c5de8ce8da616462dd080da835f113cadca44c8a9ed9948096cc6e7f510182",
+  "README.md": "3e1c413536034513c69c8b5024c39e23bf2f4ed49d4456196e70d0997ddee68b"
+}

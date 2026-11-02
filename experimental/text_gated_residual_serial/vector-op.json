@@ -1,0 +1,21 @@
+[
+  {
+    "op": "XTgrVector",
+    "input_desc": [
+      {"name":"x","param_type":"required","format":["ND"],"type":["bfloat16"]},
+      {"name":"gamma","param_type":"required","format":["ND"],"type":["float"]},
+      {"name":"aux","param_type":"required","format":["ND"],"type":["bfloat16"]},
+      {"name":"gate","param_type":"required","format":["ND"],"type":["bfloat16"]}
+    ],
+    "output_desc": [
+      {"name":"y","param_type":"required","format":["ND"],"type":["bfloat16"]},
+      {"name":"inv","param_type":"required","format":["ND"],"type":["float"]},
+      {"name":"inject","param_type":"required","format":["ND"],"type":["bfloat16"]}
+    ],
+    "attr": [
+      {"name":"mode","param_type":"required","type":"int"},
+      {"name":"channels","param_type":"required","type":"int"},
+      {"name":"eps","param_type":"required","type":"float"}
+    ]
+  }
+]
