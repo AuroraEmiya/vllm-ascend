@@ -12,10 +12,10 @@ static ge::graphStatus InferShape(gert::InferShapeContext* context)
     if (x.GetDimNum()!=2 || c!=4) return ge::GRAPH_FAILED;
     *context->GetOutputShape(0)=x;
     if (mode==2) context->GetOutputShape(0)->SetDim(1,x.GetDim(1)/c);
-    if (mode==3) context->GetOutputShape(0)->SetDim(1,320);
+    if (mode==3 || mode==5) context->GetOutputShape(0)->SetDim(1,320);
     *context->GetOutputShape(1)=mode==0 ? gert::Shape({x.GetDim(0),c}) : gert::Shape({0});
-    bool gate=mode==3 || (mode==2 && context->GetInputShape(3)->GetShapeSize()==x.GetDim(0)*c);
-    *context->GetOutputShape(2)=gate ? gert::Shape({x.GetDim(0),c}) : gert::Shape({0});
+    bool gate=mode==3 || mode==5 || (mode==2 && context->GetInputShape(3)->GetShapeSize()==x.GetDim(0)*c);
+    *context->GetOutputShape(2)=gate ? gert::Shape({x.GetDim(0),mode==5 ? 16 : c}) : gert::Shape({0});
     return ge::GRAPH_SUCCESS;
 }
 static ge::graphStatus InferDataType(gert::InferDataTypeContext *context)

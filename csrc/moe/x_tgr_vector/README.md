@@ -42,6 +42,11 @@ paired hardware events, with vector barriers between dependent operations.
 Inference without auxiliary outputs uses the same precise normalization but
 omits the unused inverse-RMS allocation and scalar global-memory stores.
 Requests for auxiliary outputs retain the FP32 inverse-RMS output and checks.
+The normalization scale stays on the vector pipeline through `Brcb` and a
+zero-stride multiply. The internal write-gate buffer uses 16 BF16 values per
+row to separate each core's small store into its own 32-byte block. The API
+returns the live `[B,S,4]` view; its row stride is 16 and unused padding is not
+exposed. This adds 24 temporary bytes per token, with no extra runtime task.
 
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model

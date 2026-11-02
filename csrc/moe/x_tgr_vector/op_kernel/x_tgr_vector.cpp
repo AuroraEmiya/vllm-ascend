@@ -35,7 +35,7 @@ public:
         for (uint32_t unit=GetBlockIdx(); unit<t.units; unit+=GetBlockNum()) {
             if(t.mode==0 || t.mode==4) Norm(unit);
             else if(t.mode==1) Activation(unit);
-            else if(t.mode==3) PackedActivation(unit);
+            else if(t.mode==3 || t.mode==5) PackedActivation(unit);
             else Mix(unit);
         }
     }
@@ -68,9 +68,11 @@ private:
         // inverse-RMS contract. Sqrt+Div is the documented precise path.
         Sqrt(r,r,1); Barrier();
         Duplicate(q,1.0f,8); Barrier();
-        Div(r,q,r,1); Fence<HardEvent::V_S>();
-        float scale=r.GetValue(0);
-        Muls(z,z,scale,h); Barrier();
+        Div(r,q,r,1); Barrier();
+        // Broadcast r[0] into the first FP32 block, then reuse that block
+        // across all vector repeats. No V-to-scalar round trip is needed.
+        Brcb(q,r,1,{1,8}); Barrier();
+        Mul(z,z,q,64,h/64,{1,1,0,8,8,0}); Barrier();
         if(t.hasGamma) {
             Adds(g,g,1.0f,h); Barrier(); Mul(z,z,g,h); Barrier();
         }
@@ -114,7 +116,9 @@ private:
         Cast(q,xb[320],RoundMode::CAST_NONE,4); Barrier();
         Muls(q,q,1.0f/t.channels,4); Barrier(); Sigmoid(q,4);
         Muls(q,q,2.0f,4); Barrier(); Cast(xb,q,RoundMode::CAST_RINT,4);
-        Fence<HardEvent::V_MTE3>(); DataCopyPad(injectG[row*4],xb,cp);
+        // A padded internal row keeps independent cores' small gate stores
+        // in separate 32-byte blocks. The Python API returns the live view.
+        Fence<HardEvent::V_MTE3>(); DataCopyPad(injectG[row*(t.mode==5?16:4)],xb,cp);
         Fence<HardEvent::MTE3_MTE2>();
     }
     __aicore__ inline void Mix(uint32_t unit) {
