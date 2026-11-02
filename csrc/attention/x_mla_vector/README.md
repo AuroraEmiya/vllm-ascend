@@ -43,9 +43,13 @@ repository's standard `vllm_ascend_C` target. The native adapter uses the existi
 implementation. Benchmark/Graph validation is in
 `benchmarks/kernels/mla_prolog/validate.py`; NPU ST and CPU guard UT accompany it.
 
-Weight preparation is only address-stable views/references; changes to data at
-the same address are visible. Reconstruct and recapture after weight addresses
-or shape/layout metadata changes. The wrapper intentionally returns the same
+The wrapper explicitly prepares three NZ matrix-weight copies at construction.
+After changing source matrix data, call `refresh_weights()` on an ordered stream
+before replay. Refresh copies into the existing buffers, checks actual format29,
+and preserves captured data pointers. Gamma and the final head matrix remain
+direct references. Reconstruct and recapture after weight addresses or
+shape/layout metadata changes. Preparation, refresh latency and extra storage
+are reported separately from the complete inference Graph. The wrapper returns the same
 cache tensors it updates; only the documented input-cache mutation and values
 are required for comparison, not an undocumented baseline return alias.
 
@@ -57,3 +61,12 @@ strided load and contiguous write. Mode 0 is unchanged. Mode 0/1 UB uses44,064
 bytes; mode 2 allocates only heads*512*2 bytes (at most131,072 bytes), checked
 against the runtime platform UB size. Matrix calls and weight semantics stay
 unchanged. All batching and layout work remains inside the complete Graph.
+
+Candidate 3 prepares `WDQ`, `WUQ_QR` and `WDKV_KR` in actual FRACTAL_NZ format29
+for the same three public `torch.mm` calls. The caller enables
+`torch.npu.config.allow_internal_format=True` before preparation and inference.
+No copy, format conversion or weight refresh is omitted from a per-call weight
+update workload: this path assumes weights are prepared between updates.
+The benchmark explicitly refreshes after same-address source updates, checks
+NZ target addresses and physical formats again, and validates all outputs and
+cache state against the independent FP64 reference after replay.

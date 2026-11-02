@@ -4,12 +4,14 @@
 import math
 
 import torch
+import torch_npu
 
 QUERY_RANK = 1536
 KV_RANK = 512
 NOPE_DIM = 128
 ROPE_DIM = 64
 MAX_BATCH = 128
+FRACTAL_NZ = 29
 ALLOWED_HIDDEN = (1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192)
 ALLOWED_HEADS = (1, 2, 4, 8, 16, 32, 64, 128)
 ALLOWED_BLOCK_SIZE = (16, 128)
@@ -36,9 +38,11 @@ def _check_tensor(tensor, shape, device, name, dtype=torch.bfloat16):
 
 
 class MlaPrologSerial:
-    """Prepared weights are address-stable views, never hidden copied caches.
+    """Decode implementation with explicitly prepared, address-stable NZ weights.
 
-    Weight data changes at stable addresses are observed on the next call.
+    After changing any source matrix, call refresh_weights outside Graph replay.
+    The method updates existing NZ buffers without changing captured addresses.
+    Gamma and head-projection matrices remain direct references.
     Recreate this object and recapture when addresses, shapes or metadata change.
     Kernels support the decode subdomain documented in the accompanying README.
     """
@@ -66,7 +70,39 @@ class MlaPrologSerial:
         self.weight_dq, self.weight_uq_qr, self.weight_uk = weight_dq, weight_uq_qr, weight_uk
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
+        self._matrix_sources = (weight_dq, weight_uq_qr, weight_dkv_kr)
+        self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in self._matrix_sources)
+        self._check_prepared_formats()
         self.dummy = torch.empty(1, dtype=torch.bfloat16, device=self.device)
+
+    def _check_prepared_formats(self):
+        if any(torch_npu.get_npu_format(value) != FRACTAL_NZ for value in self._matrix_nz):
+            raise RuntimeError("prepared matrix weights require actual FRACTAL_NZ format29")
+
+    def refresh_weights(self):
+        """Refresh all prepared matrices on the current stream, outside capture.
+
+        Source shapes and storage addresses must remain unchanged. Callers order
+        this stream before a Graph replay on another stream. No synchronization
+        or preparation occurs inside the captured forward.
+        """
+        addresses = tuple(value.data_ptr() for value in self._matrix_nz)
+        for source, target in zip(self._matrix_sources, self._matrix_nz):
+            target.copy_(torch_npu.npu_format_cast(source, FRACTAL_NZ))
+        self._check_prepared_formats()
+        if addresses != tuple(value.data_ptr() for value in self._matrix_nz):
+            raise RuntimeError("refresh changed captured weight addresses")
+
+    def prepared_weight_info(self):
+        """Return public format/address/storage metadata for setup diagnostics."""
+        return {
+            name: {
+                "format": torch_npu.get_npu_format(value),
+                "data_ptr": value.data_ptr(),
+                "storage_bytes": value.untyped_storage().nbytes(),
+            }
+            for name, value in zip(("wdq", "wuq", "wdkv"), self._matrix_nz)
+        }
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
         if token_x.ndim != 3 or token_x.shape[1] != 1 or not 1 <= token_x.shape[0] <= MAX_BATCH:
@@ -91,8 +127,8 @@ class MlaPrologSerial:
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
 
-        down_q = torch.mm(x, self.weight_dq)
-        down_kv_kr = torch.mm(x, self.weight_dkv_kr)
+        down_q = torch.mm(x, self._matrix_nz[0])
+        down_kv_kr = torch.mm(x, self._matrix_nz[2])
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q,
@@ -111,7 +147,7 @@ class MlaPrologSerial:
             cache_kr_flat,
         )
 
-        up = torch.mm(normalized_q, self.weight_uq_qr)
+        up = torch.mm(normalized_q, self._matrix_nz[1])
         head_q = torch.empty((self.heads, rows, NOPE_DIM), device=self.device, dtype=torch.bfloat16)
         query_rope = torch.empty((rows, self.heads, ROPE_DIM), device=self.device, dtype=torch.bfloat16)
         self._vector(

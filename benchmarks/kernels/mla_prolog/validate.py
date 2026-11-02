@@ -132,9 +132,16 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
     if set(formats.values()) != {29}:
         raise AssertionError(f"baseline weights did not use documented NZ: {formats}")
     torch.npu.config.allow_internal_format = internal_format
+    torch.npu.synchronize()
+    allocated_before_prepare = torch.npu.memory_allocated()
+    prepare_begin = time.perf_counter_ns()
     candidate = MlaPrologSerial(
         device["wdq"], device["wuq"], device["wuk"], device["wdkv"], device["gq"], device["gkv"]
     )
+    torch.npu.synchronize()
+    prepare_us = (time.perf_counter_ns() - prepare_begin) / 1000
+    prepared_initial = candidate.prepared_weight_info()
+    prepared_allocated_bytes = torch.npu.memory_allocated() - allocated_before_prepare
     immutable_inputs = {name: value.cpu().clone() for name, value in device.items()}
     immutable_fused_weights = {name: value.cpu().clone() for name, value in fused_weights.items()}
     caches = {name: (initial_kv.npu(), initial_kr.npu()) for name in ("fused", "serial")}
@@ -174,6 +181,13 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         "case": case,
         "baseline_weight_formats": formats,
         "baseline_route": baseline_route,
+        "serial_weight_preparation": {
+            "contract": "Explicit NZ preparation; refresh_weights after source changes, outside Graph.",
+            "prepare_host_synchronized_us": prepare_us,
+            "allocated_bytes_delta": prepared_allocated_bytes,
+            "initial_weights": prepared_initial,
+            "refreshes": [],
+        },
         "checks": {},
         "timing": None,
     }
@@ -223,6 +237,21 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
             value.copy_(updated[name])
         for name, value in fused_weights.items():
             value.copy_(torch_npu.npu_format_cast(device[name], 29))
+        stream.synchronize()
+        refresh_begin = time.perf_counter_ns()
+        candidate.refresh_weights()
+        stream.synchronize()
+        refreshed = candidate.prepared_weight_info()
+        if refreshed != prepared_initial:
+            raise AssertionError("NZ refresh changed formats, captured addresses or storage sizes")
+        result["serial_weight_preparation"]["refreshes"].append(
+            {
+                "phase": "changed_data",
+                "host_synchronized_us": (time.perf_counter_ns() - refresh_begin) / 1000,
+                "stable_format_addresses_storage": True,
+                "weights": refreshed,
+            }
+        )
         updated_expected = oracle(updated, case["heads"], initial_kv, initial_kr)
         for name, graph in graphs.items():
             reset_caches()
@@ -235,6 +264,21 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
             value.copy_(data[name])
         for name, value in fused_weights.items():
             value.copy_(torch_npu.npu_format_cast(device[name], 29))
+        stream.synchronize()
+        refresh_begin = time.perf_counter_ns()
+        candidate.refresh_weights()
+        stream.synchronize()
+        refreshed = candidate.prepared_weight_info()
+        if refreshed != prepared_initial:
+            raise AssertionError("NZ restore changed formats, captured addresses or storage sizes")
+        result["serial_weight_preparation"]["refreshes"].append(
+            {
+                "phase": "restored_data",
+                "host_synchronized_us": (time.perf_counter_ns() - refresh_begin) / 1000,
+                "stable_format_addresses_storage": True,
+                "weights": refreshed,
+            }
+        )
         reset_caches()
         for graph in graphs.values():
             graph.replay()
