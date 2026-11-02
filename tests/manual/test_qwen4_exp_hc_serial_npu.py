@@ -77,9 +77,22 @@ def implementations(extension=None, weights="original"):
             torch.npu.synchronize()
             started = time.perf_counter()
             allocated_before = torch.npu.memory_allocated()
-            prepared = serial.prepare_weights(
-                inputs[4], inputs[5], backend=weights.replace("-", "_") if weights.startswith("singleton-gmm") else "mm"
-            )
+            # Isolated experiment process: baseline and execution retain the
+            # original internal-format=False mode. Enable only explicit packing.
+            nz = weights == "singleton-gmm-nz"
+            if nz:
+                torch_npu.npu.config.allow_internal_format = True
+            try:
+                prepared = serial.prepare_weights(
+                    inputs[4],
+                    inputs[5],
+                    backend=weights.replace("-", "_") if weights.startswith("singleton-gmm") else "mm",
+                )
+            finally:
+                if nz:
+                    torch_npu.npu.config.allow_internal_format = False
+            if nz and any(torch_npu.get_npu_format(t) != 29 for t in (prepared.down, prepared.up)):
+                raise RuntimeError("Explicit NZ preparation did not produce format 29")
             torch.npu.synchronize()
             elapsed = (time.perf_counter() - started) * 1e6
 
