@@ -80,7 +80,8 @@ private:
         PipeBarrier<PIPE_V>();
         ReduceSum(f2, f4, f3, width);
         PipeBarrier<PIPE_V>();
-        Muls(f2, f2, 1.0f / static_cast<float>(width), 8);
+        const float reciprocalWidth = width == QUERY_RANK ? (1.0f / 1536.0f) : (1.0f / 512.0f);
+        Muls(f2, f2, reciprocalWidth, 8);
         PipeBarrier<PIPE_V>();
         Adds(f2, f2, eps, 8);
         PipeBarrier<PIPE_V>();
