@@ -214,6 +214,7 @@ def check_case(case, timing):
     graphs, gout = {}, {}
     with torch.npu.stream(stream):
         for name, call in calls.items():
+            print("EAGER_BEGIN", case["id"], name, flush=True)
             for _ in range(10):
                 eager = call()
             stream.synchronize()
