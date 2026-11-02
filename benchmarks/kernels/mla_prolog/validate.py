@@ -183,9 +183,10 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         "case": case,
         "baseline_weight_formats": formats,
         "baseline_route": baseline_route,
-        "serial_pipeline": "merged-down-transpose-bmm",
+        "serial_pipeline": "merged-down-adaptive-linear-transpose-bmm",
+        "serial_matrix_route": candidate.matrix_route(case["batch"]),
         "serial_weight_preparation": {
-            "contract": "Explicit NZ preparation; refresh_weights after source changes, outside Graph.",
+            "contract": "Explicit NZ29/ND2 buffers; refresh_weights after source changes outside Graph.",
             "prepare_host_synchronized_us": prepare_us,
             "allocated_bytes_delta": prepared_allocated_bytes,
             "prepare_peak_extra_allocated_bytes": prepare_peak_extra_bytes,
@@ -247,7 +248,7 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         stream.synchronize()
         refreshed = candidate.prepared_weight_info()
         if refreshed != prepared_initial:
-            raise AssertionError("NZ refresh changed formats, captured addresses or storage sizes")
+            raise AssertionError("Prepared refresh changed formats, captured addresses or storage sizes")
         result["serial_weight_preparation"]["refreshes"].append(
             {
                 "phase": "changed_data",
@@ -274,7 +275,7 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         stream.synchronize()
         refreshed = candidate.prepared_weight_info()
         if refreshed != prepared_initial:
-            raise AssertionError("NZ restore changed formats, captured addresses or storage sizes")
+            raise AssertionError("Prepared restore changed formats, captured addresses or storage sizes")
         result["serial_weight_preparation"]["refreshes"].append(
             {
                 "phase": "restored_data",

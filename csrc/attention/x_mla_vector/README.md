@@ -46,9 +46,9 @@ repository's standard `vllm_ascend_C` target. The native adapter uses the existi
 implementation. Benchmark/Graph validation is in
 `benchmarks/kernels/mla_prolog/validate.py`; NPU ST and CPU guard UT accompany it.
 
-The wrapper explicitly prepares NZ matrix-weight copies at construction.
+The wrapper explicitly prepares NZ and transposed ND matrix-weight copies at construction.
 After changing source matrix data, call `refresh_weights()` on an ordered stream
-before replay. Refresh copies into the existing buffers, checks actual format29,
+before replay. Refresh copies into the existing buffers, checks actual formats29 and2,
 and preserves captured data pointers. Gamma and the final head matrix remain
 direct references. Reconstruct and recapture after weight addresses or
 shape/layout metadata changes. Preparation, refresh latency and extra storage
@@ -121,3 +121,13 @@ unchanged. No FP32 inverse-RMS auxiliary value is part of this public operator's
 observable outputs. Acceptance still uses the frozen independent FP64 reference
 and all same-address Graph/cache checks; approximate-instruction precision is
 not assumed to pass and the thresholds are not relaxed.
+
+Candidate10 selects public transposed-ND `F.linear` only when B>=16 and B is
+16-aligned; otherwise it retains public NZ `torch.mm`. This is a newly tested
+candidate, based on candidate8's shape-dependent regressions. It does not select
+historical best result rows. Both weight layouts are prepared explicitly, with
+stable-address refresh and physical-format checks for all four buffers. Their
+extra resident and peak allocation, preparation and update latency are reported.
+The selected route is captured in each result. All15 original cases, including
+B31/B32/B33, are rerun on this single source tree. The head-matrix route and own
+V arithmetic remain as candidate9.

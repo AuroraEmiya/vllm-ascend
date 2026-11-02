@@ -4,6 +4,7 @@
 import math
 
 import torch
+import torch.nn.functional as F
 import torch_npu
 
 QUERY_RANK = 1536
@@ -12,6 +13,7 @@ NOPE_DIM = 128
 ROPE_DIM = 64
 MAX_BATCH = 128
 FRACTAL_NZ = 29
+ND_FORMAT = 2
 ALLOWED_HIDDEN = (1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192)
 ALLOWED_HEADS = (1, 2, 4, 8, 16, 32, 64, 128)
 ALLOWED_BLOCK_SIZE = (16, 128)
@@ -38,10 +40,10 @@ def _check_tensor(tensor, shape, device, name, dtype=torch.bfloat16):
 
 
 class MlaPrologSerial:
-    """Decode implementation with explicitly prepared, address-stable NZ weights.
+    """Decode implementation with explicitly prepared, address-stable NZ and transposed ND weights.
 
     After changing any source matrix, call refresh_weights outside Graph replay.
-    The method updates existing NZ buffers without changing captured addresses.
+    The method updates existing NZ and ND buffers without changing captured addresses.
     Gamma and head-projection matrices remain direct references.
     Recreate this object and recapture when addresses, shapes or metadata change.
     Kernels support the decode subdomain documented in the accompanying README.
@@ -70,13 +72,17 @@ class MlaPrologSerial:
         self.weight_dq, self.weight_uq_qr, self.weight_uk = weight_dq, weight_uq_qr, weight_uk
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
-        self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in self._matrix_values())
+        values = self._matrix_values()
+        self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in values)
+        self._matrix_nd = tuple(torch_npu.npu_format_cast(value.t().contiguous(), ND_FORMAT) for value in values)
         self._check_prepared_formats()
         self.dummy = torch.empty(1, dtype=torch.bfloat16, device=self.device)
 
     def _check_prepared_formats(self):
         if any(torch_npu.get_npu_format(value) != FRACTAL_NZ for value in self._matrix_nz):
-            raise RuntimeError("prepared matrix weights require actual FRACTAL_NZ format29")
+            raise RuntimeError("prepared NZ matrix weights require actual FRACTAL_NZ format29")
+        if any(torch_npu.get_npu_format(value) != ND_FORMAT for value in self._matrix_nd):
+            raise RuntimeError("prepared transposed ND matrix weights require actual format2")
 
     def _matrix_values(self):
         return torch.cat((self.weight_dq, self.weight_dkv_kr), dim=1), self.weight_uq_qr
@@ -88,11 +94,12 @@ class MlaPrologSerial:
         this stream before a Graph replay on another stream. No synchronization
         or preparation occurs inside the captured forward.
         """
-        addresses = tuple(value.data_ptr() for value in self._matrix_nz)
-        for source, target in zip(self._matrix_values(), self._matrix_nz):
-            target.copy_(torch_npu.npu_format_cast(source, FRACTAL_NZ))
+        addresses = tuple(value.data_ptr() for value in self._matrix_nz + self._matrix_nd)
+        for source, nz_target, nd_target in zip(self._matrix_values(), self._matrix_nz, self._matrix_nd):
+            nz_target.copy_(torch_npu.npu_format_cast(source, FRACTAL_NZ))
+            nd_target.copy_(torch_npu.npu_format_cast(source.t().contiguous(), ND_FORMAT))
         self._check_prepared_formats()
-        if addresses != tuple(value.data_ptr() for value in self._matrix_nz):
+        if addresses != tuple(value.data_ptr() for value in self._matrix_nz + self._matrix_nd):
             raise RuntimeError("refresh changed captured weight addresses")
 
     def prepared_weight_info(self):
@@ -103,8 +110,15 @@ class MlaPrologSerial:
                 "data_ptr": value.data_ptr(),
                 "storage_bytes": value.untyped_storage().nbytes(),
             }
-            for name, value in zip(("wdq_wdkv", "wuq"), self._matrix_nz)
+            for name, value in zip(
+                ("wdq_wdkv_nz", "wuq_nz", "wdq_wdkv_t_nd", "wuq_t_nd"), self._matrix_nz + self._matrix_nd
+            )
         }
+
+    @staticmethod
+    def matrix_route(rows):
+        """Choose a public matrix route from static decode shape metadata."""
+        return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
         if token_x.ndim != 3 or token_x.shape[1] != 1 or not 1 <= token_x.shape[0] <= MAX_BATCH:
@@ -129,7 +143,8 @@ class MlaPrologSerial:
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
 
-        down_q_kv = torch.mm(x, self._matrix_nz[0])
+        use_linear = self.matrix_route(rows) == "nd_transposed_linear"
+        down_q_kv = F.linear(x, self._matrix_nd[0]) if use_linear else torch.mm(x, self._matrix_nz[0])
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q_kv,
@@ -148,7 +163,7 @@ class MlaPrologSerial:
             cache_kr_flat,
         )
 
-        up = torch.mm(normalized_q, self._matrix_nz[1])
+        up = F.linear(normalized_q, self._matrix_nd[1]) if use_linear else torch.mm(normalized_q, self._matrix_nz[1])
         head_q = torch.empty((self.heads, rows, NOPE_DIM), device=self.device, dtype=torch.bfloat16)
         query_rope = torch.empty((rows, self.heads, ROPE_DIM), device=self.device, dtype=torch.bfloat16)
         self._vector(
