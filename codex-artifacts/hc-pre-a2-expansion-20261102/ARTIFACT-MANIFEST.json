@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "baseline_source_commit": "1b8b0c398e96dd3f8f3408aacbb61085ae43fcfe",
+  "artifact_directory": "codex-artifacts/hc-pre-a2-expansion-20261102",
+  "scope": "Code and minimal execution/source configuration only; no timing or resource evidence",
+  "files": {
+    "LICENSE.CANN": {
+      "bytes": 5316,
+      "sha256": "76bb87f2aaf57119cbc2ad8cb36dda7158f9acd931bb3b08ccc8a408f1664369"
+    },
+    "README.md": {
+      "bytes": 3130,
+      "sha256": "06236df04a3d2b45365f20dc91be9ecdca0adc387c9542477e431c63bc827b6a"
+    },
+    "build_hc_a2.py": {
+      "bytes": 11160,
+      "sha256": "11e6a726eb85ec9960c6ed32b0ec347acb478c5898b5c1be192d55190d3e8930"
+    },
+    "capture_hc_a2_environment.py": {
+      "bytes": 5486,
+      "sha256": "1fe061fee8b3f8b9102787070ebcdbfc0504810ccd12828936464006c28613dc"
+    },
+    "case-config.json": {
+      "bytes": 51186,
+      "sha256": "94a5c29b372e6affeb7950653aefe513d2d96b706ac26766c0d4104b1cf012ac"
+    },
+    "check_hc_pair.py": {
+      "bytes": 9780,
+      "sha256": "4b17d971f7fedd88a22e8278e11922410d5df2cca6a2e5fa346824da8592662a"
+    },
+    "get_npu_arch.py": {
+      "bytes": 17948,
+      "sha256": "42e8322c7b7949fba507218a3e473cb54229ea0096552ced5279704261409486"
+    },
+    "hc_pre_aclnn_expansion.py": {
+      "bytes": 4185,
+      "sha256": "38689c8e6e89c2da7d5fbf3a2c143b19f41c8cff44f8bb26b403a536a53b5d91"
+    },
+    "inspect_hc_a2_package.py": {
+      "bytes": 2936,
+      "sha256": "1b61ecad30153a1a91c0028f26f690dca2175451b2c8a182960b442a0c8b9f4a"
+    },
+    "measure_hc_expansion.py": {
+      "bytes": 12705,
+      "sha256": "0a7a42b2e05c887955ebfe015509d5c48f84346b074d673459bb8c549124ec3d"
+    },
+    "pair_evidence.py": {
+      "bytes": 16367,
+      "sha256": "b665a21c5bc2c0cb393bee83ee0f1a90e81012426dd8b62ea6fa13290b2331f0"
+    },
+    "patches/hc-graph-adaptation.patch": {
+      "bytes": 1358,
+      "sha256": "c730042ec084fc42b94ba4ece2d7022786daedd7b4c8f2479ff455c410d86601"
+    },
+    "resource_guard_a2.py": {
+      "bytes": 4848,
+      "sha256": "044d57f11e8c4b0a6fc58867ba92266fded841bfb19d9d6f4c60938f62f171ee"
+    },
+    "ruff.toml": {
+      "bytes": 171,
+      "sha256": "7b8f399fad6906eebbb8dfb50ae31bf5aaa2efb408a2e2f6bbba00abc0d2e680"
+    },
+    "serial/hc_pre/kernel/CMakeLists.txt": {
+      "bytes": 3770,
+      "sha256": "7a60fc7c999135b007c9037e2e6a3b80a09cc5512879265edbd728512c5e4885"
+    },
+    "serial/hc_pre/kernel/op_host/hc_pre.cpp": {
+      "bytes": 15641,
+      "sha256": "a8f9e987203ce57cd961a3e5fba21cd540c3111aca64be3993b96d4e2d217a8f"
+    },
+    "serial/hc_pre/kernel/op_kernel/hc_pre_epilogue.cpp": {
+      "bytes": 21025,
+      "sha256": "7a89085d0b90e578247e491a1cd8bbe094023dd15ab572e49aa6c89eb0dff67c"
+    },
+    "serial/hc_pre/kernel/op_kernel/hc_pre_matmul.cpp": {
+      "bytes": 6792,
+      "sha256": "2c2b1571d90e8a6a3265aba139afd24ff582bd4bd0a4a501dba3aa8b51a6b874"
+    },
+    "serial/hc_pre/kernel/op_kernel/hc_pre_preprocess.cpp": {
+      "bytes": 12406,
+      "sha256": "223ac9f02247c6ba41c8569c1b31f93977a0a1e0aa4274e4b989e494a954fd6b"
+    },
+    "serial/hc_pre/kernel/ops.h": {
+      "bytes": 558,
+      "sha256": "534809a0e6c8d6c91bf8a5701d551d630c324923e7c7867cf601a3ae57cdf9cd"
+    },
+    "serial/hc_pre/kernel/register.cpp": {
+      "bytes": 432,
+      "sha256": "209484abf4f57413bca68bf28302eb5fa01231fa92f5bc8c78b634c1b9944c10"
+    },
+    "serial/hc_pre/kernel/utils/hc_pre_tiling.h": {
+      "bytes": 784,
+      "sha256": "576c6a1523b6402ad4c278dba18e1286db9084672aa7efa6915bfca2db57a491"
+    },
+    "serial/hc_pre/kernel/utils/torch_kernel_helper.h": {
+      "bytes": 3512,
+      "sha256": "4551c4cabb91a3918489b56048358f4ee8d7e4ca1cbdcbf1782eb45e3ad0f86c"
+    },
+    "serial/hc_pre/model.py": {
+      "bytes": 3802,
+      "sha256": "d3e7bdd18f75a74b94677a75f7efe9e1e21ec95b6126f391bc3eceb599ade2c2"
+    },
+    "source-config.json": {
+      "bytes": 4570,
+      "sha256": "a1999a5666355b9b1daff913891f376ae8a9f54f6289001d0e6ccb22047fea48"
+    }
+  },
+  "precision_acceptance": "DEFERRED_BY_USER",
+  "NPU_results_included": false
+}

@@ -1,0 +1,8 @@
+extend = "../../pyproject.toml"
+
+[format]
+exclude = ["get_npu_arch.py", "serial/**"]
+
+[lint.per-file-ignores]
+"get_npu_arch.py" = ["UP015", "UP031"]
+"serial/**" = ["ALL"]

@@ -1,0 +1,22 @@
+--- original/hc_pre.cpp
++++ adapted/hc_pre.cpp
+@@ -220,7 +220,18 @@
+     at::Tensor mmTilingCpu = at::empty({static_cast<int64_t>(sizeof(HcPreMatmulTilingHeader))},
+                                        at::device(at::kCPU).dtype(at::kByte));
+     std::memcpy(mmTilingCpu.data_ptr(), &mmHeader, sizeof(mmHeader));
+-    at::Tensor mmTilingNpu = mmTilingCpu.to(at::kPrivateUse1);  // blocking copy
++    // Graph preparation: retain constant per-shape/device tiling after eager setup.
++    // Device kernels and mathematical work are unchanged. Capture must be preceded
++    // by an eager setup call for each shape on the same thread/device.
++    static thread_local std::unordered_map<std::string, at::Tensor> graphTilingCache;
++    const std::string tilingKey = std::to_string(x.device().index()) + ":" +
++        std::to_string(B) + ":" + std::to_string(fanIn) + ":" +
++        std::to_string(mix) + ":" + std::to_string(ks) + ":" + std::to_string(kSeg);
++    auto foundTiling = graphTilingCache.find(tilingKey);
++    if (foundTiling == graphTilingCache.end()) {
++        foundTiling = graphTilingCache.emplace(tilingKey, mmTilingCpu.to(at::kPrivateUse1)).first;
++    }
++    at::Tensor mmTilingNpu = foundTiling->second;
+ 
+     // ---------------- K1 tiling ----------------
+     // Whole-row grid-stride schedule (one core owns whole rows so the per-row

@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "serial_source": "serial/hc_pre",
+  "serial_files": {
+    "kernel/CMakeLists.txt": "7a60fc7c999135b007c9037e2e6a3b80a09cc5512879265edbd728512c5e4885",
+    "kernel/ops.h": "534809a0e6c8d6c91bf8a5701d551d630c324923e7c7867cf601a3ae57cdf9cd",
+    "kernel/register.cpp": "209484abf4f57413bca68bf28302eb5fa01231fa92f5bc8c78b634c1b9944c10",
+    "kernel/op_host/hc_pre.cpp": "a8f9e987203ce57cd961a3e5fba21cd540c3111aca64be3993b96d4e2d217a8f",
+    "kernel/op_kernel/hc_pre_preprocess.cpp": "223ac9f02247c6ba41c8569c1b31f93977a0a1e0aa4274e4b989e494a954fd6b",
+    "kernel/op_kernel/hc_pre_matmul.cpp": "2c2b1571d90e8a6a3265aba139afd24ff582bd4bd0a4a501dba3aa8b51a6b874",
+    "kernel/op_kernel/hc_pre_epilogue.cpp": "7a89085d0b90e578247e491a1cd8bbe094023dd15ab572e49aa6c89eb0dff67c",
+    "kernel/utils/hc_pre_tiling.h": "576c6a1523b6402ad4c278dba18e1286db9084672aa7efa6915bfca2db57a491",
+    "kernel/utils/torch_kernel_helper.h": "4551c4cabb91a3918489b56048358f4ee8d7e4ca1cbdcbf1782eb45e3ad0f86c",
+    "model.py": "d3e7bdd18f75a74b94677a75f7efe9e1e21ec95b6126f391bc3eceb599ade2c2"
+  },
+  "provenance": [
+    {
+      "path": "kernel/CMakeLists.txt",
+      "archive_sha256": "7a60fc7c999135b007c9037e2e6a3b80a09cc5512879265edbd728512c5e4885",
+      "published_sha256": "7a60fc7c999135b007c9037e2e6a3b80a09cc5512879265edbd728512c5e4885",
+      "modified": false
+    },
+    {
+      "path": "kernel/ops.h",
+      "archive_sha256": "534809a0e6c8d6c91bf8a5701d551d630c324923e7c7867cf601a3ae57cdf9cd",
+      "published_sha256": "534809a0e6c8d6c91bf8a5701d551d630c324923e7c7867cf601a3ae57cdf9cd",
+      "modified": false
+    },
+    {
+      "path": "kernel/register.cpp",
+      "archive_sha256": "209484abf4f57413bca68bf28302eb5fa01231fa92f5bc8c78b634c1b9944c10",
+      "published_sha256": "209484abf4f57413bca68bf28302eb5fa01231fa92f5bc8c78b634c1b9944c10",
+      "modified": false
+    },
+    {
+      "path": "kernel/op_host/hc_pre.cpp",
+      "archive_sha256": "3689e26c21b7bfd86bd85f86510da54bb2decb88b1d0c4a19a53edb9a1ef15d7",
+      "published_sha256": "a8f9e987203ce57cd961a3e5fba21cd540c3111aca64be3993b96d4e2d217a8f",
+      "modified": true,
+      "adaptation": "patches/hc-graph-adaptation.patch"
+    },
+    {
+      "path": "kernel/op_kernel/hc_pre_preprocess.cpp",
+      "archive_sha256": "223ac9f02247c6ba41c8569c1b31f93977a0a1e0aa4274e4b989e494a954fd6b",
+      "published_sha256": "223ac9f02247c6ba41c8569c1b31f93977a0a1e0aa4274e4b989e494a954fd6b",
+      "modified": false
+    },
+    {
+      "path": "kernel/op_kernel/hc_pre_matmul.cpp",
+      "archive_sha256": "2c2b1571d90e8a6a3265aba139afd24ff582bd4bd0a4a501dba3aa8b51a6b874",
+      "published_sha256": "2c2b1571d90e8a6a3265aba139afd24ff582bd4bd0a4a501dba3aa8b51a6b874",
+      "modified": false
+    },
+    {
+      "path": "kernel/op_kernel/hc_pre_epilogue.cpp",
+      "archive_sha256": "7a89085d0b90e578247e491a1cd8bbe094023dd15ab572e49aa6c89eb0dff67c",
+      "published_sha256": "7a89085d0b90e578247e491a1cd8bbe094023dd15ab572e49aa6c89eb0dff67c",
+      "modified": false
+    },
+    {
+      "path": "kernel/utils/hc_pre_tiling.h",
+      "archive_sha256": "576c6a1523b6402ad4c278dba18e1286db9084672aa7efa6915bfca2db57a491",
+      "published_sha256": "576c6a1523b6402ad4c278dba18e1286db9084672aa7efa6915bfca2db57a491",
+      "modified": false
+    },
+    {
+      "path": "kernel/utils/torch_kernel_helper.h",
+      "archive_sha256": "4551c4cabb91a3918489b56048358f4ee8d7e4ca1cbdcbf1782eb45e3ad0f86c",
+      "published_sha256": "4551c4cabb91a3918489b56048358f4ee8d7e4ca1cbdcbf1782eb45e3ad0f86c",
+      "modified": false
+    },
+    {
+      "path": "model.py",
+      "archive_sha256": "d3e7bdd18f75a74b94677a75f7efe9e1e21ec95b6126f391bc3eceb599ade2c2",
+      "published_sha256": "d3e7bdd18f75a74b94677a75f7efe9e1e21ec95b6126f391bc3eceb599ade2c2",
+      "modified": false
+    }
+  ],
+  "graph_adaptation": {
+    "path": "patches/hc-graph-adaptation.patch",
+    "sha256": "c730042ec084fc42b94ba4ece2d7022786daedd7b4c8f2479ff455c410d86601",
+    "scope": "Existing per-thread/device/shape tiling cache for same-thread eager setup before graph capture; device mathematics unchanged."
+  },
+  "baseline_source_commit": "1b8b0c398e96dd3f8f3408aacbb61085ae43fcfe",
+  "source_kind": "Original user-supplied archived HC_Pre implementation plus explicitly recorded existing Graph host adaptation",
+  "license_notices": "Retain all original notices; LICENSE.CANN accompanies files declaring CANN Open Software License Agreement Version 2.0. No new origin or blanket license assertion is made for files without a notice."
+}
