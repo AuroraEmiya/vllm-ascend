@@ -303,8 +303,9 @@ if __name__ == "__main__":
     torch.npu.config.allow_internal_format = True
     manifest = json.loads(Path(__file__).with_name("cases.json").read_text())
     cases = [case for case in manifest["cases"] if not args.case_id or case["id"] in args.case_id]
-    if args.profile and len(cases) != 1:
-        parser.error("profiling requires exactly one selected case")
+    unknown_ids = set(args.case_id or ()) - {case["id"] for case in manifest["cases"]}
+    if not cases or unknown_ids:
+        parser.error(f"case selection is empty or unknown: {sorted(unknown_ids)}")
     report = {"protocol": manifest["protocol"], "cases": [], "identity": None}
     for case in cases:
         progress = {}
