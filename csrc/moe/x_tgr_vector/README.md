@@ -20,7 +20,9 @@ No inputs or caller-owned state are modified.
 
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model
-trace. The fused package is used only as an opaque runtime baseline. Its
+trace. Performance acceptance is decode only: `S=1`, with batch sizes
+`B=1,2,4,8,16,32,64,128,256`. No prefill performance claim is made.
+The fused package is used only as an opaque runtime baseline. Its
 implementation, tiling, golden tests and disassembly are not consulted.
 
 Public semantic references:

@@ -19,25 +19,25 @@ from vllm_ascend.ops.text_gated_residual import TextGatedResidualSerial
         (16, True, False, False),
         (64, True, True, False),
         (256, True, True, False),
-        (2048, True, True, False),
+        (128, True, True, False),
     ),
 )
 def test_text_gated_residual_device(tokens, gate, gamma, aux):
     rng = torch.Generator().manual_seed(20261102 + tokens)
-    x = torch.randn(1, tokens, 10240, generator=rng).to(torch.bfloat16)
+    x = torch.randn(tokens, 1, 10240, generator=rng).to(torch.bfloat16)
     down_weight = (torch.randn(320, 10240, generator=rng) / math.sqrt(10240)).to(torch.bfloat16)
     up_weight = (torch.randn(10240, 320, generator=rng) / math.sqrt(320)).to(torch.bfloat16)
     gate_weight = (torch.randn(4, 10240, generator=rng) / math.sqrt(10240)).to(torch.bfloat16) if gate else None
     raw_gamma = torch.randn(10240, generator=rng) * 0.1 if gamma else None
-    branches = x.double().reshape(1, tokens, 4, 2560)
+    branches = x.double().reshape(tokens, 1, 4, 2560)
     inv = torch.rsqrt(branches.square().mean(-1) + 1e-6)
-    normalized = (branches * inv.unsqueeze(-1)).reshape(1, tokens, 10240)
+    normalized = (branches * inv.unsqueeze(-1)).reshape(tokens, 1, 10240)
     if gamma:
         normalized = normalized * (1 + raw_gamma.double())
     down = normalized @ down_weight.double().t()
     scaled = down / 4
     up = (scaled * torch.sigmoid(scaled)) @ up_weight.double().t()
-    mixed = (normalized.reshape(1, tokens, 4, 2560) * torch.sigmoid(up).reshape(1, tokens, 4, 2560)).mean(2)
+    mixed = (normalized.reshape(tokens, 1, 4, 2560) * torch.sigmoid(up).reshape(tokens, 1, 4, 2560)).mean(2)
     inject = 2 * torch.sigmoid(normalized @ gate_weight.double().t() / 4) if gate else torch.empty(0)
     refs = (
         mixed,

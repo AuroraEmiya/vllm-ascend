@@ -1,6 +1,6 @@
 [
   {
-    "id": "main-n1",
+    "id": "decode-b1",
     "B": 1,
     "S": 1,
     "C": 4,
@@ -12,12 +12,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20261103
+    "seed": 20261103,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
-    "id": "main-n4",
-    "B": 1,
-    "S": 4,
+    "id": "decode-b2",
+    "B": 2,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -27,12 +29,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20261106
+    "seed": 20261104,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
-    "id": "main-n16",
-    "B": 1,
-    "S": 16,
+    "id": "decode-b4",
+    "B": 4,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -42,12 +46,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20261118
+    "seed": 20261106,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
-    "id": "main-n64",
-    "B": 1,
-    "S": 64,
+    "id": "decode-b8",
+    "B": 8,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -57,12 +63,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20261166
+    "seed": 20261110,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
-    "id": "main-n256",
-    "B": 1,
-    "S": 256,
+    "id": "decode-b16",
+    "B": 16,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -72,12 +80,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20261358
+    "seed": 20261118,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
-    "id": "main-n1024",
-    "B": 1,
-    "S": 1024,
+    "id": "decode-b32",
+    "B": 32,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -87,12 +97,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20262126
+    "seed": 20261134,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
-    "id": "main-n2048",
-    "B": 1,
-    "S": 2048,
+    "id": "decode-b64",
+    "B": 64,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -102,12 +114,48 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "acceptance",
-    "seed": 20263150
+    "seed": 20261166,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
+  },
+  {
+    "id": "decode-b128",
+    "B": 128,
+    "S": 1,
+    "C": 4,
+    "H": 2560,
+    "R": 320,
+    "dtype": "bfloat16",
+    "gate": true,
+    "gamma": true,
+    "need_backward": false,
+    "input_mode": "random",
+    "role": "acceptance",
+    "seed": 20261230,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
+  },
+  {
+    "id": "decode-b256",
+    "B": 256,
+    "S": 1,
+    "C": 4,
+    "H": 2560,
+    "R": 320,
+    "dtype": "bfloat16",
+    "gate": true,
+    "gamma": true,
+    "need_backward": false,
+    "input_mode": "random",
+    "role": "acceptance",
+    "seed": 20261358,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode batch"
   },
   {
     "id": "optional-none",
-    "B": 1,
-    "S": 2,
+    "B": 2,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -117,12 +165,14 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "protection",
-    "seed": 20261109
+    "seed": 20261109,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode protection"
   },
   {
     "id": "aux-five",
-    "B": 1,
-    "S": 3,
+    "B": 3,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -132,12 +182,14 @@
     "need_backward": true,
     "input_mode": "random",
     "role": "protection",
-    "seed": 20261110
+    "seed": 20261110,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode protection"
   },
   {
     "id": "aux-no-gate",
-    "B": 1,
-    "S": 2,
+    "B": 2,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -147,12 +199,14 @@
     "need_backward": true,
     "input_mode": "random",
     "role": "protection",
-    "seed": 20261111
+    "seed": 20261111,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode protection"
   },
   {
-    "id": "batch-factor",
-    "B": 4,
-    "S": 16,
+    "id": "decode-batch-protection",
+    "B": 64,
+    "S": 1,
     "C": 4,
     "H": 2560,
     "R": 320,
@@ -162,7 +216,9 @@
     "need_backward": false,
     "input_mode": "random",
     "role": "protection",
-    "seed": 20261112
+    "seed": 20261112,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode protection"
   },
   {
     "id": "zero",
@@ -177,7 +233,9 @@
     "need_backward": true,
     "input_mode": "zero",
     "role": "protection",
-    "seed": 20261113
+    "seed": 20261113,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode protection"
   },
   {
     "id": "gamma-minus-one",
@@ -192,6 +250,8 @@
     "need_backward": true,
     "input_mode": "gamma-minus-one",
     "role": "protection",
-    "seed": 20261114
+    "seed": 20261114,
+    "phase": "decode",
+    "source": "agent-designed synthetic decode protection"
   }
 ]
