@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
+import torch_npu
 
 
 class PreparedWeights:
     """Explicit load-time transpose; rebuild after any source weight update."""
 
-    def __init__(self, down: torch.Tensor, up: torch.Tensor):
+    def __init__(self, down: torch.Tensor, up: torch.Tensor, backend: str = "mm"):
+        if backend not in ("mm", "singleton_gmm"):
+            raise ValueError("Unsupported public HC matmul backend")
+        self.backend = backend
         self.sources = (down, up)
         self.versions = (down._version, up._version)
         self.down = down.t().contiguous()
@@ -28,9 +32,9 @@ class PreparedWeights:
             raise ValueError("HC weights changed; rebuild PreparedWeights")
 
 
-def prepare_weights(down: torch.Tensor, up: torch.Tensor) -> PreparedWeights:
+def prepare_weights(down: torch.Tensor, up: torch.Tensor, *, backend: str = "mm") -> PreparedWeights:
     """Run once after weight loading, outside forward and graph capture."""
-    return PreparedWeights(down, up)
+    return PreparedWeights(down, up, backend)
 
 
 def combine_and_mix(
@@ -68,12 +72,23 @@ def combine_and_mix(
     )
     if prepared_weights is not None:
         prepared_weights.check(down_weight, up_weight)
-        down = torch.mm(normalized, prepared_weights.down)
+        down = (
+            torch_npu.npu_grouped_matmul([normalized], [prepared_weights.down], split_item=0, group_type=-1)[0]
+            if prepared_weights.backend == "singleton_gmm"
+            else torch.mm(normalized, prepared_weights.down)
+        )
     else:
         down = F.linear(normalized, down_weight)
     lowrank = torch.ops._C_ascend.qwen_hc_silu(down[:, :rank], hc_count)
     next_injection = down[:, rank : rank + hc_count] if use_combine else None
-    gate = torch.mm(lowrank, prepared_weights.up) if prepared_weights is not None else F.linear(lowrank, up_weight)
+    if prepared_weights is not None:
+        gate = (
+            torch_npu.npu_grouped_matmul([lowrank], [prepared_weights.up], split_item=0, group_type=-1)[0]
+            if prepared_weights.backend == "singleton_gmm"
+            else torch.mm(lowrank, prepared_weights.up)
+        )
+    else:
+        gate = F.linear(lowrank, up_weight)
     block_input = torch.ops._C_ascend.qwen_hc_gate_mix(normalized, gate, hc_count)
     return combined, block_input, next_injection
 
