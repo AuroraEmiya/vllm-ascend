@@ -1,8 +1,166 @@
 {
   "schema_version": 1,
   "model": "Qwen3.8-Flash-Next",
-  "scope": "Two generated prefill token counts and original recorded decode token count; no production request distribution asserted",
   "cases": [
+    {
+      "id": "decode-m1-intermediate",
+      "m": 1,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m1-final",
+      "m": 1,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m16-intermediate",
+      "m": 16,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m16-final",
+      "m": 16,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m32-intermediate",
+      "m": 32,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m32-final",
+      "m": 32,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m64-intermediate",
+      "m": 64,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    },
+    {
+      "id": "decode-m64-final",
+      "m": 64,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "User-specified per-card decode M; geometry from formal Zhanlu HC parameter-consumer metadata; original Triton ABI",
+      "evidence_level": "Requested operational M + model weight structural metadata; to be verified on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified",
+      "source_node_ids": [
+        1960,
+        1967,
+        1975
+      ]
+    }
+  ],
+  "invalid_derivations": [
+    {
+      "case": "decode-b1",
+      "reason": "unchanged template shape relation produced nonpositive dimension",
+      "shape": [
+        -75,
+        10240
+      ],
+      "status": "INVALID_NOT_ACCEPTED"
+    },
+    {
+      "case": "decode-b16",
+      "reason": "unchanged template shape relation produced nonpositive dimension",
+      "shape": [
+        -75,
+        10240
+      ],
+      "status": "INVALID_NOT_ACCEPTED"
+    }
+  ],
+  "scope": "User selected decode per-card M1,16,32,64; intermediate and final mixers. M comes directly from user, K/H/R from formal template records, layout and function from pinned source. Device validation supplies runtime evidence.",
+  "exploratory_cases": [
     {
       "id": "prefill-s128-intermediate",
       "m": 128,
@@ -54,7 +212,9 @@
       "source_id": "prefill-s2048",
       "evidence_level": "A5 model structural metadata only; timing to be measured on A3",
       "eps_evidence": "explicit test configuration; model config value not yet verified"
-    },
+    }
+  ],
+  "superseded_decode_cases": [
     {
       "id": "decode-recorded16-intermediate",
       "m": 16,
@@ -80,26 +240,6 @@
       "source_node_id": 1967,
       "evidence_level": "original recorded A5 template shape; generated decode relations INVALID",
       "eps_evidence": "explicit test configuration; model config value not yet verified"
-    }
-  ],
-  "invalid_derivations": [
-    {
-      "case": "decode-b1",
-      "reason": "unchanged template shape relation produced nonpositive dimension",
-      "shape": [
-        -75,
-        10240
-      ],
-      "status": "INVALID_NOT_ACCEPTED"
-    },
-    {
-      "case": "decode-b16",
-      "reason": "unchanged template shape relation produced nonpositive dimension",
-      "shape": [
-        -75,
-        10240
-      ],
-      "status": "INVALID_NOT_ACCEPTED"
     }
   ]
 }

@@ -113,3 +113,7 @@ The registered HC-only target compiled on Ascend910_9362 with CANN9.2.0,
 Torch2.10.0 and torch_npu2.10.0.post7. Device correctness, graph speedup and task
 share must be taken from retained validation records. The per-job report records
 each candidate, failure, baseline identity, environment and remaining budget.
+
+## Decode acceptance scope
+
+The user selected per-card decode M=1,16,32,64, each with intermediate and final mixers. M is directly specified by the user; K4,H2560,R320 and the weight geometry are supported by the Zhanlu records. Device tests establish runtime validity. Prefill measurements are exploratory only. Invalid template decode relations remain preserved and are not used to infer these M values.
