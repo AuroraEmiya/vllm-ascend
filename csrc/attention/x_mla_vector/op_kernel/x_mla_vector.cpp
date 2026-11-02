@@ -193,6 +193,7 @@ extern "C" __global__ __aicore__ void x_mla_vector(GM_ADDR x, GM_ADDR aux, GM_AD
     GM_ADDR gamma_kv, GM_ADDR sin, GM_ADDR cos, GM_ADDR index, GM_ADDR y,
     GM_ADDR query_rope, GM_ADDR kv_cache, GM_ADDR kr_cache, GM_ADDR workspace, GM_ADDR tiling)
 {
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     REGISTER_TILING_DEFAULT(XMlaVectorTilingData);
     GET_TILING_DATA_WITH_STRUCT(XMlaVectorTilingData, data, tiling);
     MlaVector kernel;
