@@ -70,14 +70,16 @@ class MlaPrologSerial:
         self.weight_dq, self.weight_uq_qr, self.weight_uk = weight_dq, weight_uq_qr, weight_uk
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
-        self._matrix_sources = (weight_dq, weight_uq_qr, weight_dkv_kr)
-        self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in self._matrix_sources)
+        self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in self._matrix_values())
         self._check_prepared_formats()
         self.dummy = torch.empty(1, dtype=torch.bfloat16, device=self.device)
 
     def _check_prepared_formats(self):
         if any(torch_npu.get_npu_format(value) != FRACTAL_NZ for value in self._matrix_nz):
             raise RuntimeError("prepared matrix weights require actual FRACTAL_NZ format29")
+
+    def _matrix_values(self):
+        return torch.cat((self.weight_dq, self.weight_dkv_kr), dim=1), self.weight_uq_qr
 
     def refresh_weights(self):
         """Refresh all prepared matrices on the current stream, outside capture.
@@ -87,7 +89,7 @@ class MlaPrologSerial:
         or preparation occurs inside the captured forward.
         """
         addresses = tuple(value.data_ptr() for value in self._matrix_nz)
-        for source, target in zip(self._matrix_sources, self._matrix_nz):
+        for source, target in zip(self._matrix_values(), self._matrix_nz):
             target.copy_(torch_npu.npu_format_cast(source, FRACTAL_NZ))
         self._check_prepared_formats()
         if addresses != tuple(value.data_ptr() for value in self._matrix_nz):
@@ -101,7 +103,7 @@ class MlaPrologSerial:
                 "data_ptr": value.data_ptr(),
                 "storage_bytes": value.untyped_storage().nbytes(),
             }
-            for name, value in zip(("wdq", "wuq", "wdkv"), self._matrix_nz)
+            for name, value in zip(("wdq_wdkv", "wuq"), self._matrix_nz)
         }
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
@@ -127,18 +129,17 @@ class MlaPrologSerial:
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
 
-        down_q = torch.mm(x, self._matrix_nz[0])
-        down_kv_kr = torch.mm(x, self._matrix_nz[2])
+        down_q_kv = torch.mm(x, self._matrix_nz[0])
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
-            down_q,
-            down_kv_kr,
+            down_q_kv,
+            self.dummy,
             self.gamma_q,
             self.gamma_kv,
             sine,
             cosine,
             index,
-            0,
+            3,
             rows,
             slots,
             normalized_q,

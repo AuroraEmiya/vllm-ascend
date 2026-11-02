@@ -65,7 +65,7 @@ public:
             // The same UB buffers are reused after both previous consumers complete.
             Sync<HardEvent::V_MTE2>();
             Sync<HardEvent::MTE3_MTE2>();
-            if (t.mode == 0) NormAndCache(unit);
+            if (t.mode == 0 || t.mode == 3) NormAndCache(unit);
             else if (t.mode == 1) SplitAndRope(unit);
             else RestoreLayout(unit);
         }
@@ -147,7 +147,8 @@ private:
     {
         const uint32_t row = unit / 2;
         if ((unit & 1u) == 0) {
-            Normalize(xGm, row * QUERY_RANK, gammaQGm, QUERY_RANK, t.epsQ,
+            const uint32_t inputWidth = t.mode == 3 ? QUERY_RANK + KV_RANK + ROPE_DIM : QUERY_RANK;
+            Normalize(xGm, row * inputWidth, gammaQGm, QUERY_RANK, t.epsQ,
                 yGm, row * QUERY_RANK);
             return;
         }
@@ -159,10 +160,17 @@ private:
         // Invalid slots never produce out-of-bounds device accesses. The public
         // wrapper's setup checker rejects invalid/duplicate host metadata.
         if (slot < 0 || slot >= t.slots) return;
-        Normalize(auxGm, row * (KV_RANK + ROPE_DIM), gammaKvGm, KV_RANK, t.epsKv,
-            kvGm, static_cast<uint64_t>(slot) * KV_RANK);
-        Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row,
-            krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+        if (t.mode == 3) {
+            const uint64_t offset = row * (QUERY_RANK + KV_RANK + ROPE_DIM) + QUERY_RANK;
+            Normalize(xGm, offset, gammaKvGm, KV_RANK, t.epsKv,
+                kvGm, static_cast<uint64_t>(slot) * KV_RANK);
+            Rope(xGm, offset + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+        } else {
+            Normalize(auxGm, row * (KV_RANK + ROPE_DIM), gammaKvGm, KV_RANK, t.epsKv,
+                kvGm, static_cast<uint64_t>(slot) * KV_RANK);
+            Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row,
+                krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
+        }
     }
 
     __aicore__ inline void BroadcastHalf(const LocalTensor<float>& source)

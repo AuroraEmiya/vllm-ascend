@@ -134,6 +134,7 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
     torch.npu.config.allow_internal_format = internal_format
     torch.npu.synchronize()
     allocated_before_prepare = torch.npu.memory_allocated()
+    torch.npu.reset_peak_memory_stats()
     prepare_begin = time.perf_counter_ns()
     candidate = MlaPrologSerial(
         device["wdq"], device["wuq"], device["wuk"], device["wdkv"], device["gq"], device["gkv"]
@@ -142,6 +143,7 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
     prepare_us = (time.perf_counter_ns() - prepare_begin) / 1000
     prepared_initial = candidate.prepared_weight_info()
     prepared_allocated_bytes = torch.npu.memory_allocated() - allocated_before_prepare
+    prepare_peak_extra_bytes = torch.npu.max_memory_allocated() - allocated_before_prepare
     immutable_inputs = {name: value.cpu().clone() for name, value in device.items()}
     immutable_fused_weights = {name: value.cpu().clone() for name, value in fused_weights.items()}
     caches = {name: (initial_kv.npu(), initial_kr.npu()) for name in ("fused", "serial")}
@@ -181,10 +183,12 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         "case": case,
         "baseline_weight_formats": formats,
         "baseline_route": baseline_route,
+        "serial_pipeline": "merged-down-mm",
         "serial_weight_preparation": {
             "contract": "Explicit NZ preparation; refresh_weights after source changes, outside Graph.",
             "prepare_host_synchronized_us": prepare_us,
             "allocated_bytes_delta": prepared_allocated_bytes,
+            "prepare_peak_extra_allocated_bytes": prepare_peak_extra_bytes,
             "initial_weights": prepared_initial,
             "refreshes": [],
         },

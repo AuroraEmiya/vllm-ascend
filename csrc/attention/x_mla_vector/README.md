@@ -12,6 +12,8 @@ Mode 2 restores batch-major final query layout. For B=1, that final change is a
 contiguous view, so mode 2 is omitted. All remaining layouts count in Graph time.
 RoPE first places even positions before odd positions, then uses rotate-half;
 this convention was confirmed by a structured black-box probe.
+Mode 3 performs the same normalization and cache work as mode0 while reading
+the query and KV/KR projections from one contiguous `[B,2112]` input.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -43,7 +45,7 @@ repository's standard `vllm_ascend_C` target. The native adapter uses the existi
 implementation. Benchmark/Graph validation is in
 `benchmarks/kernels/mla_prolog/validate.py`; NPU ST and CPU guard UT accompany it.
 
-The wrapper explicitly prepares three NZ matrix-weight copies at construction.
+The wrapper explicitly prepares NZ matrix-weight copies at construction.
 After changing source matrix data, call `refresh_weights()` on an ordered stream
 before replay. Refresh copies into the existing buffers, checks actual format29,
 and preserves captured data pointers. Gamma and the final head matrix remain
@@ -70,3 +72,13 @@ update workload: this path assumes weights are prepared between updates.
 The benchmark explicitly refreshes after same-address source updates, checks
 NZ target addresses and physical formats again, and validates all outputs and
 cache state against the independent FP64 reference after replay.
+
+Candidate4 concatenates WDQ and WDKV_KR by output columns during explicit
+preparation and refresh, then uses a single public `torch.mm` to produce
+`[B,1536+512+64]`. Mode3 reads the correct row stride and column offsets directly;
+no sliced tensor is presented as contiguous and no layout copy is omitted from
+Graph. The up projection and final head bmm are unchanged. Preparation includes
+the concatenation and NZ conversion; persistent and peak extra allocation are
+recorded. All BF16 outputs and cache state after same-address weight refresh
+must pass the original independent FP64 thresholds, including any matmul
+rounding differences caused by the wider output matrix.
