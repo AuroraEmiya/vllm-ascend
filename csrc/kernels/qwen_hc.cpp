@@ -94,7 +94,13 @@ public:
             Cast(lr, x, RoundMode::CAST_RINT, p.hidden); PipeBarrier<PIPE_V>();
             Cast(x, lr, RoundMode::CAST_NONE, p.hidden); PipeBarrier<PIPE_V>();
             Mul(t, x, x, p.hidden); PipeBarrier<PIPE_V>();
-            ReduceSum(sc, t, ws, static_cast<int32_t>(p.hidden)); PipeBarrier<PIPE_V>();
+            if(p.hidden%512==0 && p.hidden<=4096) {
+                WholeReduceSum(ws,t,64,p.hidden/64,1,1,8); PipeBarrier<PIPE_V>();
+                WholeReduceSum(sc,ws,p.hidden/64,1,8,1,p.hidden/512);
+            } else {
+                ReduceSum(sc,t,ws,static_cast<int32_t>(p.hidden));
+            }
+            PipeBarrier<PIPE_V>();
             Muls(sc, sc, 1.0f / p.hidden, 8); PipeBarrier<PIPE_V>();
             Adds(sc, sc, p.eps, 8); PipeBarrier<PIPE_V>();
             Sqrt(sc, sc, 8); PipeBarrier<PIPE_V>();
@@ -247,9 +253,18 @@ public:
             Cast(lr,x,RoundMode::CAST_RINT,flat);PipeBarrier<PIPE_V>();
             Cast(x,lr,RoundMode::CAST_NONE,flat);PipeBarrier<PIPE_V>();
             Mul(t,x,x,flat);PipeBarrier<PIPE_V>();
-            for(uint32_t j=0;j<p.row_batch;j++) {
-                ReduceSum(sc[j*8],t[j*p.hidden],ws,static_cast<int32_t>(p.hidden));
+            if(p.hidden%512==0 && p.hidden<=4096) {
+                // Reduce [branches,H/64,64] in two V instructions.
+                // First-stage results are contiguous; second stage leaves
+                // each branch result at its own aligned 8-float block.
+                WholeReduceSum(ws,t,64,flat/64,1,1,8); PipeBarrier<PIPE_V>();
+                WholeReduceSum(sc,ws,p.hidden/64,p.row_batch,8,1,p.hidden/512);
                 PipeBarrier<PIPE_V>();
+            } else {
+                for(uint32_t j=0;j<p.row_batch;j++) {
+                    ReduceSum(sc[j*8],t[j*p.hidden],ws,static_cast<int32_t>(p.hidden));
+                    PipeBarrier<PIPE_V>();
+                }
             }
             const uint32_t scalars=p.row_batch*8;
             Muls(sc,sc,1.0f/p.hidden,scalars);PipeBarrier<PIPE_V>();
