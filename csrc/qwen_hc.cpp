@@ -92,7 +92,13 @@ at::Tensor silu(const at::Tensor& x,int64_t groups) {
     p.row_batch=(p.rows>40 && p.hidden<=4096 && p.hidden%16==0 &&
                  p.residual_stride>=p.hidden)?2:1;
     auto a=x.data_ptr(),b=result.data_ptr();
-    const uint32_t cores=std::min(A3_VECTOR_CORES,(p.rows+p.row_batch-1)/p.row_batch);
+        if(p.hidden==320 && p.row_batch==1) {
+        if(p.rows==1)p.tile=64;
+        else if(p.rows==16)p.tile=160;
+    }
+    const uint32_t tasks=p.row_batch>1?(p.rows+p.row_batch-1)/p.row_batch:
+        p.rows*((p.hidden+(p.tile?p.tile:p.hidden)-1)/(p.tile?p.tile:p.hidden));
+    const uint32_t cores=std::min(A3_VECTOR_CORES,tasks);
     at_npu::native::OpCommand cmd;cmd.Name("qwen_hc_silu");
     cmd.SetCustomHandler([=](){qwen_hc_silu_launch(cores,stream,a,b,p);return 0;});
     cmd.Run();return result;
@@ -109,7 +115,7 @@ at::Tensor gate_mix(const at::Tensor& x,const at::Tensor& gate,int64_t groups) {
     auto a=x.data_ptr(),b=gate.data_ptr(),c=result.data_ptr();
     uint32_t tile=GATE_TILE;
     if(p.groups<=8) {
-        const uint32_t preferred=p.rows<=1?512:(p.rows<=16?1280:2560);
+        const uint32_t preferred=p.rows<=1?128:(p.rows<=16?1280:2560);
         const uint32_t ub_bound=(160*1024/(12*p.groups+6))/16*16;
         tile=std::min(preferred,ub_bound);
         tile=std::min(tile,(p.hidden+15)/16*16);
