@@ -24,8 +24,9 @@ The kernel uses complete per-row FP32 RMS reductions, `Sqrt` plus `Div`, and BF1
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-UB allocation is43,040 bytes: four BF16 and five FP32 buffers of1536 elements
-plus32 bytes. V barriers order dependent vector operations; balanced hard events
+Mode 0/1 UB allocation is44,064 bytes: one2048-element BF16 buffer, three
+1536-element BF16 buffers, five1536-element FP32 buffers, and32 index bytes.
+Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
 order MTE2, V, scalar and MTE3, including buffer reuse. No cross-core dependency
 or barrier is required.
 
