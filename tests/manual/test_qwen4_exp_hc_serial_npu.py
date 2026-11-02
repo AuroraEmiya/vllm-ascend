@@ -45,7 +45,7 @@ def load_file(name, path):
     return module
 
 
-def implementations(extension=None):
+def implementations(extension=None, weights="original"):
     if extension:
         torch.ops.load_library(str(Path(extension).resolve()))
     elif not hasattr(torch.ops._C_ascend, "qwen_hc_combine_norm"):
@@ -68,7 +68,35 @@ def implementations(extension=None):
         gate = F.linear(lowrank, up)
         return combined, original.hc_gate_mix(normalized, gate, k), next_injection
 
-    return {"ascendc_serial": serial.combine_and_mix, "triton_serial": triton_serial}
+    def candidate(*inputs, **kw):
+        return serial.combine_and_mix(*inputs, **kw)
+
+    if weights == "pretransposed":
+        def bind(inputs):
+            torch.npu.synchronize()
+            started = time.perf_counter()
+            prepared = serial.prepare_weights(inputs[4], inputs[5])
+            torch.npu.synchronize()
+            elapsed = (time.perf_counter() - started) * 1e6
+
+            def bound(*values, **kw):
+                return serial.combine_and_mix(*values, prepared_weights=prepared, **kw)
+
+            bound.preparation = {
+                "kind": "explicit load-time contiguous transpose",
+                "wall_us": elapsed,
+                "retained_bytes": sum(t.numel()*t.element_size()
+                                      for t in (prepared.down, prepared.up)),
+                "rebuild_on": "source tensor identity or version change",
+            }
+            return bound
+        candidate.bind_inputs = bind
+    return {"ascendc_serial": candidate, "triton_serial": triton_serial}
+
+
+def bind_inputs(funcs, inputs):
+    return {label: (function.bind_inputs(inputs) if hasattr(function, "bind_inputs")
+                    else function) for label, function in funcs.items()}
 
 
 def make_inputs(case):
@@ -184,6 +212,7 @@ def capture(function, inputs, kw, calls=1):
 
 def validate_case(case, funcs):
     cpu, inputs, kw = make_inputs(case)
+    funcs = bind_inputs(funcs, inputs)
     expected = reference(cpu, kw)
     before = [None if x is None else x.cpu().clone() for x in inputs]
     results = {"id": case["id"], "case": case, "implementations": {}}
@@ -232,6 +261,7 @@ def timed_replays(graph, calls, repeats):
 
 def benchmark(case, funcs, samples=25, calls=8, repeats=4):
     _, inputs, kw = make_inputs(case)
+    funcs = bind_inputs(funcs, inputs)
     graphs = {}
     kept_outputs = {}
     for label, function in funcs.items():
@@ -247,7 +277,9 @@ def benchmark(case, funcs, samples=25, calls=8, repeats=4):
         for label in labels:
             raw[label].append(timed_replays(graphs[label], calls, repeats))
     medians = {label: statistics.median(values) for label, values in raw.items()}
-    return {"id": case["id"], "case": case, "graph_calls": calls,
+    return {"id": case["id"], "case": case,
+            "weight_preparation": getattr(funcs["ascendc_serial"], "preparation", None),
+            "graph_calls": calls,
             "replays_per_sample": repeats, "samples_us": raw, "medians_us": medians,
             "speedup": medians["triton_serial"] / medians["ascendc_serial"],
             "target": 1.5, "pass": medians["triton_serial"] / medians["ascendc_serial"] >= 1.5}
@@ -273,13 +305,14 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--mode", choices=("smoke", "validate", "bench", "profile"),
                         default="validate")
+    parser.add_argument("--weights", choices=("original", "pretransposed"), default="original")
     parser.add_argument("--case")
     parser.add_argument("--impl", choices=("ascendc_serial", "triton_serial"),
                         default="ascendc_serial")
     args = parser.parse_args()
     torch.set_num_threads(4)
     torch.npu.set_device(0)
-    funcs = implementations(args.extension)
+    funcs = implementations(args.extension, args.weights)
     cases = BOUNDARIES
     if args.cases:
         cases = json.loads(args.cases.read_text())["cases"]
@@ -289,7 +322,7 @@ def main():
             raise ValueError("Unknown case")
     if args.mode == "smoke":
         cases = [BOUNDARIES[0]]
-    result = {"mode": args.mode, "started": time.time(),
+    result = {"mode": args.mode, "weight_mode": args.weights, "started": time.time(),
               "torch": torch.__version__, "torch_npu": torch_npu.__version__,
               "soc": torch.npu.get_device_name(0), "cases": []}
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -301,7 +334,8 @@ def main():
             row = benchmark(case, funcs)
         else:
             _, inputs, kw = make_inputs(case)
-            graph, outputs = capture(funcs[args.impl], inputs, kw)
+            function = bind_inputs({args.impl: funcs[args.impl]}, inputs)[args.impl]
+            graph, outputs = capture(function, inputs, kw)
             for _ in range(5):
                 graph.replay()
             torch.npu.synchronize()

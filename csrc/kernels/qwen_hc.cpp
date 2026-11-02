@@ -130,7 +130,8 @@ public:
             Muls(t, x, -1.0f, p.hidden); PipeBarrier<PIPE_V>();
             Exp(t, t, p.hidden); PipeBarrier<PIPE_V>();
             Adds(t, t, 1.0f, p.hidden); PipeBarrier<PIPE_V>();
-            Div(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
+            Reciprocal(t, t, p.hidden); PipeBarrier<PIPE_V>();
+            Mul(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
             Cast(b, x, RoundMode::CAST_RINT, p.hidden);
             Sync<HardEvent::V_MTE3>();
             Store(out, row * p.hidden, b, p.hidden);
@@ -168,7 +169,8 @@ public:
                 Muls(t,t,-1.0f,count);PipeBarrier<PIPE_V>();
                 Exp(t,t,count);PipeBarrier<PIPE_V>();
                 Adds(t,t,1.0f,count);PipeBarrier<PIPE_V>();
-                Div(x,x,t,count);PipeBarrier<PIPE_V>();
+                Reciprocal(t,t,count);PipeBarrier<PIPE_V>();
+                Mul(x,x,t,count);PipeBarrier<PIPE_V>();
                 Add(acc,acc,x,count);PipeBarrier<PIPE_V>();
             }
             Muls(acc,acc,1.0f/p.groups,count);PipeBarrier<PIPE_V>();

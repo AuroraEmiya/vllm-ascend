@@ -117,3 +117,16 @@ each candidate, failure, baseline identity, environment and remaining budget.
 ## Decode acceptance scope
 
 The user selected per-card decode M=1,16,32,64, each with intermediate and final mixers. M is directly specified by the user; K4,H2560,R320 and the weight geometry are supported by the Zhanlu records. Device tests establish runtime validity. Prefill measurements are exploratory only. Invalid template decode relations remain preserved and are not used to infer these M values.
+
+## Explicit weight preparation
+
+The optional prepare_weights function creates contiguous transposed down/up
+weights after model weight loading. Pass its PreparedWeights object explicitly
+to combine_and_mix. Forward uses public torch.mm for this mode and checks source
+tensor identity and version. Rebuild after any source weight update; no hidden
+forward cache or conversion is used. The original F.linear mode remains available.
+
+The device harness accepts --weights pretransposed. It records the one-time
+preparation wall time and retained bytes separately from complete Graph latency.
+Correctness still uses the original input weights in the independent reference.
+This is a candidate optimization and requires per-shape device validation.

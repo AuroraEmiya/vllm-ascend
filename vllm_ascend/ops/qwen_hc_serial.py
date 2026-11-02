@@ -11,6 +11,28 @@ import torch
 import torch.nn.functional as F
 
 
+class PreparedWeights:
+    """Explicit load-time transpose; rebuild after any source weight update."""
+
+    def __init__(self, down: torch.Tensor, up: torch.Tensor):
+        self.sources = (down, up)
+        self.versions = (down._version, up._version)
+        self.down = down.t().contiguous()
+        self.up = up.t().contiguous()
+
+    def check(self, down: torch.Tensor, up: torch.Tensor) -> None:
+        if self.sources[0] is not down or self.sources[1] is not up:
+            raise ValueError("Prepared HC weights belong to different source tensors")
+        if self.versions != (down._version, up._version):
+            raise ValueError("HC weights changed; rebuild PreparedWeights")
+
+
+def prepare_weights(down: torch.Tensor, up: torch.Tensor) -> PreparedWeights:
+    """Run once after weight loading, outside forward and graph capture."""
+    return PreparedWeights(down, up)
+
+
+
 def combine_and_mix(
     residual: torch.Tensor,
     block_output: torch.Tensor,
@@ -22,6 +44,7 @@ def combine_and_mix(
     eps: float,
     hc_count: int,
     use_combine: bool = True,
+    prepared_weights: PreparedWeights | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Return (updated residual, next block input, next injection view).
 
@@ -43,10 +66,15 @@ def combine_and_mix(
     combined, normalized = torch.ops._C_ascend.qwen_hc_combine_norm(
         residual, block_output, previous_injection, norm_weight, eps, hc_count
     )
-    down = F.linear(normalized, down_weight)
+    if prepared_weights is not None:
+        prepared_weights.check(down_weight, up_weight)
+        down = torch.mm(normalized, prepared_weights.down)
+    else:
+        down = F.linear(normalized, down_weight)
     lowrank = torch.ops._C_ascend.qwen_hc_silu(down[:, :rank], hc_count)
     next_injection = down[:, rank : rank + hc_count] if use_combine else None
-    gate = F.linear(lowrank, up_weight)
+    gate = (torch.mm(lowrank, prepared_weights.up) if prepared_weights is not None
+            else F.linear(lowrank, up_weight))
     block_input = torch.ops._C_ascend.qwen_hc_gate_mix(normalized, gate, hc_count)
     return combined, block_input, next_injection
 
