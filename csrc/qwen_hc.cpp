@@ -80,7 +80,10 @@ at::Tensor silu(const at::Tensor& x,int64_t groups) {
     auto result=silu_meta(x,groups);if(!x.size(0))return result;
     HcParams p{};p.rows=x.size(0);p.hidden=x.size(1);p.groups=groups;p.residual_stride=x.stride(0);
     c10_npu::NPUGuard guard(x.device());auto stream=c10_npu::getCurrentNPUStream().stream();
-    auto a=x.data_ptr(),b=result.data_ptr();const uint32_t cores=std::min(A3_VECTOR_CORES,p.rows);
+    p.row_batch=(p.rows>40 && p.hidden<=4096 && p.hidden%16==0 &&
+                 p.residual_stride>=p.hidden)?2:1;
+    auto a=x.data_ptr(),b=result.data_ptr();
+    const uint32_t cores=std::min(A3_VECTOR_CORES,(p.rows+p.row_batch-1)/p.row_batch);
     at_npu::native::OpCommand cmd;cmd.Name("qwen_hc_silu");
     cmd.SetCustomHandler([=](){qwen_hc_silu_launch(cores,stream,a,b,p);return 0;});
     cmd.Run();return result;
@@ -95,7 +98,15 @@ at::Tensor gate_mix(const at::Tensor& x,const at::Tensor& gate,int64_t groups) {
     p.block_stride=gate.stride(0);
     c10_npu::NPUGuard guard(x.device());auto stream=c10_npu::getCurrentNPUStream().stream();
     auto a=x.data_ptr(),b=gate.data_ptr(),c=result.data_ptr();
-    const uint32_t cores=std::min(A3_VECTOR_CORES,p.rows*((p.hidden+GATE_TILE-1)/GATE_TILE));
+    uint32_t tile=GATE_TILE;
+    if(p.groups<=8) {
+        const uint32_t preferred=p.rows<=1?512:(p.rows<=16?1280:2560);
+        const uint32_t ub_bound=(160*1024/(12*p.groups+6))/16*16;
+        tile=std::min(preferred,ub_bound);
+        tile=std::min(tile,(p.hidden+15)/16*16);
+        p.tile=tile;
+    }
+    const uint32_t cores=std::min(A3_VECTOR_CORES,p.rows*((p.hidden+tile-1)/tile));
     at_npu::native::OpCommand cmd;cmd.Name("qwen_hc_gate_mix");
     cmd.SetCustomHandler([=](){qwen_hc_gate_mix_launch(cores,stream,a,b,c,p);return 0;});
     cmd.Run();return result;

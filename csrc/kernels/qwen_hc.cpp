@@ -42,9 +42,9 @@ public:
         w.SetGlobalBuffer((__gm__ T*)weight);
         s.SetGlobalBuffer((__gm__ T*)combined);
         n.SetGlobalBuffer((__gm__ T*)normalized);
-        const uint32_t size = Align(p.hidden);
+        const uint32_t size = (p.hidden + 63) / 64 * 64;
         TPipe pipe;
-        TBuf<TPosition::VECCALC> rt, bt, wt, nt, it, xf, tmp, work, small;
+        TBuf<TPosition::VECCALC> rt, bt, wt, nt, it, xf, tmp, work, small, broad;
         pipe.InitBuffer(rt, size * sizeof(T));
         pipe.InitBuffer(bt, size * sizeof(T));
         pipe.InitBuffer(wt, size * sizeof(T));
@@ -54,10 +54,12 @@ public:
         pipe.InitBuffer(tmp, size * sizeof(float));
         pipe.InitBuffer(work, size * sizeof(float));
         pipe.InitBuffer(small, 32 * sizeof(float));
+        pipe.InitBuffer(broad, 64 * sizeof(float));
         auto lr = rt.Get<T>(); auto lb = bt.Get<T>(); auto lw = wt.Get<T>();
         auto ln = nt.Get<T>(); auto li = it.Get<T>();
         auto x = xf.Get<float>(); auto t = tmp.Get<float>(); auto ws = work.Get<float>();
         auto sc = small.Get<float>();
+        auto bc = broad.Get<float>();
         for (uint32_t g = GetBlockIdx(); g < p.rows * p.groups; g += GetBlockNum()) {
             const uint32_t row = g / p.groups, group = g % p.groups;
             // Reuse is safe only after the previous MTE3 output finishes.
@@ -70,7 +72,6 @@ public:
             Cast(x, lr, RoundMode::CAST_NONE, p.hidden);
             Cast(t, lb, RoundMode::CAST_NONE, p.hidden);
             PipeBarrier<PIPE_V>();
-            float scale = 1.0f;
             if (p.has_injection) {
                 Cast(sc, li, RoundMode::CAST_NONE, 16);
                 PipeBarrier<PIPE_V>();
@@ -80,10 +81,14 @@ public:
                 Adds(sc, sc, 1.0f, 16); PipeBarrier<PIPE_V>();
                 Reciprocal(sc, sc, 16); PipeBarrier<PIPE_V>();
                 Muls(sc, sc, 2.0f, 16);
-                Sync<HardEvent::V_S>();
-                scale = sc.GetValue(0);
+                PipeBarrier<PIPE_V>();
+                // Brcb replicates the first FP32 value into one 32B block.
+                // Reuse that block in every lane/repeat, keeping the reduction
+                // result in V rather than stalling the scalar pipeline.
+                Brcb(bc, sc, 1, {1, 8}); PipeBarrier<PIPE_V>();
+                Mul(t, t, bc, uint64_t(64), (p.hidden + 63) / 64,
+                    {1, 1, 0, 8, 8, 0}); PipeBarrier<PIPE_V>();
             }
-            Muls(t, t, scale, p.hidden); PipeBarrier<PIPE_V>();
             Add(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
             // Preserve the original low-precision combine materialization before RMS.
             Cast(lr, x, RoundMode::CAST_RINT, p.hidden); PipeBarrier<PIPE_V>();
@@ -94,9 +99,10 @@ public:
             Adds(sc, sc, p.eps, 8); PipeBarrier<PIPE_V>();
             Sqrt(sc, sc, 8); PipeBarrier<PIPE_V>();
             Reciprocal(sc, sc, 8);
-            Sync<HardEvent::V_S>();
-            const float inverse_rms = sc.GetValue(0);
-            Muls(x, x, inverse_rms, p.hidden);
+            PipeBarrier<PIPE_V>();
+            Brcb(bc, sc, 1, {1, 8}); PipeBarrier<PIPE_V>();
+            Mul(x, x, bc, uint64_t(64), (p.hidden + 63) / 64,
+                {1, 1, 0, 8, 8, 0});
             Cast(t, lw, RoundMode::CAST_NONE, p.hidden); PipeBarrier<PIPE_V>();
             Mul(t, x, t, p.hidden); PipeBarrier<PIPE_V>();
             Add(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
@@ -181,6 +187,101 @@ public:
         Sync<HardEvent::MTE3_S>();
     }
 };
+template<typename T>
+class BatchedSilu {
+public:
+    __aicore__ inline void Run(GM_ADDR input, GM_ADDR output, HcParams p) {
+        GlobalTensor<T> in, out;
+        in.SetGlobalBuffer((__gm__ T*)input);
+        out.SetGlobalBuffer((__gm__ T*)output);
+        const uint32_t capacity = p.row_batch * p.hidden;
+        TPipe pipe;
+        TBuf<TPosition::VECCALC> it, ot, xf, tf;
+        pipe.InitBuffer(it, capacity * sizeof(T) + 256);
+        pipe.InitBuffer(ot, capacity * sizeof(T) + 256);
+        pipe.InitBuffer(xf, capacity * sizeof(float) + 256);
+        pipe.InitBuffer(tf, capacity * sizeof(float) + 256);
+        auto a=it.Get<T>(); auto b=ot.Get<T>();
+        auto x=xf.Get<float>(); auto t=tf.Get<float>();
+        const uint32_t tasks=(p.rows+p.row_batch-1)/p.row_batch;
+        for(uint32_t task=GetBlockIdx();task<tasks;task+=GetBlockNum()) {
+            const uint32_t row=task*p.row_batch;
+            const uint32_t rows=(p.rows-row<p.row_batch)?p.rows-row:p.row_batch;
+            const uint32_t count=rows*p.hidden;
+            Sync<HardEvent::MTE3_MTE2>();
+            DataCopyExtParams cp{static_cast<uint16_t>(rows),p.hidden*uint32_t(sizeof(T)),
+                (p.residual_stride-p.hidden)*uint32_t(sizeof(T)),0,0};
+            DataCopyPadExtParams<T> pad{false,0,0,0};
+            DataCopyPad(a,in[row*p.residual_stride],cp,pad);
+            Sync<HardEvent::MTE2_V>();
+            Cast(x,a,RoundMode::CAST_NONE,count); PipeBarrier<PIPE_V>();
+            Muls(x,x,1.0f/p.groups,count); PipeBarrier<PIPE_V>();
+            Muls(t,x,-1.0f,count); PipeBarrier<PIPE_V>();
+            Exp(t,t,count); PipeBarrier<PIPE_V>();
+            Adds(t,t,1.0f,count); PipeBarrier<PIPE_V>();
+            Reciprocal(t,t,count); PipeBarrier<PIPE_V>();
+            Mul(x,x,t,count); PipeBarrier<PIPE_V>();
+            Cast(b,x,RoundMode::CAST_RINT,count);
+            Sync<HardEvent::V_MTE3>();
+            Store(out,row*p.hidden,b,count);
+        }
+        Sync<HardEvent::MTE3_S>();
+    }
+};
+
+// HC count is small in the model. Batch [K,tile] DMA and activation instead of
+// issuing a separate copy/activation/synchronization chain for every branch.
+template<typename T>
+class BatchedGateMix {
+public:
+    __aicore__ inline void Run(GM_ADDR values, GM_ADDR gates, GM_ADDR output,HcParams p) {
+        GlobalTensor<T> in, gate, out;
+        in.SetGlobalBuffer((__gm__ T*)values);
+        gate.SetGlobalBuffer((__gm__ T*)gates);
+        out.SetGlobalBuffer((__gm__ T*)output);
+        TPipe pipe;
+        TBuf<TPosition::VECCALC> it,gt,ot,xf,tf,af;
+        const uint32_t capacity=p.groups*p.tile;
+        pipe.InitBuffer(it,capacity*sizeof(T)+256);
+        pipe.InitBuffer(gt,capacity*sizeof(T)+256);
+        pipe.InitBuffer(ot,p.tile*sizeof(T)+256);
+        pipe.InitBuffer(xf,capacity*sizeof(float)+256);
+        pipe.InitBuffer(tf,capacity*sizeof(float)+256);
+        pipe.InitBuffer(af,p.tile*sizeof(float)+256);
+        auto a=it.Get<T>(); auto b=gt.Get<T>(); auto o=ot.Get<T>();
+        auto x=xf.Get<float>();auto t=tf.Get<float>();auto acc=af.Get<float>();
+        const uint32_t tiles=(p.hidden+p.tile-1)/p.tile;
+        for(uint32_t task=GetBlockIdx();task<p.rows*tiles;task+=GetBlockNum()) {
+            const uint32_t row=task/tiles,offset=(task%tiles)*p.tile;
+            const uint32_t count=(p.hidden-offset<p.tile)?p.hidden-offset:p.tile;
+            const uint32_t aligned=Align(count), flat=p.groups*aligned;
+            Sync<HardEvent::MTE3_MTE2>();
+            DataCopyExtParams cp{static_cast<uint16_t>(p.groups),count*uint32_t(sizeof(T)),
+                (p.hidden-count)*uint32_t(sizeof(T)),0,0};
+            DataCopyPadExtParams<T> pad{true,0,static_cast<uint8_t>(aligned-count),0};
+            DataCopyPad(a,in[row*p.residual_stride+offset],cp,pad);
+            DataCopyPad(b,gate[row*p.block_stride+offset],cp,pad);
+            Sync<HardEvent::MTE2_V>();
+            Cast(x,a,RoundMode::CAST_NONE,flat);
+            Cast(t,b,RoundMode::CAST_NONE,flat); PipeBarrier<PIPE_V>();
+            Muls(t,t,-1.0f,flat); PipeBarrier<PIPE_V>();
+            Exp(t,t,flat); PipeBarrier<PIPE_V>();
+            Adds(t,t,1.0f,flat); PipeBarrier<PIPE_V>();
+            Reciprocal(t,t,flat); PipeBarrier<PIPE_V>();
+            Mul(x,x,t,flat); PipeBarrier<PIPE_V>();
+            Duplicate(acc,0.0f,count); PipeBarrier<PIPE_V>();
+            // Preserve the previous ordered FP32 HC accumulation.
+            for(uint32_t k=0;k<p.groups;k++) {
+                Add(acc,acc,x[k*aligned],count); PipeBarrier<PIPE_V>();
+            }
+            Muls(acc,acc,1.0f/p.groups,count); PipeBarrier<PIPE_V>();
+            Cast(o,acc,RoundMode::CAST_RINT,count);
+            Sync<HardEvent::V_MTE3>();
+            Store(out,row*p.hidden+offset,o,count);
+        }
+        Sync<HardEvent::MTE3_S>();
+    }
+};
 } // namespace
 
 extern "C" __global__ __aicore__ void qwen_hc_combine_norm(
@@ -190,11 +291,19 @@ extern "C" __global__ __aicore__ void qwen_hc_combine_norm(
 }
 extern "C" __global__ __aicore__ void qwen_hc_silu(GM_ADDR x,GM_ADDR y,HcParams p) {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    HcSilu<bfloat16_t> kernel;kernel.Run(x,y,p);
+    if(p.row_batch>1) {
+        BatchedSilu<bfloat16_t> kernel;kernel.Run(x,y,p);
+    } else {
+        HcSilu<bfloat16_t> kernel;kernel.Run(x,y,p);
+    }
 }
 extern "C" __global__ __aicore__ void qwen_hc_gate_mix(GM_ADDR x,GM_ADDR g,GM_ADDR y,HcParams p) {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    GateMix<bfloat16_t> kernel;kernel.Run(x,g,y,p);
+    if(p.tile>0 && p.groups<=8) {
+        BatchedGateMix<bfloat16_t> kernel;kernel.Run(x,g,y,p);
+    } else {
+        GateMix<bfloat16_t> kernel;kernel.Run(x,g,y,p);
+    }
 }
 void qwen_hc_combine_norm_launch(uint32_t cores, void* stream,void* r,void* b,void* i,
                                 void* w,void* s,void* n,HcParams p) {
