@@ -75,6 +75,7 @@ def projections(data, heads):
 
 def run_probe(args):
     torch.npu.set_device(0)
+    torch.npu.config.allow_internal_format = True
     data = make_data(args.batch, args.hidden, args.heads)
     device = {name: tensor.npu() for name, tensor in data.items()}
     weights_nz = {name: torch_npu.npu_format_cast(device[name], 29) for name in ("wdq", "wuq", "wdkv")}
@@ -83,8 +84,18 @@ def run_probe(args):
     kv = torch.full((*cache_shape, KV_RANK), 0.125, dtype=torch.bfloat16, device="npu")
     kr = torch.full((*cache_shape, ROPE_DIM), -0.125, dtype=torch.bfloat16, device="npu")
     outputs = torch_npu.npu_mla_prolog(
-        device["x"], weights_nz["wdq"], weights_nz["wuq"], device["wuk"], weights_nz["wdkv"],
-        device["gq"], device["gkv"], device["sin"], device["cos"], device["index"], kv, kr,
+        device["x"],
+        weights_nz["wdq"],
+        weights_nz["wuq"],
+        device["wuk"],
+        weights_nz["wdkv"],
+        device["gq"],
+        device["gkv"],
+        device["sin"],
+        device["cos"],
+        device["index"],
+        kv,
+        kr,
     )
     torch.npu.synchronize()
     query, qr, expected_kv, raw_kr = projections(data, args.heads)
@@ -107,19 +118,35 @@ def run_probe(args):
     touched = torch.zeros(slots, dtype=torch.bool)
     touched[data["index"].flatten()] = True
     maps = Path("/proc/self/maps").read_text().splitlines()
-    libs = sorted({row.split()[-1] for row in maps if row.split()[-1].endswith(".so") and ("opapi" in row or "torch_npu" in row)})
+    libs = sorted(
+        {row.split()[-1] for row in maps if row.split()[-1].endswith(".so") and ("opapi" in row or "torch_npu" in row)}
+    )
     return {
         "schema": str(torch.ops.npu.npu_mla_prolog.default._schema),
-        "torch": torch.__version__, "torch_npu": torch_npu.__version__,
-        "batch": args.batch, "hidden": args.hidden, "heads": args.heads,
-        "outputs": [{"shape": list(out.shape), "dtype": str(out.dtype), "aliases_kv": out.data_ptr() == kv.data_ptr(),
-                     "aliases_kr": out.data_ptr() == kr.data_ptr()} for out in outputs],
+        "torch": torch.__version__,
+        "torch_npu": torch_npu.__version__,
+        "batch": args.batch,
+        "hidden": args.hidden,
+        "heads": args.heads,
+        "outputs": [
+            {
+                "shape": list(out.shape),
+                "dtype": str(out.dtype),
+                "aliases_kv": out.data_ptr() == kv.data_ptr(),
+                "aliases_kr": out.data_ptr() == kr.data_ptr(),
+            }
+            for out in outputs
+        ],
         "query": compare(outputs[0], query),
         "kv_cache_written": compare(cache_kv, expected_kv.flatten(0, 1)),
+        "returned_kv_matches_input": torch.equal(outputs[2].cpu(), kv.cpu()),
+        "returned_kr_matches_input": torch.equal(outputs[3].cpu(), kr.cpu()),
         "rope_variants": variants,
         "kv_unwritten_exact": bool((kv.cpu().reshape(-1, KV_RANK)[~touched] == 0.125).all()),
         "kr_unwritten_exact": bool((kr.cpu().reshape(-1, ROPE_DIM)[~touched] == -0.125).all()),
-        "loaded_libraries": [{"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()} for path in libs],
+        "loaded_libraries": [
+            {"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()} for path in libs
+        ],
     }
 
 

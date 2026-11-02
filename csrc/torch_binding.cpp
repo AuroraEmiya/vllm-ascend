@@ -29,6 +29,7 @@
 #include <torch_npu/csrc/npu/Module.h>
 #include "ops.h"
 #include "utils.h"
+#include "attention/x_mla_vector/x_mla_vector_torch_adpt.h"
 #include "aclnn_torch_adapter/op_api_common.h"
 #include "moe/add_rms_norm_bias/add_rms_norm_bias_torch_adpt.h"
 #include "moe/rms_norm_cast/rms_norm_cast_torch_adpt.h"
@@ -3215,6 +3216,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "-> (Tensor y ,Tensor rstd, Tensor x)"
         );
     ops.impl("npu_add_rms_norm_bias", torch::kPrivateUse1, &vllm_ascend::npu_add_rms_norm_bias);
+    ops.def("mla_prolog_vector_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
+            "Tensor sine, Tensor cosine, Tensor index, int mode, int rows, int heads, int cache_slots, "
+            "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "
+            "Tensor(c!) kv_cache, Tensor(d!) kr_cache) -> ()");
+    ops.impl("mla_prolog_vector_out", torch::kPrivateUse1, &vllm_ascend::mla_prolog_vector_out);
 
     ops.def(
         "npu_rms_norm_cast(Tensor x, Tensor gamma, float epsilon=1e-6)"

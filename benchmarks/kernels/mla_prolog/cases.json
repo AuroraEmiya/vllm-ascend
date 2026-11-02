@@ -1,0 +1,167 @@
+{
+  "protocol": {
+    "phase": "decode",
+    "sequence": 1,
+    "calls_per_graph": 10,
+    "eager_warmup": 10,
+    "graph_warmup": 10,
+    "paired_ab_ba_samples": 20,
+    "metric": "fused_graph_us / serial_graph_us",
+    "target": 1.5,
+    "floor": 1.0,
+    "max_candidates": 10,
+    "precision": {
+      "bf16_atol": 0.015625,
+      "bf16_rtol": 0.015625,
+      "matched_ratio": 0.99,
+      "max_abs_error": 1.0,
+      "untouched_inputs_caches": "exact"
+    },
+    "cache_measurement": "independent same-value initial caches; repeated overwrite of the same valid distinct slots is idempotent",
+    "cv": "separate full msprof: all Matmul task durations C, all other execution task durations V; c_share_pct=100*C/(C+V)"
+  },
+  "cases": [
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b1",
+      "batch": 1,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b2",
+      "batch": 2,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b4",
+      "batch": 4,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b8",
+      "batch": 8,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b16",
+      "batch": 16,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b32",
+      "batch": 32,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b64",
+      "batch": 64,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "decode-b128",
+      "batch": 128,
+      "role": "acceptance"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-tail-b3",
+      "batch": 3,
+      "role": "protected",
+      "index_mode": "reverse"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-tail-b31",
+      "batch": 31,
+      "role": "protected",
+      "index_mode": "reverse"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-tail-b33",
+      "batch": 33,
+      "role": "protected",
+      "index_mode": "reverse"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-zero-x",
+      "batch": 3,
+      "zeros": true,
+      "role": "protected"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-zero-gamma",
+      "batch": 3,
+      "zero_gamma": true,
+      "role": "protected"
+    },
+    {
+      "hidden": 7168,
+      "heads": 32,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-page-edges",
+      "batch": 3,
+      "block_size": 128,
+      "index_mode": "edges",
+      "role": "protected"
+    },
+    {
+      "hidden": 1024,
+      "heads": 1,
+      "seed": 20261102,
+      "source": "synthetic public-contract decode, not a model trace",
+      "id": "guard-min-hidden-heads",
+      "batch": 3,
+      "role": "protected"
+    }
+  ]
+}
