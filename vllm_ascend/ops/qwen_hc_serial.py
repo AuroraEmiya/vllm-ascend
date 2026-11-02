@@ -10,34 +10,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-import torch_npu
-
-
-class PreparedWeights:
-    """Explicit load-time transpose; rebuild after any source weight update."""
-
-    def __init__(self, down: torch.Tensor, up: torch.Tensor, backend: str = "mm"):
-        if backend not in ("mm", "singleton_gmm", "singleton_gmm_nz"):
-            raise ValueError("Unsupported public HC matmul backend")
-        self.backend = backend
-        self.sources = (down, up)
-        self.versions = (down._version, up._version)
-        self.down = down.t().contiguous()
-        self.up = up.t().contiguous()
-        if backend == "singleton_gmm_nz":
-            self.down = torch_npu.npu_format_cast(self.down, 29)
-            self.up = torch_npu.npu_format_cast(self.up, 29)
-
-    def check(self, down: torch.Tensor, up: torch.Tensor) -> None:
-        if self.sources[0] is not down or self.sources[1] is not up:
-            raise ValueError("Prepared HC weights belong to different source tensors")
-        if self.versions != (down._version, up._version):
-            raise ValueError("HC weights changed; rebuild PreparedWeights")
-
-
-def prepare_weights(down: torch.Tensor, up: torch.Tensor, *, backend: str = "mm") -> PreparedWeights:
-    """Run once after weight loading, outside forward and graph capture."""
-    return PreparedWeights(down, up, backend)
 
 
 def combine_and_mix(
@@ -51,7 +23,6 @@ def combine_and_mix(
     eps: float,
     hc_count: int,
     use_combine: bool = True,
-    prepared_weights: PreparedWeights | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Return (updated residual, next block input, next injection view).
 
@@ -73,25 +44,10 @@ def combine_and_mix(
     combined, normalized = torch.ops._C_ascend.qwen_hc_combine_norm(
         residual, block_output, previous_injection, norm_weight, eps, hc_count
     )
-    if prepared_weights is not None:
-        prepared_weights.check(down_weight, up_weight)
-        down = (
-            torch_npu.npu_grouped_matmul([normalized], [prepared_weights.down], split_item=0, group_type=-1)[0]
-            if prepared_weights.backend.startswith("singleton_gmm")
-            else torch.mm(normalized, prepared_weights.down)
-        )
-    else:
-        down = F.linear(normalized, down_weight)
+    down = F.linear(normalized, down_weight)
     lowrank = torch.ops._C_ascend.qwen_hc_silu(down[:, :rank], hc_count)
     next_injection = down[:, rank : rank + hc_count] if use_combine else None
-    if prepared_weights is not None:
-        gate = (
-            torch_npu.npu_grouped_matmul([lowrank], [prepared_weights.up], split_item=0, group_type=-1)[0]
-            if prepared_weights.backend.startswith("singleton_gmm")
-            else torch.mm(lowrank, prepared_weights.up)
-        )
-    else:
-        gate = F.linear(lowrank, up_weight)
+    gate = F.linear(lowrank, up_weight)
     block_input = torch.ops._C_ascend.qwen_hc_gate_mix(normalized, gate, hc_count)
     return combined, block_input, next_injection
 

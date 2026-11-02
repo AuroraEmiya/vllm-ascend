@@ -120,30 +120,26 @@ public:
     __aicore__ inline void Run(GM_ADDR input, GM_ADDR output, HcParams p) {
         GlobalTensor<T> in, out;
         in.SetGlobalBuffer((__gm__ T*)input); out.SetGlobalBuffer((__gm__ T*)output);
-        const uint32_t tile=p.tile?p.tile:p.hidden;
-        const uint32_t chunks=(p.hidden+tile-1)/tile;
-        const uint32_t size=Align(tile);
-        TPipe pipe; TBuf<TPosition::VECCALC> it,ot,xf,tf;
-        pipe.InitBuffer(it,size*sizeof(T));pipe.InitBuffer(ot,size*sizeof(T));
-        pipe.InitBuffer(xf,size*4);pipe.InitBuffer(tf,size*4);
-        auto a=it.Get<T>();auto b=ot.Get<T>();
-        auto x=xf.Get<float>();auto t=tf.Get<float>();
-        for(uint32_t task=GetBlockIdx();task<p.rows*chunks;task+=GetBlockNum()) {
-            const uint32_t row=task/chunks,offset=(task%chunks)*tile;
-            const uint32_t count=(p.hidden-offset<tile)?p.hidden-offset:tile;
+        TPipe pipe; TBuf<TPosition::VECCALC> it, ot, xf, tf;
+        const uint32_t size = Align(p.hidden);
+        pipe.InitBuffer(it, size * sizeof(T)); pipe.InitBuffer(ot, size * sizeof(T));
+        pipe.InitBuffer(xf, size * 4); pipe.InitBuffer(tf, size * 4);
+        auto a = it.Get<T>(); auto b = ot.Get<T>();
+        auto x = xf.Get<float>(); auto t = tf.Get<float>();
+        for (uint32_t row = GetBlockIdx(); row < p.rows; row += GetBlockNum()) {
             Sync<HardEvent::MTE3_MTE2>();
-            Load(a,in,row*p.residual_stride+offset,count);
+            Load(a, in, row * p.residual_stride, p.hidden);
             Sync<HardEvent::MTE2_V>();
-            Cast(x,a,RoundMode::CAST_NONE,count);PipeBarrier<PIPE_V>();
-            Muls(x,x,1.0f/p.groups,count);PipeBarrier<PIPE_V>();
-            Muls(t,x,-1.0f,count);PipeBarrier<PIPE_V>();
-            Exp(t,t,count);PipeBarrier<PIPE_V>();
-            Adds(t,t,1.0f,count);PipeBarrier<PIPE_V>();
-            Reciprocal(t,t,count);PipeBarrier<PIPE_V>();
-            Mul(x,x,t,count);PipeBarrier<PIPE_V>();
-            Cast(b,x,RoundMode::CAST_RINT,count);
+            Cast(x, a, RoundMode::CAST_NONE, p.hidden); PipeBarrier<PIPE_V>();
+            Muls(x, x, 1.0f / p.groups, p.hidden); PipeBarrier<PIPE_V>();
+            Muls(t, x, -1.0f, p.hidden); PipeBarrier<PIPE_V>();
+            Exp(t, t, p.hidden); PipeBarrier<PIPE_V>();
+            Adds(t, t, 1.0f, p.hidden); PipeBarrier<PIPE_V>();
+            Reciprocal(t, t, p.hidden); PipeBarrier<PIPE_V>();
+            Mul(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
+            Cast(b, x, RoundMode::CAST_RINT, p.hidden);
             Sync<HardEvent::V_MTE3>();
-            Store(out,row*p.hidden+offset,b,count);
+            Store(out, row * p.hidden, b, p.hidden);
         }
         Sync<HardEvent::MTE3_S>();
     }

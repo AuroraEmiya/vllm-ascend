@@ -1,61 +1,72 @@
 # Qwen3.8 Flash Next HC serial Ascend C path
 
-This A3 BF16 implementation keeps both projections on public PyTorch linear
-interfaces and implements the three vector stages in Ascend C. It targets the
-Qwen4Exp-named HC path used by Qwen3.8 Flash Next.
+The implementation provides three Ascend C Vector kernels and two independent
+public PyTorch linear calls on A3. It implements the Qwen4Exp-named HC path used
+by Qwen3.8 Flash Next. Down and Up stay separate, with a BF16 SiLU stage between
+them. This development implementation does not claim the 1.5x performance goal.
 
 ## Functional boundary
 
-Let K be the stream count, H the per-stream width, D=K*H, and R the low rank.
-Inputs are residual [M,D], previous block output [M,H], optional previous
-injection [M,K], contiguous norm weight with H or D elements, down weight and up
-weight [D,R], plus epsilon, K and the final/intermediate mixer flag.
+Let K be the HC stream count, H the per-stream width, D=K*H, and R the low rank.
+The complete inputs are:
 
-The complete result has three values:
+| Input | Shape |
+| --- | --- |
+| residual | [M,D] |
+| previous block output | [M,H] |
+| previous injection | [M,K] or None |
+| norm weight | H or D contiguous elements |
+| down weight | [R+K+P,D] intermediate; [R,D] final |
+| up weight | [D,R] |
+| configuration | positive finite epsilon, K, final/intermediate flag |
+
+P=(-(R+K))%16 for intermediate mixers. The previous injection is consumed even
+by a final mixer. Inputs are read only. The result has three values:
 
 - Updated residual [M,D], freshly allocated.
 - Input to the next block [M,H], freshly allocated.
-- Next injection [M,K], a view into the down projection storage, or None for a
-  final mixer. Its row stride includes discarded alignment padding.
+- Next injection [M,K], a view into down projection storage, or None for a final
+  mixer. Its row stride includes the discarded alignment padding.
 
-The previous injection is still consumed by a final mixer. Inputs are read only;
-the implementation retains no hidden cache. Intermediate down weight has
-R+K+P rows, with P=(-(R+K))%16. Final down weight has R rows.
+Combine is BF16(residual + block * scale), where scale is
+2*sigmoid(previous_injection/K), or one without injection. This BF16 boundary
+occurs before grouped RMSNorm. For each H group, z=combined*rsqrt(mean(square)
++epsilon), and the Gemma affine is BF16(z+z*norm_weight).
 
-Combine accumulation is rounded to BF16 **before** grouped RMSNorm. The norm
-uses Gemma affine z + z*weight. SiLU consumes down[:,:R]/K. Gate mixing is
-sum(sigmoid(gate)*normalized, stream)/K. Both matmul outputs and the SiLU output
-are materialized in BF16. Dropping any rounding boundary changes the function.
+Down is BF16(normalized @ down_weight.T). Its first R columns feed
+BF16(silu(down[:,:R]/K)); the following K columns supply the next injection.
+Up is BF16(lowrank @ up_weight.T). Gate mixing returns
+BF16(sum(sigmoid(gate)*normalized, stream)/K).
 
-## Source constraints and implemented domain
+## Domain and shape evidence
 
-The pinned Triton source validates two-dimensional matrices, positive K,
-D divisible by K, unit inner stride and contiguous H- or D-element norm weights.
-It masks tails; H and R need not be powers of two or multiples of512.
-Those static checks do not establish all device resource limits.
+The original Triton source accepts 2D matrices with unit inner stride, positive
+K, D divisible by K, and contiguous H- or D-element norm weights. It masks tails;
+H and R do not have to be powers of two or multiples of 512. Static checks alone
+do not establish every runtime resource limit.
 
-The Ascend C implementation supports BF16 on A3, positive H/R up to8192,
-nonnegative row strides, checked uint32 element indexing, positive finite epsilon,
-and M=0. FP16/FP32, quantized weights and TP-sharded projection adapters are outside
-this implementation's domain.
+This Ascend C path supports BF16 on A3, positive H/R up to 8192, checked uint32
+element spans, nonnegative row strides, finite positive epsilon, and M=0.
+Quantized weights, FP16/FP32, and TP-sharded projection adapters are outside the
+tested domain.
 
-Model structural metadata from Zhanlu gives K4,H2560,D10240,R320,
-P12, intermediate down [336,10240], up [10240,320] and per-stream norm weights.
-Two prefill shapes were evaluated by the formal Zhanlu graph generator. The
-decode template's generated token relation produced a negative dimension and is
-invalid. The separate decode case uses its unchanged original recorded M16;
-it is not a successfully generated decode shape. A5 templates supply structural
-metadata only. Performance evidence must come from A3.
+The decode acceptance cases are M=1,16,32,64, each with intermediate and final
+mixers. M is explicitly selected by the user. Zhanlu parameter-consumer metadata
+supports K4,H2560,D10240,R320,P12, intermediate down [336,10240], final down
+[320,10240], and up [10240,320]. Actual A3 tests establish runtime validity for
+the requested M values.
 
-The case manifest uses explicit test epsilon1e-6. The deployed model epsilon and
-production request distribution remain unverified. These cases establish a
-bounded operator workload.
+The original formal decode template relation generated a negative dimension.
+That failed derivation remains recorded and supplies no valid M evidence.
+Prefill cases are exploratory and excluded from decode acceptance. Epsilon
+1e-6 is an explicit test setting; the deployed model configuration remains
+unverified.
 
-## Integration and development build
+## Implementation and integration
 
-Sources follow the main repository's csrc, kernel, CMake and Python directories.
-The full registered build discovers the host and kernel files. Development may
-use the optional HC-only target from the same root CMake project:
+Source, registration, CMake, and Python files follow the main repository layout.
+The regular registered extension discovers the HC host/kernel files when direct
+kernels are enabled. The validated development build uses the same root project:
 
 ```bash
 cmake -S . -B build-hc \
@@ -68,65 +79,81 @@ cmake -S . -B build-hc \
 cmake --build build-hc --target vllm_ascend_hc_C -j4
 ```
 
-Load the registered extension before calling
-vllm_ascend.ops.qwen_hc_serial.combine_and_mix.
-The explicit combine_and_mix_module adapter accepts an unquantized,
-replicated GatedResidual. Selection is explicit during development; the default
-Triton model path remains available as the performance baseline.
+Load vllm_ascend_C or vllm_ascend_hc_C before calling
+vllm_ascend.ops.qwen_hc_serial.combine_and_mix. The explicit
+combine_and_mix_module adapter accepts an unquantized replicated GatedResidual.
+The default model path is still Triton; automatic model activation and a full
+model-serving run are not part of this validation.
 
-## Independent device validation and measurement
+The final path uses two F.linear calls and has no weight packing, hidden cache,
+forward compilation, or prepared-weight mode. Slower transposed and singleton
+matmul experiments remain available through historical commits and local
+iteration records.
+
+CombineNorm batches two HC branches for M16 and four for M32/64 when the H/K/UB
+conditions allow it; other inputs use the per-branch path. BF16 combine is
+preserved before RMS. A3 memory-vector MulAddDst shortens combine/affine work.
+Gate batches HC branches and uses a two-level FP32 reduction for K4. M64 SiLU
+batches two aligned rows. Generic tail, stride, shared-weight, and larger-K
+fallbacks remain available. No C calls or V stages are reordered across C.
+
+## Device correctness and Graph timing
+
+The development target has been built on Ascend910_9362 with CANN9.2.0,
+Torch2.10.0, and torch_npu2.10.0.post7. Use fresh build directories after source
+changes. Inspect the actual binary identity before measuring.
 
 ```bash
 python3 tests/manual/test_qwen4_exp_hc_serial_npu.py \
   --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
   --mode validate --out boundary-results.json
-
 python3 tests/manual/test_qwen4_exp_hc_serial_npu.py \
   --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
   --cases tests/manual/qwen_hc_serial_cases.json \
-  --mode validate --out model-results.json
+  --mode validate --out decode-correctness.json
+python3 tests/manual/test_qwen4_exp_hc_serial_npu.py \
+  --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
+  --cases tests/manual/qwen_hc_serial_cases.json \
+  --mode bench --out decode-performance.json
 ```
 
-Validation uses independent CPU float64 mathematics and specified BF16
-materialization points. It checks all three outputs, alias/stride metadata, input
-mutation, Graph replay, and a changed-input replay. BF16 gates are
-atol=rtol=2^-6, matched ratio>=0.99 and max absolute error<=1.0, frozen before the
-first NPU result. Boundary coverage includes tails, row strides, shared norm,
-missing injection, final mixers, saturation, zero inputs and empty token batches.
+The independent CPU float64 reference materializes every specified BF16
+boundary. Validation checks all three outputs in eager and Graph replay,
+fresh outputs, injection view metadata, and input mutation. A tail/strided case
+also changes input at stable addresses before replay. Boundary cases include
+missing injection, shared norm, final mixers, saturation, zeros, and M=0.
 
-Mode bench measures the complete five-stage path with NPUGraph events.
-Both implementations use identical public linear calls and operands.
-The baseline imports the unchanged original Triton file and verifies its SHA256.
-Twenty-five interleaved samples retain raw measurements; latency is normalized by
-full calls per graph and replays per sample. The target is original Triton graph
-latency / Ascend C graph latency >=1.5 for every frozen case.
+BF16 accuracy gates were fixed before device tests: atol=rtol=2^-6, matched
+ratio>=0.99, maximum absolute error<=1.0, and matching special values.
 
-Mode profile provides complete graph calls for msprof. Report C/(C+V) from all
-matmul task durations and all remaining execution task durations in the same
-complete retained calls. Include copy/layout/other execution tasks; unclassified
-or incomplete sequences invalidate the percentage. Graph event latency is a
-separate metric.
+The original pinned Triton file supplies the full serial baseline; its SHA256
+is checked before loading. Both paths use the same original projection weights.
+Timing uses 25 alternating-order samples, eight complete calls per Graph, and
+four replays per sample, normalized to one full call. Preserve all raw samples.
+The goal is baseline latency / candidate latency >=1.5 for every case.
 
-## Current evidence boundary
+## Full-call C/(C+V)
 
-The registered HC-only target compiled on Ascend910_9362 with CANN9.2.0,
-Torch2.10.0 and torch_npu2.10.0.post7. Device correctness, graph speedup and task
-share must be taken from retained validation records. The per-job report records
-each candidate, failure, baseline identity, environment and remaining budget.
+Capture full Graph executions with msprof separately from event timing:
 
-## Decode acceptance scope
+```bash
+msprof --output=profiles --runtime-api=on --task-time=on --aicpu=on \
+  --application="python3 tests/manual/profile_hc_batch.py \
+  --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
+  --cases tests/manual/qwen_hc_serial_cases.json --out profile-manifest.json"
+python3 tests/manual/summarize_hc_batch.py profiles \
+  --manifest profile-manifest.json --out cv-share.json
+```
 
-The user selected per-card decode M=1,16,32,64, each with intermediate and final mixers. M is directly specified by the user; K4,H2560,R320 and the weight geometry are supported by the Zhanlu records. Device tests establish runtime validity. Prefill measurements are exploratory only. Invalid template decode relations remain preserved and are not used to infer these M values.
+The application keeps all sixteen sequential case/implementation Graphs alive
+to prevent model-ID reuse. Each has five warm and sixteen retained replays.
+The classifier maps actual model IDs, ordered windows and complete V-C-V-C-V
+sequences to the manifest. It includes every execution task in each call,
+including layout/copy tasks. Unknown or incomplete sequences invalidate the
+percentage instead of silently dropping rows.
 
-## Explicit weight preparation
-
-The optional prepare_weights function creates contiguous transposed down/up
-weights after model weight loading. Pass its PreparedWeights object explicitly
-to combine_and_mix. Forward uses public torch.mm for this mode and checks source
-tensor identity and version. Rebuild after any source weight update; no hidden
-forward cache or conversion is used. The original F.linear mode remains available.
-
-The device harness accepts --weights pretransposed. It records the one-time
-preparation wall time and retained bytes separately from complete Graph latency.
-Correctness still uses the original input weights in the independent reference.
-This is a candidate optimization and requires per-shape device validation.
+C_total_us is the mean of both Matmul task sums per complete call. V_total_us is
+the mean of all other execution task sums in the same calls.
+C/(C+V)=100*C_total_us/(C_total_us+V_total_us). This is a task-duration share,
+not Cube hardware utilization or C/Graph latency. Profiler task sums and complete
+Graph event time remain separate metrics.

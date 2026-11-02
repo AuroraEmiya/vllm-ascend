@@ -44,6 +44,8 @@ def load_file(name, path):
 
 
 def implementations(extension=None, weights="original"):
+    if weights != "original":
+        raise ValueError("Experimental prepared-weight paths are not part of the final implementation")
     if extension:
         torch.ops.load_library(str(Path(extension).resolve()))
     elif not hasattr(torch.ops._C_ascend, "qwen_hc_combine_norm"):
@@ -67,51 +69,6 @@ def implementations(extension=None, weights="original"):
     def candidate(*inputs, **kw):
         return serial.combine_and_mix(*inputs, **kw)
 
-    if weights in ("pretransposed", "singleton-gmm", "singleton-gmm-nz"):
-
-        def bind(inputs):
-            if weights.startswith("singleton-gmm") and (
-                inputs[0].shape[0] == 0 or any(n % 16 for n in (*inputs[4].shape, *inputs[5].shape))
-            ):
-                return candidate
-            torch.npu.synchronize()
-            started = time.perf_counter()
-            allocated_before = torch.npu.memory_allocated()
-            # Isolated experiment process: baseline and execution retain the
-            # original internal-format=False mode. Enable only explicit packing.
-            nz = weights == "singleton-gmm-nz"
-            if nz:
-                torch_npu.npu.config.allow_internal_format = True
-            try:
-                prepared = serial.prepare_weights(
-                    inputs[4],
-                    inputs[5],
-                    backend=weights.replace("-", "_") if weights.startswith("singleton-gmm") else "mm",
-                )
-            finally:
-                if nz:
-                    torch_npu.npu.config.allow_internal_format = False
-            if nz and any(torch_npu.get_npu_format(t) != 29 for t in (prepared.down, prepared.up)):
-                raise RuntimeError("Explicit NZ preparation did not produce format 29")
-            torch.npu.synchronize()
-            elapsed = (time.perf_counter() - started) * 1e6
-
-            def bound(*values, **kw):
-                return serial.combine_and_mix(*values, prepared_weights=prepared, **kw)
-
-            bound.preparation = {
-                "kind": "explicit load-time contiguous transpose",
-                "public_c_backend": prepared.backend,
-                "two_c_calls": "two separate singleton calls; group_type=-1; no grouping of Down and Up",
-                "wall_us": elapsed,
-                "retained_bytes": torch.npu.memory_allocated() - allocated_before,
-                "logical_weight_bytes": sum(t.numel() * t.element_size() for t in (prepared.down, prepared.up)),
-                "weight_formats": [torch_npu.get_npu_format(t) for t in (prepared.down, prepared.up)],
-                "rebuild_on": "source tensor identity or version change",
-            }
-            return bound
-
-        candidate.bind_inputs = bind
     return {"ascendc_serial": candidate, "triton_serial": triton_serial}
 
 
@@ -220,7 +177,8 @@ def metadata(outputs, inputs, case):
     m, h, k, r = (case[x] for x in ("m", "h", "k", "r"))
     ok = s.shape == (m, k * h) and y.shape == (m, h)
     if m:
-        ok = ok and all(s.data_ptr() != x.data_ptr() for x in inputs if x is not None)
+        ok = ok and s.data_ptr() != y.data_ptr()
+        ok = ok and all(out.data_ptr() != x.data_ptr() for out in (s, y) for x in inputs if x is not None)
     if case.get("use_combine", True):
         width = r + k + (-(r + k)) % 16
         ok = ok and injection.shape == (m, k) and injection.stride() == (width, 1)
@@ -350,9 +308,7 @@ def main():
     parser.add_argument("--cases", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--mode", choices=("smoke", "validate", "bench", "profile"), default="validate")
-    parser.add_argument(
-        "--weights", choices=("original", "pretransposed", "singleton-gmm", "singleton-gmm-nz"), default="original"
-    )
+    parser.add_argument("--weights", choices=("original",), default="original")
     parser.add_argument("--case")
     parser.add_argument("--impl", choices=("ascendc_serial", "triton_serial"), default="ascendc_serial")
     args = parser.parse_args()
