@@ -40,11 +40,11 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     auto p=platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ub=0; p.GetCoreMemSize(platform_ascendc::CoreMemType::UB,ub);
     if (ub<51232 || p.GetCoreNumAiv()==0) return ge::GRAPH_FAILED;
-    // Two BF16 and three FP32 four-branch tiles, one FP32 sum tile,
-    // plus a 32-byte scalar block: at most 174,112 bytes on this path.
+    // Two BF16 and two FP32 four-branch tiles, one FP32 sum tile,
+    // plus two 32-byte blocks: at most 133,184 bytes on this path.
     if (mode==2) {
-        while (tile>32 && 68ull*tile+32>ub) tile/=2;
-        if (68ull*tile+32>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
+        while (tile>32 && 52ull*tile+64>ub) tile/=2;
+        if (52ull*tile+64>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
     }
     t.set_tile(tile);
     t.set_units((mode==3 || mode==5) ? n : ((mode==0 || mode==4) ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));

@@ -22,13 +22,13 @@ public:
         yG.SetGlobalBuffer((__gm__ bfloat16_t*)y);
         invG.SetGlobalBuffer((__gm__ float*)inv);
         injectG.SetGlobalBuffer((__gm__ bfloat16_t*)inject);
-        // Mix stages all four branches together. Other modes retain the
+        // Mix stages all four branches together. Normalization retains the
         // 51,232-byte layout. Tiling validates the mode-specific UB demand.
         const uint32_t count=t.mode==2?t.channels*t.tile:2560;
         const uint32_t sumCount=t.mode==2?t.tile:2560;
         pipe.InitBuffer(b0,count*2); pipe.InitBuffer(b1,count*2);
         pipe.InitBuffer(f0,count*4); pipe.InitBuffer(f1,count*4);
-        pipe.InitBuffer(f2,sumCount*4); pipe.InitBuffer(f3,count*4);
+        pipe.InitBuffer(f2,sumCount*4); pipe.InitBuffer(f3,(t.mode==0 || t.mode==4)?2560*4:32);
         pipe.InitBuffer(scalar,32);
     }
     __aicore__ inline void Process() {
@@ -48,8 +48,9 @@ private:
     __aicore__ inline void Sigmoid(LocalTensor<float> v,uint32_t n) {
         Muls(v,v,-1.0f,n); Barrier(); Exp(v,v,n); Barrier();
         Adds(v,v,1.0f,n); Barrier();
-        auto one=f3.Get<float>(); Duplicate(one,1.0f,n); Barrier();
-        Div(v,one,v,n); Barrier();
+        // This path ends at BF16 outputs. The precise FP32 inverse-RMS
+        // auxiliary remains on Sqrt+Div in Norm, with its stricter checks.
+        Reciprocal(v,v,n); Barrier();
     }
     __aicore__ inline void Norm(uint32_t row) {
         uint32_t h=t.width/t.channels,off=row*h;

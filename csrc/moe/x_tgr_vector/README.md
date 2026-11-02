@@ -35,9 +35,9 @@ output is a strided view of the live projection columns.
 
 The mix stage loads the four branch segments with a strided DMA, evaluates
 their sigmoids together, then accumulates branch products in FP32 branch order.
-Each core owns disjoint token/hidden tiles. Its UB demand is `68*tile + 32`
-bytes, at most 174,112 bytes; tiling queries the available UB and reduces the
-tile if needed. Other stages use 51,232 bytes. DMA/vector dependencies use
+Each core owns disjoint token/hidden tiles. Its UB demand is `52*tile + 64`
+bytes, at most 133,184 bytes; tiling queries the available UB and reduces the
+tile if needed. Norm uses 51,232 bytes. DMA/vector dependencies use
 paired hardware events, with vector barriers between dependent operations.
 Inference without auxiliary outputs uses the same precise normalization but
 omits the unused inverse-RMS allocation and scalar global-memory stores.
@@ -47,6 +47,9 @@ zero-stride multiply. The internal write-gate buffer uses 16 BF16 values per
 row to separate each core's small store into its own 32-byte block. The API
 returns the live `[B,S,4]` view; its row stride is 16 and unused padding is not
 exposed. This adds 24 temporary bytes per token, with no extra runtime task.
+Sigmoid uses FP32 `Reciprocal` after adding one to the exponential, without
+constructing an all-ones tensor. Its BF16 output path uses the frozen BF16
+precision checks. The FP32 inverse-RMS auxiliary keeps precise `Sqrt+Div`.
 
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model
