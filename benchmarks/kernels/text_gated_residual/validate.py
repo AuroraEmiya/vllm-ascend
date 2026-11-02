@@ -114,7 +114,7 @@ def identity(work_root):
     root = work_root
     for vendor in (
         root / "baseline-opp/vendors/custom_transformer",
-        Path(__file__).resolve().parents[3] / "vllm_ascend/_cann_ops_custom/vendors/tgr_serial",
+        Path(__file__).resolve().parents[3] / "vllm_ascend/_cann_ops_custom/vendors/tgr_serial_transformer",
     ):
         # Hash opaque runtime objects only; their implementation is not inspected.
         paths.extend(sorted(vendor.glob("op_api/lib/*.so")))

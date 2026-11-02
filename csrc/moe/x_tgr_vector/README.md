@@ -35,7 +35,14 @@ Build this native operator through the repository's existing CANN build entry:
 ```bash
 cd csrc
 bash build.sh --pkg --ops=x_tgr_vector --soc=ascend910_93 --vendor_name=tgr_serial -j4
+bash build_out/cann-ops-transformer-tgr_serial_linux-aarch64.run \
+  --quiet --install-path="$PWD/../vllm_ascend/_cann_ops_custom"
 ```
+
+The repository appends `_transformer` to the requested vendor name. Include
+`vllm_ascend/_cann_ops_custom/vendors/tgr_serial_transformer` in
+`ASCEND_CUSTOM_OPP_PATH` before importing the native extension. When comparing
+with the opaque package, include its separate vendor directory as well.
 
 The standard A3 operator list also includes `x_tgr_vector`. Its adapter and Meta
 implementation register `_C_ascend.npu_tgr_vector_out` through the existing
