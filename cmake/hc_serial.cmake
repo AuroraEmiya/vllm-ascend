@@ -13,6 +13,6 @@ target_link_directories(vllm_ascend_hc_C PRIVATE
 target_link_libraries(vllm_ascend_hc_C PRIVATE vllm_ascend_hc_kernels
   ${TORCH_LIBRARIES} torch_npu ascendcl)
 set_target_properties(vllm_ascend_hc_C PROPERTIES
-  BUILD_RPATH "$ORIGIN;${TORCH_NPU_PATH}/lib" INSTALL_RPATH "$ORIGIN")
+  BUILD_RPATH "$ORIGIN;$ORIGIN/lib;${TORCH_NPU_PATH}/lib" INSTALL_RPATH "$ORIGIN")
 install(TARGETS vllm_ascend_hc_C vllm_ascend_hc_kernels
   DESTINATION ${VLLM_ASCEND_INSTALL_PATH})

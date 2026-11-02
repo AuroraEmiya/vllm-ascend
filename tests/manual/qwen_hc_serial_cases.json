@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "model": "Qwen3.8-Flash-Next",
+  "scope": "Two generated prefill token counts and original recorded decode token count; no production request distribution asserted",
+  "cases": [
+    {
+      "id": "prefill-s128-intermediate",
+      "m": 128,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "Zhanlu unchanged HC metadata subset evaluation",
+      "source_id": "prefill-s128",
+      "evidence_level": "A5 model structural metadata only; timing to be measured on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified"
+    },
+    {
+      "id": "prefill-s128-final",
+      "m": 128,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "Zhanlu unchanged HC metadata subset evaluation",
+      "source_id": "prefill-s128",
+      "evidence_level": "A5 model structural metadata only; timing to be measured on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified"
+    },
+    {
+      "id": "prefill-s2048-intermediate",
+      "m": 2048,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "Zhanlu unchanged HC metadata subset evaluation",
+      "source_id": "prefill-s2048",
+      "evidence_level": "A5 model structural metadata only; timing to be measured on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified"
+    },
+    {
+      "id": "prefill-s2048-final",
+      "m": 2048,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "Zhanlu unchanged HC metadata subset evaluation",
+      "source_id": "prefill-s2048",
+      "evidence_level": "A5 model structural metadata only; timing to be measured on A3",
+      "eps_evidence": "explicit test configuration; model config value not yet verified"
+    },
+    {
+      "id": "decode-recorded16-intermediate",
+      "m": 16,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "source": "unchanged original Zhanlu decode TensorRecord",
+      "source_node_id": 1967,
+      "evidence_level": "original recorded A5 template shape; generated decode relations INVALID",
+      "eps_evidence": "explicit test configuration; model config value not yet verified"
+    },
+    {
+      "id": "decode-recorded16-final",
+      "m": 16,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "source": "unchanged original Zhanlu decode TensorRecord",
+      "source_node_id": 1967,
+      "evidence_level": "original recorded A5 template shape; generated decode relations INVALID",
+      "eps_evidence": "explicit test configuration; model config value not yet verified"
+    }
+  ],
+  "invalid_derivations": [
+    {
+      "case": "decode-b1",
+      "reason": "unchanged template shape relation produced nonpositive dimension",
+      "shape": [
+        -75,
+        10240
+      ],
+      "status": "INVALID_NOT_ACCEPTED"
+    },
+    {
+      "case": "decode-b16",
+      "reason": "unchanged template shape relation produced nonpositive dimension",
+      "shape": [
+        -75,
+        10240
+      ],
+      "status": "INVALID_NOT_ACCEPTED"
+    }
+  ]
+}

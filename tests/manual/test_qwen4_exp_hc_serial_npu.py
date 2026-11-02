@@ -214,6 +214,8 @@ def validate_case(case, funcs):
         results["implementations"][label] = {
             "pass": passed, "eager": eager, "graph": replay, "fresh_input_replay": fresh,
             "abi_pass": abi_ok, "inputs_mutated": mutated}
+        print(json.dumps({"case": case["id"], "implementation": label,
+                          "validation": results["implementations"][label]}), flush=True)
         del outputs, graph_outputs, graph
     return results
 
@@ -249,6 +251,19 @@ def benchmark(case, funcs, samples=25, calls=8, repeats=4):
             "replays_per_sample": repeats, "samples_us": raw, "medians_us": medians,
             "speedup": medians["triton_serial"] / medians["ascendc_serial"],
             "target": 1.5, "pass": medians["triton_serial"] / medians["ascendc_serial"] >= 1.5}
+
+
+def test_qwen_hc_serial_boundary_cases():
+    """Run with the main repository registered extension on an Ascend device."""
+    import pytest
+
+    if not torch.npu.is_available():
+        pytest.skip("requires Ascend NPU")
+    torch.npu.set_device(0)
+    funcs = implementations()
+    for case in BOUNDARIES:
+        result = validate_case(case, funcs)
+        assert all(x["pass"] for x in result["implementations"].values()), result
 
 
 def main():
