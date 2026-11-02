@@ -121,7 +121,7 @@ def paired_timing(graphs, stream):
     }
 
 
-def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_format=True):
+def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_format=True, progress=None):
     torch.npu.config.allow_internal_format = True
     data, initial_kv, initial_kr = build_case(case)
     expected = oracle(data, case["heads"], initial_kv, initial_kr)
@@ -177,6 +177,9 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         "checks": {},
         "timing": None,
     }
+    if progress is not None:
+        progress.update(result)
+        result = progress
     with torch.npu.stream(stream):
         for name, function in functions.items():
             outputs = function()
@@ -304,6 +307,7 @@ if __name__ == "__main__":
         parser.error("profiling requires exactly one selected case")
     report = {"protocol": manifest["protocol"], "cases": [], "identity": None}
     for case in cases:
+        progress = {}
         try:
             value = run_case(
                 case,
@@ -311,16 +315,20 @@ if __name__ == "__main__":
                 profile=args.profile,
                 baseline_route=args.baseline_route,
                 internal_format=args.internal_format == "true",
+                progress=progress,
             )
         except Exception as error:
-            value = {
-                "case": case,
-                "status": "ERROR",
-                "error_type": type(error).__name__,
-                "error": str(error),
-                "traceback": traceback.format_exc(),
-                "timing": None,
-            }
+            value = progress
+            value.update(
+                {
+                    "case": case,
+                    "status": "ERROR",
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                    "traceback": traceback.format_exc(),
+                    "timing": None,
+                }
+            )
         report["cases"].append(value)
         print(
             json.dumps(
