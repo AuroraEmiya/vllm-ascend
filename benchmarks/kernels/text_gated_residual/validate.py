@@ -315,8 +315,18 @@ def main():
         cases = [c for c in cases if c["id"] in args.case_id]
         assert len(cases) == len(set(args.case_id)), "Unknown case"
     if args.profile:
-        assert len(cases) == 1
-        profile(cases[0], args.out)
+        if len(cases) == 1:
+            profile(cases[0], args.out)
+        else:
+            records = []
+            for case in cases:
+                out = Path(args.out).with_stem(Path(args.out).stem + "-" + case["id"])
+                profile(case, out)
+                records.append(str(out))
+            write_json(
+                args.out,
+                {"source_commit": args.source_commit, "case_records": records, "identity": identity(args.work_root)},
+            )
         return
     data = {
         "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),

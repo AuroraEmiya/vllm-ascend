@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import torch
-from validate import check_outputs, make_calls, make_inputs, oracle
+from validate import capture, check_outputs, make_calls, make_inputs, oracle
 
 
 def main():
@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--implementation", choices=("fused", "serial"), required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--graph", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(4)
     torch.npu.set_device(0)
@@ -27,6 +28,29 @@ def main():
     torch.npu.synchronize()
     result = {"case": case, "implementation": args.implementation, "outputs": check_outputs(outputs, refs)}
     result["unmodified_inputs"] = all(t is None or torch.equal(t.cpu(), c) for t, c in zip(tensors, cpu))
+    if args.graph:
+        stream = torch.npu.Stream()
+        stream.wait_stream(torch.npu.current_stream())
+        with torch.npu.stream(stream):
+            graph, graph_outputs = capture(calls[args.implementation], stream)
+            for _ in range(10):
+                graph.replay()
+            stream.synchronize()
+            result["graph"] = check_outputs(graph_outputs, refs)
+            updated = [t.clone() if t is not None else None for t in cpu]
+            updated[0].mul_(-1)
+            updated[1].mul_(-1)
+            updated[2].mul_(-1)
+            if updated[3] is not None:
+                updated[3].mul_(-1)
+            if updated[4] is not None:
+                updated[4].add_(0.0625)
+            for tensor, value in zip(tensors, updated):
+                if tensor is not None:
+                    tensor.copy_(value)
+            graph.replay()
+            stream.synchronize()
+            result["graph_updated_same_address"] = check_outputs(graph_outputs, oracle(updated, case))
     Path(args.out).write_text(json.dumps(result, indent=2))
     print(json.dumps(result), flush=True)
 
