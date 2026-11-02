@@ -2,7 +2,7 @@
 #ifndef VLLM_ASCEND_X_MLA_VECTOR_TORCH_ADPT_H
 #define VLLM_ASCEND_X_MLA_VECTOR_TORCH_ADPT_H
 #include <torch/extension.h>
-#include "aclnn_torch_adapter/op_api_common.h"
+#include "../../aclnn_torch_adapter/op_api_common.h"
 
 namespace vllm_ascend {
 inline void mla_prolog_vector_out(const at::Tensor& x, const at::Tensor& aux,
@@ -12,8 +12,9 @@ inline void mla_prolog_vector_out(const at::Tensor& x, const at::Tensor& aux,
     at::Tensor& y, at::Tensor& queryRope, at::Tensor& cacheKv, at::Tensor& cacheKr)
 {
     TORCH_CHECK(x.device().type() == c10::DeviceType::PrivateUse1, "XMlaVector requires NPU tensors");
-    for (const at::Tensor* tensor : {&x, &aux, &gammaQ, &gammaKv, &sine, &cosine,
-        &y, &queryRope, &cacheKv, &cacheKr}) {
+    const at::Tensor* tensors[] = {&x, &aux, &gammaQ, &gammaKv, &sine, &cosine,
+        &y, &queryRope, &cacheKv, &cacheKr};
+    for (const at::Tensor* tensor : tensors) {
         TORCH_CHECK(tensor->scalar_type() == at::kBFloat16 && tensor->is_contiguous() &&
             tensor->device() == x.device(), "XMlaVector expects contiguous BF16 tensors on one NPU");
     }
