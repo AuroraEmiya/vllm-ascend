@@ -15,12 +15,12 @@
       "sha256": "76bb87f2aaf57119cbc2ad8cb36dda7158f9acd931bb3b08ccc8a408f1664369"
     },
     "README.md": {
-      "bytes": 3843,
-      "sha256": "1dca5a26f4f4be4b061f7781ae66c73457d52553366440eeffb9881ca40805af"
+      "bytes": 4534,
+      "sha256": "8abbf3dea6a41945388d9ae91ebdefc33d6f043b0101927c597db55606d3c69e"
     },
     "build_hc_a3.py": {
-      "bytes": 11295,
-      "sha256": "a1e11eefdc97f534109ae0e60bd9826278a510177b6513ec4fd208751a6308e4"
+      "bytes": 11865,
+      "sha256": "8f276e36ca44ac2c80f8c1f35c8d33f1eb110d20e0e85a4e9ead96cb4cf91952"
     },
     "capture_hc_a3_environment.py": {
       "bytes": 5790,
@@ -109,6 +109,10 @@
     "source-config.json": {
       "bytes": 4570,
       "sha256": "a1999a5666355b9b1daff913891f376ae8a9f54f6289001d0e6ccb22047fea48"
+    },
+    "finalize_hc_a3_fusion.py": {
+      "bytes": 8373,
+      "sha256": "06e23cd138a7922c09ad9fa303d762162cf4b33dfc9207742ae7a46139dea8be"
     }
   },
   "precision_acceptance": "DEFERRED_BY_USER",

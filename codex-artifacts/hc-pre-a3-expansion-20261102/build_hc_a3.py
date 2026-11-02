@@ -42,6 +42,19 @@ def run(argv, cwd, log):
     with log.open("w") as stream:
         result = subprocess.run(argv, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=False)
     require(result.returncode == 0, "Build command failed; inspect " + str(log))
+    return result.returncode
+
+
+def package_files(csrc):
+    """Select the unique actual CPack output, excluding same-named directories."""
+    csrc = Path(csrc).resolve()
+    output = csrc / "build_out"
+    require(output.is_dir() and not output.is_symlink(), "Actual build_out directory required")
+    packages = sorted(path for path in output.glob("*.run") if path.is_file())
+    require(len(packages) == 1, "Exactly one actual HC installer file required in build_out")
+    require(not packages[0].is_symlink(), "Installer must be a regular task-owned file")
+    within(packages[0], csrc)
+    return packages
 
 
 def main():
@@ -182,9 +195,9 @@ def main():
                 argv = ["bash", "build.sh", "--pkg", "--ops=hc_pre", "--soc=ascend910_93", "-j4"]
                 report["build_argv"] = argv
                 save()
-                run(argv, repo / "csrc", out / "fusion-build.log")
-                packages = sorted((repo / "csrc").rglob("*.run"))
-                require(bool(packages), "HC package not found; inspect build log")
+                report["build_returncode"] = run(argv, repo / "csrc", out / "fusion-build.log")
+                save()
+                packages = package_files(repo / "csrc")
                 report["new_fusion_packages"] = [{"path": str(path), "sha256": sha(path)} for path in packages]
                 report["installation"] = "PENDING_EXPLICIT_TASK_LOCAL_VENDOR_INSTALL"
         else:

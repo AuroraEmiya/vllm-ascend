@@ -58,3 +58,13 @@ their provenance without an invented blanket license. The parent repository
 license continues to apply to its existing contents. Local Ruff exceptions
 preserve official and archived source bytes. No full repository CI, compiled
 operator, NPU output or performance pass is claimed by this code bundle.
+
+For the completed build at `8db8c0af1efe96667367a5fb08d90ee8d74fc0e4`,
+`finalize_hc_a3_fusion.py` recovers metadata only after the known CPack directory
+hashing error. It preserves the original FAILED record and log, verifies the
+original builder, source tree and matching package copies, then writes a separate
+derived record. The original build return code is inferred from the fixed
+builder control flow; it was not recorded as a raw field. Recovery performs no
+compilation, installation or NPU work. Record its helper commit separately from
+the original build commit. The corrected builder enumerates regular packages
+under `build_out` and records future build return codes explicitly.
