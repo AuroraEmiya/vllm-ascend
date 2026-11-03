@@ -83,6 +83,8 @@ class PreparedHCWeights:
     Construct after loading unquantized BF16 weights. Construct a new object and
     capture a new Graph after a weight update. Preparation is outside forward;
     this object never consults or updates a process-wide cache.
+    Down selects NZ for M divisible by16 and ND otherwise; Up retains NZ.
+    Both Down layouts are explicit load-time snapshots, with no replay copy.
     """
 
     def __init__(self, down_weight: torch.Tensor, up_weight: torch.Tensor):
@@ -90,6 +92,7 @@ class PreparedHCWeights:
         # Baseline calls run only after it is restored. Do not call concurrently.
         torch_npu.npu.config.allow_internal_format = True
         try:
+            self.down_weight_nd = down_weight.clone()
             self.down_weight = torch_npu.npu_format_cast(down_weight, 29)
             self.up_weight = torch_npu.npu_format_cast(up_weight, 29)
         finally:
@@ -103,7 +106,7 @@ class PreparedHCWeights:
                 block_output,
                 previous_injection,
                 norm_weight,
-                self.down_weight,
+                self.down_weight if residual.shape[0] % 16 == 0 else self.down_weight_nd,
                 self.up_weight,
                 **kwargs,
             )

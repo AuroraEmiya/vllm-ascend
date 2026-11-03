@@ -44,6 +44,11 @@ class PreparedMatmul:
             "stage": "explicit_load_time_before_warmup_and_graph_capture",
             "npu_event_us": start.elapsed_time(end) * 1000,
             "wall_us": (time.perf_counter() - wall) * 1e6,
+            "down_layout_rule": "NZ if M%16==0 else ND; Up NZ",
+            "selected_down_format": 29 if inputs[0].shape[0] % 16 == 0 else 2,
+            "down_nd_format": torch_npu.get_npu_format(prepared.down_weight_nd),
+            "down_nd_storage_bytes": prepared.down_weight_nd.untyped_storage().nbytes(),
+            "down_nd_values_equal": torch.equal(down.cpu(), prepared.down_weight_nd.cpu()),
             "input_formats": [torch_npu.get_npu_format(x) for x in (down, up)],
             "prepared_formats": [torch_npu.get_npu_format(x) for x in (prepared.down_weight, prepared.up_weight)],
             "logical_shapes": [list(x.shape) for x in (down, up)],
@@ -54,7 +59,7 @@ class PreparedMatmul:
                 torch.equal(a.cpu(), b.cpu()) for a, b in zip((down, up), (prepared.down_weight, prepared.up_weight))
             ],
         }
-        if not all(prep["values_equal"]):
+        if not all(prep["values_equal"]) or not prep["down_nd_values_equal"]:
             raise AssertionError("prepared projection weights changed values")
         self.preparations.append(prep)
 
@@ -119,7 +124,7 @@ def main():
             "original_baseline": "F.linear",
             "api_control": "torch.matmul",
         },
-        "weight_mode": "explicit_load_time_NZ_snapshot_for_candidate_original_for_baselines",
+        "weight_mode": "explicit_load_time_Down_ND_and_NZ_Up_NZ_snapshots_original_baselines",
         "cases": [],
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
