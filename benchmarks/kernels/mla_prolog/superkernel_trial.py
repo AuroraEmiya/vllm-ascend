@@ -24,8 +24,8 @@ def main():
     parser.add_argument("--head-layout", choices=("transpose", "row", "tile8"), default="row")
     parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=4)
     parser.add_argument("--single-call-graph", action="store_true")
-    parser.add_argument("--split-head-tile", type=int, choices=(0,16), default=16)
-    parser.add_argument("--preload-code", type=int, choices=(1,5), default=1)
+    parser.add_argument("--split-head-tile", type=int, choices=(0, 16), default=16)
+    parser.add_argument("--preload-code", type=int, choices=(1, 5), default=5)
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
     args = parser.parse_args()
@@ -59,10 +59,21 @@ def main():
                 instance._head_layout = args.head_layout
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode, "preload_code": args.preload_code}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, head_layout=args.head_layout, split_head_tile=args.split_head_tile)
-        preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
-                             "options": compiled.options,
-                             "note": "lazy compile/installation occurs on first warmup, outside timing"})
+        compiled = instance.compile_superkernel(
+            optimize_options={"constant_codegen": 1, "split_mode": args.split_mode, "preload_code": args.preload_code},
+            optimize=args.mode == "superkernel",
+            matrix_backend=args.matrix_backend,
+            head_layout=args.head_layout,
+            split_head_tile=args.split_head_tile,
+        )
+        preparations.append(
+            {
+                "runtime_preparation": compiled.preparation,
+                "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
+                "options": compiled.options,
+                "note": "lazy compile/installation occurs on first warmup, outside timing",
+            }
+        )
         return compiled
 
     setattr(validation, name, factory)
@@ -73,18 +84,35 @@ def main():
         if unknown:
             parser.error(f"unknown cases: {unknown}")
         cases = [c for c in cases if c["id"] in args.case_id]
-    report = {"split_head_tile": args.split_head_tile, "head_layout": args.head_layout, "matrix_backend": args.matrix_backend, "mode": args.mode, "baseline_route": args.baseline_route, "source_commit": args.source_commit, "cases": [],
-              "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
-              "calls_per_graph": 1 if args.single_call_graph else 10,
-              "split_mode": args.split_mode,
-              "preload_code": args.preload_code, "compiler_workers": 4,
-              "protocol": "frozen validation thresholds; single-call Graph correctness guard" if args.single_call_graph else "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
+    report = {
+        "split_head_tile": args.split_head_tile,
+        "head_layout": args.head_layout,
+        "matrix_backend": args.matrix_backend,
+        "mode": args.mode,
+        "baseline_route": args.baseline_route,
+        "source_commit": args.source_commit,
+        "cases": [],
+        "compile_preparations": preparations,
+        "grouping_status": "REQUIRES_DEVICE_TRACE",
+        "calls_per_graph": 1 if args.single_call_graph else 10,
+        "split_mode": args.split_mode,
+        "preload_code": args.preload_code,
+        "compiler_workers": 4,
+        "protocol": "frozen validation thresholds; single-call Graph correctness guard"
+        if args.single_call_graph
+        else "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples",
+    }
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
-        report["source_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (
-            Path(__file__), Path(validation.__file__),
-            Path(__file__).parents[3] / "vllm_ascend/ops/serial_superkernel.py")}
+        report["source_files"] = {
+            str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in (
+                Path(__file__),
+                Path(validation.__file__),
+                Path(__file__).parents[3] / "vllm_ascend/ops/serial_superkernel.py",
+            )
+        }
         args.out.write_text(json.dumps(report, indent=2) + "\n")
 
     save()
@@ -97,8 +125,12 @@ def main():
                 if args.profile:
                     validation.profile(case, str(args.out.with_suffix(".profile.json")))
             else:
-                row = validation.run_case(case, timing=not args.no_timing,
-                                          profile="serial" if args.profile else None, baseline_route=args.baseline_route)
+                row = validation.run_case(
+                    case,
+                    timing=not args.no_timing,
+                    profile="serial" if args.profile else None,
+                    baseline_route=args.baseline_route,
+                )
         except Exception:
             row = {"case": case, "status": "ERROR", "traceback": traceback.format_exc()}
         row["active_matrix_backend"] = "torch" if args.mode == "serial" else args.matrix_backend
@@ -107,13 +139,20 @@ def main():
         report["cases"].append(row)
         save()
         print("CASE_END", case["id"], row.get("status", row.get("comparison_admitted")), flush=True)
-    loaded = sorted({line.split()[-1] for line in Path("/proc/self/maps").read_text().splitlines()
-                     if ".so" in line and any(token in line for token in
-                        ("opapi", "nnopbase", "vllm_ascend", "custom_transformer"))})
+    loaded = sorted(
+        {
+            line.split()[-1]
+            for line in Path("/proc/self/maps").read_text().splitlines()
+            if ".so" in line
+            and any(token in line for token in ("opapi", "nnopbase", "vllm_ascend", "custom_transformer"))
+        }
+    )
     report["runtime_identity"] = {
-        "torch": torch.__version__, "soc": torch.npu.get_device_name(0),
+        "torch": torch.__version__,
+        "soc": torch.npu.get_device_name(0),
         "allow_hf32_matmul": bool(torch.npu.matmul.allow_hf32),
-        "files": {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded if Path(p).is_file()}}
+        "files": {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded if Path(p).is_file()},
+    }
     save()
     success = all(r.get("comparison_admitted", r.get("status") == "PASS") for r in report["cases"])
     raise SystemExit(0 if success else 1)

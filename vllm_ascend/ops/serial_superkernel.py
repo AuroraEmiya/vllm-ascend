@@ -35,12 +35,11 @@ class CompiledSerialPipeline:
             os.environ["LOCAL_WORLD_SIZE"] = "1"
         self.optimize = optimize
         self.optimize_options = copy.deepcopy(
-            {"constant_codegen": 1, "preload_code": 1} if optimize_options is None else optimize_options
+            {"constant_codegen": 1, "preload_code": 5} if optimize_options is None else optimize_options
         )
         self.pipeline = pipeline
         self.scope = scope
-        self.preparation = {"first_call_wall_us_compile_install_execute": None,
-                            "outer_graph_optimize_wall_us": []}
+        self.preparation = {"first_call_wall_us_compile_install_execute": None, "outer_graph_optimize_wall_us": []}
         self.options = {
             "force_eager": True,
             "inplace_pass": False,

@@ -126,7 +126,9 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, head_layout="row", split_head_tile=16):
+    def compile_superkernel(
+        self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, head_layout="row", split_head_tile=16
+    ):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -140,7 +142,9 @@ class MlaPrologSerial:
             raise ValueError("split_head_tile must be 0 or 16")
         self._split_head_tile = split_head_tile
         self._head_layout = head_layout
-        return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
+        return CompiledSerialPipeline(
+            self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options
+        )
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
         if token_x.ndim != 3 or token_x.shape[1] != 1 or not 1 <= token_x.shape[0] <= MAX_BATCH:
@@ -172,9 +176,13 @@ class MlaPrologSerial:
 
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
         down_q_kv = (
-            serial_matmul_v3(x, self._matrix_nz[0]) if use_nz else
-            serial_matmul_v3(x, self._matrix_nd[0], transpose_b=True) if use_v3 else
-            torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
+            serial_matmul_v3(x, self._matrix_nz[0])
+            if use_nz
+            else serial_matmul_v3(x, self._matrix_nd[0], transpose_b=True)
+            if use_v3
+            else torch.matmul(x, self._matrix_nd[0].t())
+            if use_linear
+            else torch.matmul(x, self._matrix_nz[0])
         )
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
@@ -195,9 +203,11 @@ class MlaPrologSerial:
         )
 
         up = (
-            serial_matmul_v3(normalized_q, self._matrix_nz[1]) if use_nz else
-            serial_matmul_v3(normalized_q, self._matrix_nd[1], transpose_b=True) if use_v3 else
-            torch.matmul(normalized_q, self._matrix_nd[1].t())
+            serial_matmul_v3(normalized_q, self._matrix_nz[1])
+            if use_nz
+            else serial_matmul_v3(normalized_q, self._matrix_nd[1], transpose_b=True)
+            if use_v3
+            else torch.matmul(normalized_q, self._matrix_nd[1].t())
             if use_linear or use_v3
             else torch.matmul(normalized_q, self._matrix_nz[1])
         )
@@ -211,7 +221,9 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            10 if use_v3 and self._split_head_tile == 16 else (6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1),
+            10
+            if use_v3 and self._split_head_tile == 16
+            else (6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1),
             rows,
             slots,
             head_q,
@@ -230,8 +242,19 @@ class MlaPrologSerial:
                 query = head_product.new_empty((rows, self.heads, KV_RANK))
                 self._vector(
                     head_product.view(self.heads * rows, KV_RANK),
-                    self.dummy, self.dummy, self.dummy, sine, cosine, index,
-                    9 if self._head_layout == "tile8" else 2, rows, slots, query, self.dummy, cache_kv_flat, cache_kr_flat,
+                    self.dummy,
+                    self.dummy,
+                    self.dummy,
+                    sine,
+                    cosine,
+                    index,
+                    9 if self._head_layout == "tile8" else 2,
+                    rows,
+                    slots,
+                    query,
+                    self.dummy,
+                    cache_kv_flat,
+                    cache_kr_flat,
                 )
         elif rows == 1:
             query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
