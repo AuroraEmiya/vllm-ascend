@@ -51,6 +51,12 @@ endif()
 
 include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)
 
+# CANN platform metadata uses libstdc++ ABI0. Keep its C++ string boundary
+# in a Torch-free translation unit; the shared HC interface contains POD only.
+set_source_files_properties(
+  ${CMAKE_CURRENT_SOURCE_DIR}/csrc/qwen_hc/op_host/qwen_hc_platform.cpp
+  PROPERTIES COMPILE_OPTIONS "-U_GLIBCXX_USE_CXX11_ABI;-D_GLIBCXX_USE_CXX11_ABI=0")
+
 option(VLLM_ASCEND_BUILD_HC_ONLY "Build only registered HC Ascend C stages" OFF)
 if(VLLM_ASCEND_BUILD_HC_ONLY)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/hc_serial.cmake)
