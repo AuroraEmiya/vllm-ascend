@@ -209,6 +209,86 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
                 for cores in (1, 39):
                     self.assertEqual(launch(rows, cores, generation), rows * 4096)
 
+    def test_split_overlap_plan_pins_round5_control(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HARNESS),
+                "--plan",
+                "--comparison",
+                "split-dma-overlap",
+                "--mode",
+                "paired",
+                "--case-id",
+                "guard-tail-b33",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 6)
+        self.assertEqual(plan["pinned_baseline"]["baseline_commit"], "5e35db3be11162a6edcb06e131d8dbaae7a2948e")
+        self.assertEqual(
+            plan["pinned_baseline"]["baseline_canonical_sha256"],
+            "ff46e1fa24ed70794a191aaee14bdb68fa5512bffab0f09eedbe46ea9b254b42",
+        )
+        self.assertEqual([case["id"] for case in plan["selected_cases"]], ["guard-tail-b33"])
+        self.assertIn("B>=32", plan["protocol"]["changed"])
+        self.assertIn("mode1", plan["protocol"]["native_comparison"])
+        self.assertIn("mode6", plan["protocol"]["native_comparison"])
+
+    def test_split_pipeline_buffer_dependencies_include_reuse_and_last_output(self):
+        # Abstract completed operations on two consecutive units of one core.
+        # Every conflicting access must be ordered, even when DMA latency is
+        # adversarial. This checks the lifetime model, not compiled device code.
+        def hazards(rope_buffer="b3", reuse_fence=True):
+            operations, before = {}, {}
+
+            def add(name, buffer, write, dependencies):
+                operations[name] = (buffer, write)
+                before[name] = set(dependencies)
+
+            for unit in range(2):
+                prefix = str(unit)
+                previous = ["0-q-out", "0-r-out", "0-r-cast"] if unit and reuse_fence else []
+                add(prefix + "-q-in", "b0", True, previous)
+                add(prefix + "-q-out", "b0", False, [prefix + "-q-in"])
+                add(prefix + "-r-in", rope_buffer, True, [prefix + "-q-in"])
+                add(prefix + "-r-read", rope_buffer, False, [prefix + "-r-in"])
+                add(prefix + "-r-cast", "b3", True, [prefix + "-r-read"])
+                add(prefix + "-r-out", "b3", False, [prefix + "-q-out", prefix + "-r-cast"])
+            add("last-drain", None, False, ["1-q-out", "1-r-out"])
+            changed = True
+            while changed:
+                changed = False
+                for predecessors in before.values():
+                    closure = set(predecessors)
+                    for predecessor in predecessors:
+                        closure.update(before[predecessor])
+                    if closure != predecessors:
+                        predecessors.update(closure)
+                        changed = True
+            conflicts = []
+            for left, (left_buffer, left_write) in operations.items():
+                for right, (right_buffer, right_write) in operations.items():
+                    if left >= right or left_buffer is None or left_buffer != right_buffer:
+                        continue
+                    if left_write or right_write:
+                        if left not in before[right] and right not in before[left]:
+                            conflicts.append((left, right))
+            return conflicts, before
+
+        conflicts, before = hazards()
+        self.assertEqual(conflicts, [])
+        # The intended overlap has no artificial Q-out -> RoPE-in dependency.
+        self.assertNotIn("0-q-out", before["0-r-in"])
+        self.assertIn("0-r-out", before["1-q-in"])
+        self.assertIn("1-r-out", before["last-drain"])
+        # Negative controls must detect both the old alias and lost reuse fence.
+        self.assertTrue(hazards(rope_buffer="b0")[0])
+        self.assertTrue(hazards(reuse_fence=False)[0])
+
 
 if __name__ == "__main__":
     unittest.main()
