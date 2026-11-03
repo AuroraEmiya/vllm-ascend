@@ -64,8 +64,6 @@ class GateMix {
     syncPipeline<HardEvent::MTE3_S>();
   }
 };
-// Whole rows of HC branches share block DMA and the flat elementwise chain.
-// Each branch keeps its own RMS reduction and the BF16 combine boundary.
 template <typename T>
 class BatchedGateMix {
  public:

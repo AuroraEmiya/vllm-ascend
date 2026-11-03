@@ -201,12 +201,12 @@ class BatchedCombineNorm {
                   static_cast<int32_t>(tilingData.hiddenSize));
         PipeBarrier<PIPE_V>();
       }
-      const uint32_t scalars = tilingData.rowBatch * kFloatBlockElements;
-      Muls(scalars, scalars, 1.0f / tilingData.hiddenSize, scalars);
+      const uint32_t scalarCount = tilingData.rowBatch * kFloatBlockElements;
+      Muls(scalars, scalars, 1.0f / tilingData.hiddenSize, scalarCount);
       PipeBarrier<PIPE_V>();
-      Adds(scalars, scalars, tilingData.eps, scalars);
+      Adds(scalars, scalars, tilingData.eps, scalarCount);
       PipeBarrier<PIPE_V>();
-      Rsqrt(scalars, scalars, scalars);
+      Rsqrt(scalars, scalars, scalarCount);
       PipeBarrier<PIPE_V>();
       for (uint32_t batchIndex = 0; batchIndex < tilingData.rowBatch; batchIndex++) {
         Brcb(broadcast, scalars[batchIndex * kFloatBlockElements], 1, {1, kFloatBlockElements});
