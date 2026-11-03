@@ -9,6 +9,7 @@ Forward does not compile code or retain a hidden cache.
 from __future__ import annotations
 
 import torch
+import torch_npu
 
 
 def combine_and_mix(
@@ -44,9 +45,13 @@ def combine_and_mix(
         residual, block_output, previous_injection, norm_weight, eps, hc_count
     )
     down = torch.matmul(normalized, down_weight.transpose(0, 1))
+    if torch_npu.get_npu_format(down) != 2:
+        down = torch_npu.npu_format_cast(down, 2)
     lowrank = torch.ops._C_ascend.qwen_hc_silu(down[:, :rank], hc_count)
     next_injection = down[:, rank : rank + hc_count] if use_combine else None
     gate = torch.matmul(lowrank, up_weight.transpose(0, 1))
+    if torch_npu.get_npu_format(gate) != 2:
+        gate = torch_npu.npu_format_cast(gate, 2)
     block_input = torch.ops._C_ascend.qwen_hc_gate_mix(normalized, gate, hc_count)
     return combined, block_input, next_injection
 
@@ -81,18 +86,26 @@ class PreparedHCWeights:
     """
 
     def __init__(self, down_weight: torch.Tensor, up_weight: torch.Tensor):
-        import torch_npu
-
-        self.down_weight = torch_npu.npu_format_cast(down_weight, 29)
-        self.up_weight = torch_npu.npu_format_cast(up_weight, 29)
+        # This development adapter requires the process default False policy.
+        # Baseline calls run only after it is restored. Do not call concurrently.
+        torch_npu.npu.config.allow_internal_format = True
+        try:
+            self.down_weight = torch_npu.npu_format_cast(down_weight, 29)
+            self.up_weight = torch_npu.npu_format_cast(up_weight, 29)
+        finally:
+            torch_npu.npu.config.allow_internal_format = False
 
     def __call__(self, residual, block_output, previous_injection, norm_weight, **kwargs):
-        return combine_and_mix(
-            residual,
-            block_output,
-            previous_injection,
-            norm_weight,
-            self.down_weight,
-            self.up_weight,
-            **kwargs,
-        )
+        torch_npu.npu.config.allow_internal_format = True
+        try:
+            return combine_and_mix(
+                residual,
+                block_output,
+                previous_injection,
+                norm_weight,
+                self.down_weight,
+                self.up_weight,
+                **kwargs,
+            )
+        finally:
+            torch_npu.npu.config.allow_internal_format = False
