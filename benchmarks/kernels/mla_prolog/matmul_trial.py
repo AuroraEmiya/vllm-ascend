@@ -21,6 +21,9 @@ BROADCAST_BASE_COMMIT = "8b0d4da8d4897b3099736689c63ae7baea1dff3e"
 BROADCAST_BASE_SHA256 = "cc2cacc7d07beb06138643d1aa868f0ef0865b5166a574b94be7d95df7e734fc"
 GAMMA_CACHE_BASE_COMMIT = "5e35db3be11162a6edcb06e131d8dbaae7a2948e"
 GAMMA_CACHE_BASE_SHA256 = "ff46e1fa24ed70794a191aaee14bdb68fa5512bffab0f09eedbe46ea9b254b42"
+SPLIT_OVERLAP_BASE_COMMIT = "f1f0dba2d1202579b8bea9b2d03f480d7fb003ed"
+SPLIT_OVERLAP_BASE_SHA256 = "21279de14dfd20af8078b15c680982104de9b29aaee67fbee2cd9cabe8dd6508"
+RETAINED_SPLIT_BASE_SHA256 = "a2c2e333f94e9e62f3f13bdaa644fc1658cc9fffbf3777a71061d27f23d1fc44"
 HEAD_LAYOUT_SHA256 = "7f6e2de290735bce07a27fe7d7f2523352eb7a8a763065048d525566d7a177df"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
@@ -126,6 +129,26 @@ def comparison_definition(comparison):
                 "keeps both next-unit reuse fences and explicitly drains the last MTE3 output"
             ),
         }
+    if comparison == "norm-output-overlap":
+        return {
+            "baseline_commit": SPLIT_OVERLAP_BASE_COMMIT,
+            "baseline_file": "baseline_serial_f1f0dba2_retained.py",
+            "baseline_sha256": RETAINED_SPLIT_BASE_SHA256,
+            "baseline_derivation": {
+                "source_wrapper_sha256": SPLIT_OVERLAP_BASE_SHA256,
+                "change": "round6 retention decision only: split mode6 for32<=B<=64, mode1 elsewhere",
+                "same_change_in_candidate": True,
+                "rollback_is_not_new_gain": True,
+            },
+            "labels": ("control", "candidate"),
+            "round": 7,
+            "changed": "B>=32 norm: defer b3 MTE3 reuse fence until output Cast, allowing b0 input/V overlap",
+            "unchanged": "retained32..64 split route, mode5 gamma/math, BF16 matrices, UB, output/cache and precision",
+            "native_comparison": (
+                "mode5 keeps original input-blocking MTE3_MTE2; mode7 protects b3 with MTE3_V before each "
+                "norm/KR output Cast, retains input V_MTE2 protection and drains final MTE3 output"
+            ),
+        }
     raise ValueError(f"unknown comparison {comparison}")
 
 
@@ -136,7 +159,7 @@ def pinned_inputs(comparison="projection"):
     manifest = folder / "cases.json"
     if sha256(baseline) != definition["baseline_sha256"] or sha256(manifest) != MANIFEST_SHA256:
         raise ValueError("pinned original wrapper or frozen 15-case manifest changed")
-    return {
+    result = {
         "baseline_commit": definition["baseline_commit"],
         "baseline_path": str(baseline),
         "baseline_canonical_sha256": sha256(baseline),
@@ -144,6 +167,9 @@ def pinned_inputs(comparison="projection"):
         "manifest_canonical_sha256": sha256(manifest),
         "manifest": json.loads(manifest.read_text(encoding="utf-8")),
     }
+    if "baseline_derivation" in definition:
+        result["baseline_derivation"] = definition["baseline_derivation"]
+    return result
 
 
 def runtime(comparison="projection"):
@@ -608,7 +634,15 @@ def main():
     parser.add_argument("--case-id", action="append")
     parser.add_argument(
         "--comparison",
-        choices=("projection", "head-layout", "gmm-down", "norm-broadcast", "norm-gamma-cache", "split-dma-overlap"),
+        choices=(
+            "projection",
+            "head-layout",
+            "gmm-down",
+            "norm-broadcast",
+            "norm-gamma-cache",
+            "split-dma-overlap",
+            "norm-output-overlap",
+        ),
         default="projection",
     )
     parser.add_argument("--mode", choices=("verify", "paired", "micro", "head-micro", "profile"), default="verify")
@@ -672,6 +706,7 @@ def main():
         "gmm-down": GMM_DOWN_SHA256,
         "norm-broadcast": BROADCAST_BASE_SHA256,
         "norm-gamma-cache": GAMMA_CACHE_BASE_SHA256,
+        "split-dma-overlap": SPLIT_OVERLAP_BASE_SHA256,
     }.get(args.comparison)
     if historical_hash and args.mode in {"verify", "paired", "profile"}:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
