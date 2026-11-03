@@ -108,6 +108,47 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
         self.assertTrue(plan["protocol"]["no_new_V3_domain"])
 
+    def test_norm_plan_keeps_distinct_same_binary_control_algorithm(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HARNESS),
+                "--plan",
+                "--comparison",
+                "norm-broadcast",
+                "--mode",
+                "paired",
+                "--case-id",
+                "decode-b128",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 4)
+        self.assertEqual(plan["pinned_baseline"]["baseline_commit"], "592d3963e3ef59fc147ef88ab0f114f35b731776")
+        self.assertIn("mode3", plan["protocol"]["native_comparison"])
+        self.assertIn("mode4", plan["protocol"]["native_comparison"])
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+
+    def test_inverse_broadcast_addressing_reads_only_the_first_block(self):
+        # Brcb<float> expands each of eight source scalars to a 32-byte block.
+        # Mul mask64, src1BlkStride=src1RepStride=0 must read only block0,
+        # including the final repeat of both supported RMS widths.
+        source = [0.125] + [1000 + lane for lane in range(1, 8)]
+        broadcast = [value for value in source for _ in range(8)]
+        for width in (512, 1536):
+            destinations, coefficients = [], []
+            for repeat in range(width // 64):
+                for block in range(8):
+                    for lane in range(8):
+                        destinations.append(repeat * 64 + block * 8 + lane)
+                        coefficients.append(broadcast[0 * repeat + 0 * block + lane])
+            self.assertEqual(destinations, list(range(width)))
+            self.assertEqual(coefficients, [source[0]] * width)
+
 
 if __name__ == "__main__":
     unittest.main()
