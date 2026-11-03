@@ -18,6 +18,9 @@ constexpr uint32_t kMaxNormGroupBatch = 4;
 constexpr uint32_t kNormScalarElements = kMaxNormGroupBatch * kFloatBlockElements;
 constexpr uint32_t kNormBroadcastElements = kFloatVectorElements;
 constexpr uint32_t kMaxBatchedGateGroups = 8;
+// Measured A3 launch policy: amortize scheduling with at least eight FP32 repeats.
+constexpr uint32_t kMinGateVectorRepeats = 8;
+constexpr uint32_t kMinGateTileElements = kMinGateVectorRepeats * kFloatVectorElements;
 constexpr uint32_t kMaxDmaBlockCount = 4095;
 constexpr uint32_t kMaxSupportedHiddenSize = 8192;
 

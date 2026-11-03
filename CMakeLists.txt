@@ -55,7 +55,7 @@ include(${ASCENDC_CMAKE_DIR}/ascendc.cmake)
 # in a Torch-free translation unit; the shared HC interface contains POD only.
 set_source_files_properties(
   ${CMAKE_CURRENT_SOURCE_DIR}/csrc/qwen_hc/op_host/qwen_hc_platform.cpp
-  PROPERTIES COMPILE_OPTIONS "-U_GLIBCXX_USE_CXX11_ABI;-D_GLIBCXX_USE_CXX11_ABI=0")
+  PROPERTIES COMPILE_OPTIONS "-U_GLIBCXX_USE_CXX11_ABI;-D_GLIBCXX_USE_CXX11_ABI=0;-fno-lto")
 
 option(VLLM_ASCEND_BUILD_HC_ONLY "Build only registered HC Ascend C stages" OFF)
 if(VLLM_ASCEND_BUILD_HC_ONLY)

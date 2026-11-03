@@ -99,6 +99,4 @@ class BatchedSilu {
   }
 };
 
-// HC count is small inputGm the model. Batch [K,tileSize] DMA and activation instead of
-// issuing inputLocal separate copy/activation/synchronization chain for every branch.
 }  // namespace vllm_ascend::hc

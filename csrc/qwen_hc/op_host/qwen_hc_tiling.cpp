@@ -117,7 +117,9 @@ HcTilingPlan makeGateMixTiling(HcTilingData data, DeviceResources resources) {
   const uint64_t tilesPerRow =
       std::max(uint64_t(1), ceilDivide(resources.vectorCoreCount, std::max(uint64_t(1), uint64_t(data.rows))));
   const uint64_t balancedColumns = alignUp(ceilDivide(data.hiddenSize, tilesPerRow), kBf16BlockElements);
-  data.tileSize = static_cast<uint32_t>(std::min(ubColumns, balancedColumns));
+  const uint64_t minimumColumns =
+      std::min(alignUp(data.hiddenSize, kBf16BlockElements), uint64_t(kMinGateTileElements));
+  data.tileSize = static_cast<uint32_t>(std::min(ubColumns, std::max(balancedColumns, minimumColumns)));
   return finishPlan(data, resources, uint64_t(data.rows) * ceilDivide(data.hiddenSize, data.tileSize));
 }
 }  // namespace vllm_ascend::hc
