@@ -14,7 +14,7 @@ import validate as validation
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("serial", "static", "superkernel"), required=True)
+    parser.add_argument("--mode", choices=("serial", "native", "static", "superkernel"), required=True)
     parser.add_argument("--case-id", action="append")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
@@ -34,7 +34,9 @@ def main():
 
     def factory(*a, **kw):
         instance = original(*a, **kw)
-        if args.mode == "serial":
+        if args.mode in ("serial", "native"):
+            if args.mode == "native":
+                instance._matrix_backend = args.matrix_backend
             return instance
         begin = time.perf_counter_ns()
         compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend)
