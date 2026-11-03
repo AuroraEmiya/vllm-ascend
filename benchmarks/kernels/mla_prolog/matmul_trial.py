@@ -201,6 +201,21 @@ def comparison_definition(comparison):
                 "KV output b3 is protected by MTE3_V before KR Cast and final MTE3_S; no build or mode8"
             ),
         }
+    if comparison == "final-retained-r7":
+        return {
+            "baseline_commit": NORM_OVERLAP_BASE_COMMIT,
+            "baseline_file": "baseline_serial_7ada452c.py",
+            "baseline_sha256": NORM_OVERLAP_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": None,
+            "validation_only": True,
+            "changed": "none: both arms execute exact retained r7; r8/r9/r10 rejected, ten candidates consumed",
+            "unchanged": "all retained r7 matrices, preparation/refresh, norm7>=32, split6 only32..64 and frozen15",
+            "native_comparison": (
+                "identical retained algorithms share fixed round8 native/V binaries; "
+                "paired arm differences are negative-control diagnostics, not optimization gains"
+            ),
+        }
     raise ValueError(f"unknown comparison {comparison}")
 
 
@@ -719,6 +734,7 @@ def main():
             "split-coefficient-pack",
             "up-nd-row-major",
             "norm-overlap-b16",
+            "final-retained-r7",
         ),
         default="projection",
     )
@@ -761,6 +777,16 @@ def main():
         "no_new_V3_domain": True,
         "kernel_versions": "observed from full msprof; no presumption of V2 or V3",
     }
+    if definition.get("validation_only"):
+        protocol.update(
+            purpose="final retained-r7 source validation after all ten candidates; no new optimization iteration",
+            validation_only=True,
+            optimization_candidates_consumed=10,
+            candidate_count_increment=0,
+            selected_candidate_round=7,
+            direct_comparison="identical retained-r7 Graph instances for measurement negative control only",
+            metric="control_graph_us / candidate_graph_us; identical algorithms, diagnostic only",
+        )
     report = {
         "protocol": protocol,
         "pinned_baseline": {k: v for k, v in pinned.items() if k != "manifest"},
@@ -788,6 +814,7 @@ def main():
         "split-coefficient-pack": "b57151fe11b1266b7cb1cebc33c8f807279943f17e3bc8a6077641b1761a6b40",
         "up-nd-row-major": "f8da1aeb32f884e18fa115c45cb5904af266f2889143dda4d770a10efab443b6",
         "norm-overlap-b16": "757711c6d4ad0284f6d1da0558b8116dd542ad6e3e8ef6f02b3f970e2fca214e",
+        "final-retained-r7": NORM_OVERLAP_BASE_SHA256,
     }.get(args.comparison)
     if historical_hash:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
