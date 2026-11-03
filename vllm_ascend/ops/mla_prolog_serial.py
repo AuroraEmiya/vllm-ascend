@@ -76,6 +76,7 @@ class MlaPrologSerial:
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
         self._matrix_backend = "torch"
+        self._head_layout = "transpose"
         values = self._matrix_values()
         self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in values)
         self._matrix_nd = tuple(torch_npu.npu_format_cast(value.t().contiguous(), ND_FORMAT) for value in values)
@@ -124,7 +125,7 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, head_layout="tile8"):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -132,6 +133,9 @@ class MlaPrologSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
+        if head_layout not in ("transpose", "row", "tile8"):
+            raise ValueError("head_layout must be transpose, row or tile8")
+        self._head_layout = head_layout
         return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
@@ -216,12 +220,14 @@ class MlaPrologSerial:
             head_product = serial_matmul_v3(head_q, self.weight_uk)
             if rows == 1:
                 query = head_product.view(rows, self.heads, KV_RANK)
+            elif self._head_layout == "transpose":
+                query = head_product.transpose(0, 1).contiguous()
             else:
                 query = head_product.new_empty((rows, self.heads, KV_RANK))
                 self._vector(
                     head_product.view(self.heads * rows, KV_RANK),
                     self.dummy, self.dummy, self.dummy, sine, cosine, index,
-                    2, rows, slots, query, self.dummy, cache_kv_flat, cache_kr_flat,
+                    9 if self._head_layout == "tile8" else 2, rows, slots, query, self.dummy, cache_kv_flat, cache_kr_flat,
                 )
         elif rows == 1:
             query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)

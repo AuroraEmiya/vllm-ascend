@@ -42,8 +42,9 @@ public:
         qrGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(queryRope));
         kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
         krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
-        if (t.mode == 2) {
-            pipe.InitBuffer(b0Buf, t.heads * KV_RANK * sizeof(bfloat16_t));
+        if (t.mode == 2 || t.mode == 9) {
+            const uint32_t tileHeads = t.mode == 9 && t.heads > 8 ? 8 : t.heads;
+            pipe.InitBuffer(b0Buf, tileHeads * KV_RANK * sizeof(bfloat16_t));
             b0 = b0Buf.Get<bfloat16_t>();
             return;
         }
@@ -78,7 +79,7 @@ public:
         }
         // The last unit has no following reuse fence. Explicitly drain its
         // pipelined mode's output transfers before leaving the V stage.
-        if (t.mode == 2 || t.mode == 6 || t.mode == 7 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64))
+        if (t.mode == 2 || t.mode == 9 || t.mode == 6 || t.mode == 7 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64))
             Sync<HardEvent::MTE3_S>();
     }
 
@@ -328,16 +329,19 @@ private:
         DataCopyPad(qrGm[ropeOffset + ROPE_DIM / 2], b3[halfCount], writeRope);
     }
 
-    __aicore__ inline void RestoreLayout(uint32_t row)
+    __aicore__ inline void RestoreLayout(uint32_t unit)
     {
         // Read all heads of one row with a strided GM DMA, then write one
         // contiguous batch-major row. The UB-only mode needs no vector buffers.
-        DataCopyExtParams copy{static_cast<uint16_t>(t.heads), KV_RANK * sizeof(bfloat16_t),
+        const uint32_t tileHeads = t.mode == 9 && t.heads > 8 ? 8 : t.heads;
+        const uint32_t tiles = (t.heads + tileHeads - 1) / tileHeads;
+        const uint32_t row = unit / tiles, head = (unit % tiles) * tileHeads;
+        DataCopyExtParams copy{static_cast<uint16_t>(tileHeads), KV_RANK * sizeof(bfloat16_t),
             static_cast<uint32_t>((t.rows - 1) * KV_RANK * sizeof(bfloat16_t)), 0, 0};
         DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
-        DataCopyPad(b0, xGm[row * KV_RANK], copy, noPad);
+        DataCopyPad(b0, xGm[(head * t.rows + row) * KV_RANK], copy, noPad);
         Sync<HardEvent::MTE2_MTE3>();
-        DataCopy(yGm[static_cast<uint64_t>(row) * t.heads * KV_RANK], b0, t.heads * KV_RANK);
+        DataCopy(yGm[(static_cast<uint64_t>(row) * t.heads + head) * KV_RANK], b0, tileHeads * KV_RANK);
     }
 
     XMlaVectorTilingData t;

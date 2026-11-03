@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--matrix-backend", choices=("torch", "v3", "v3_nz"), default="v3_nz")
+    parser.add_argument("--head-layout", choices=("transpose", "row", "tile8"), default="tile8")
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
     args = parser.parse_args()
@@ -37,9 +38,10 @@ def main():
         if args.mode in ("serial", "native"):
             if args.mode == "native":
                 instance._matrix_backend = args.matrix_backend
+                instance._head_layout = args.head_layout
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend)
+        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, head_layout=args.head_layout)
         preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
@@ -53,7 +55,7 @@ def main():
         if unknown:
             parser.error(f"unknown cases: {unknown}")
         cases = [c for c in cases if c["id"] in args.case_id]
-    report = {"matrix_backend": args.matrix_backend, "mode": args.mode, "baseline_route": args.baseline_route, "source_commit": args.source_commit, "cases": [],
+    report = {"head_layout": args.head_layout, "matrix_backend": args.matrix_backend, "mode": args.mode, "baseline_route": args.baseline_route, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
               "protocol": "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
