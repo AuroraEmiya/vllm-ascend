@@ -23,8 +23,8 @@ constexpr uint32_t kMaxBatchedGateGroups = 8;
 // Measured A3 launch policy: amortize scheduling with at least eight FP32 repeats.
 constexpr uint32_t kMinGateVectorRepeats = 8;
 constexpr uint32_t kMinGateTileElements = kMinGateVectorRepeats * kFloatVectorElements;
-// Candidate policy: amortize short-row launches with at least 4 KiB input per core.
-constexpr uint32_t kMinSiluInputBytesPerCore = 4 * 1024;
+// Candidate policy: amortize short-row launches with at least 8 KiB input per core.
+constexpr uint32_t kMinSiluInputBytesPerCore = 8 * 1024;
 constexpr uint32_t kMaxDmaBlockCount = 4095;
 constexpr uint32_t kMaxSupportedHiddenSize = 8192;
 
