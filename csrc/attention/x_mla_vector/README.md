@@ -72,7 +72,20 @@ all true dependencies and the original per-element arithmetic. This reduces
 dynamic PIPE_V barriers per split tile from12 to6 without extra UB. Mode8
 keeps the retained32..64 DMA overlap route and the mode1 route above64; norm7
 is unchanged. See `benchmarks/kernels/mla_prolog/SPLIT_COEFFICIENT_PACK_TRIAL.md`
-for addressing, synchronization and the pinned control. Round8 awaits A3.
+for addressing, synchronization and the pinned control. Round8 passed all15
+A3 checks but was rejected: B32/64/128 complete-Graph ratios were
+0.997226/1.002018/0.987537. Both round9 classes restore the exact round7
+split choice (mode6 only32..64, mode1 elsewhere); this rollback is not
+a round9 gain. Mode8 remains compiled but is never selected by default.
+
+Round9 changes only the prepared up-ND slot from physical `[N,K]` to an
+owned, contiguous `[K,N]` format2 matrix, used directly by public matmul
+when B>=16 and16-aligned. Down still uses its transposed ND view; NZ up
+and all other stages are unchanged. The source up weight cannot alias
+the prepared ND copy. Construction/refresh timings and allocator peaks
+include clone/conversion temporaries; replacing a resident slot does not
+establish zero setup cost. See `benchmarks/kernels/mla_prolog/UP_ND_ROW_MAJOR_TRIAL.md`.
+The round8 V/native binaries are reused without a rebuild. Round9 awaits A3.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -106,7 +119,8 @@ repository's standard `vllm_ascend_C` target. The native adapter uses the existi
 implementation. Benchmark/Graph validation is in
 `benchmarks/kernels/mla_prolog/validate.py`; NPU ST and CPU guard UT accompany it.
 
-The wrapper explicitly prepares NZ and transposed ND matrix-weight copies at construction.
+The wrapper explicitly prepares NZ copies, a transposed down-ND copy and a
+row-major up-ND copy at construction.
 After changing source matrix data, call `refresh_weights()` on an ordered stream
 before replay. Refresh copies into the existing buffers, checks actual formats29 and2,
 and preserves captured data pointers. Gamma and the final head matrix remain
