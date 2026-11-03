@@ -15,7 +15,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     const auto* a = context->GetAttrs();
     const int64_t requestedMode = *a->GetInt(0), channels = *a->GetInt(1);
     // Internal benchmark reference: identical mix math with legacy tile.
-    const int64_t mode = requestedMode==6?2:(requestedMode==8?4:requestedMode);
+    const int64_t mode = requestedMode==6?2:(requestedMode==8?4:(requestedMode==9?5:requestedMode));
     const float eps = *a->GetFloat(2);
     if (s.GetDimNum()!=2 || s.GetDim(0)<1 || s.GetDim(0)>2048 ||
         channels!=4 || mode<0 || mode>5 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
@@ -37,8 +37,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         else if (n>=10) tile=640;
         else if (n>=5) tile=320;
     } else if (mode==5) {
-        // Group only when at least40 independent packed-row groups remain.
-        tile=n>=160?4:(n>=80?2:1);
+        // Trial8-row groups amortize one unit sequence per core at B256.
+        // Internal mode9 preserves the prior4-row reference in this binary.
+        tile=n>=256 && requestedMode!=9?8:(n>=160?4:(n>=80?2:1));
     } else if (mode==1) {
         tile=std::min(2560u,std::max(256u,((n*d+40*32-1)/(40*32))*32));
     }
