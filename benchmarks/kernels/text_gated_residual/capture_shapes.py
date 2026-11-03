@@ -12,6 +12,7 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import math
 import platform
 import traceback
 from pathlib import Path
@@ -19,8 +20,6 @@ from pathlib import Path
 import cann_ops_transformer_custom  # noqa: F401
 import torch
 import torch_npu
-
-from validate import make_inputs
 
 OP = "cann_ops_transformer::text_gated_residual"
 
@@ -45,11 +44,32 @@ def matrix():
     ]:
         cases.append(dict(cases[5], id=f"decode-b17-{label}", gate=gate,
                           gamma=gamma, need_backward=backward))
+    for channels, hidden, rank in [
+        (2, 1024, 128), (2, 2560, 320), (8, 2560, 320),
+        (4, 1024, 128), (4, 2048, 256), (4, 4096, 512),
+        (4, 2560, 128), (4, 2560, 512), (8, 4096, 512),
+    ]:
+        cases.append(dict(cases[5], id=f"decode-b17-c{channels}-h{hidden}-r{rank}",
+                          C=channels, H=hidden, R=rank,
+                          source="generic public ABI parameter sweep; actual NPU metadata captured by profiler"))
     return {"kind": "operator_level_runtime_capture_matrix",
-            "model_config_dimensions": "Qwen3.8-Flash-Next H2560/C4/R320",
+            "model_config_dimensions": "anchor H2560/C4/R320; generic H1024..4096/C2,4,8/R128..512 samples",
             "batch_selection": "explicit minimum, powers and branch-adjacent discrete samples",
             "not_full_model_capture": True, "not_new_performance_iteration": True,
             "cases": cases}
+
+
+def make_inputs(case):
+    generator = torch.Generator().manual_seed(case["seed"])
+    dim = case["C"] * case["H"]
+    rank = case["R"]
+    x = torch.randn(case["B"], case["S"], dim, generator=generator).to(torch.bfloat16)
+    wd = (torch.randn(rank, dim, generator=generator) / math.sqrt(dim)).to(torch.bfloat16)
+    wu = (torch.randn(dim, rank, generator=generator) / math.sqrt(rank)).to(torch.bfloat16)
+    wg = ((torch.randn(case["C"], dim, generator=generator) / math.sqrt(dim)).to(torch.bfloat16)
+          if case["gate"] else None)
+    gamma = torch.randn(dim, generator=generator) * 0.1 if case["gamma"] else None
+    return [x, wd, wu, wg, gamma]
 
 
 def tensor_meta(value):
@@ -97,7 +117,7 @@ def main():
         torch.npu.synchronize()
         result["inputs"] = dict(zip(("x", "w_down", "w_up", "w_gate", "gamma"),
                                    map(tensor_meta, tensors)))
-        result["scalar_kwargs"] = dict(channels=4, eps=1e-6, need_backward=case["need_backward"])
+        result["scalar_kwargs"] = dict(channels=case["C"], eps=1e-6, need_backward=case["need_backward"])
         handler = torch_npu.profiler.tensorboard_trace_handler(
             str(args.out / "profiler"), analyse_flag=True, async_mode=False)
         with torch_npu.profiler.profile(
@@ -107,7 +127,7 @@ def main():
             on_trace_ready=handler,
         ):
             outputs = torch.ops.cann_ops_transformer.text_gated_residual(
-                x, wd, wu, w_gate=wg, channels=4, gamma=gamma, eps=1e-6,
+                x, wd, wu, w_gate=wg, channels=case["C"], gamma=gamma, eps=1e-6,
                 need_backward=case["need_backward"])
             torch.npu.synchronize()
         result["synchronized_call_completed"] = True
@@ -131,7 +151,16 @@ def main():
         result["input_shape_recorded_by_profiler"] = any(
             any("shape" in str(k).lower() or "dim" in str(k).lower()
                 for k in event.get("args", {})) for event in matches)
-        result["status"] = ("CAPTURED" if matches and result["input_shape_recorded_by_profiler"]
+        expected_dims = [m["shape"] for m in result["inputs"].values() if m is not None]
+        result["profiler_dims_match_runtime"] = any(
+            [[int(n) for n in block.strip().split(",")]
+             for block in event.get("args", {}).get("Input Dims", "").split(";") if block.strip()]
+            == expected_dims for event in matches)
+        result["kernel_event_present"] = any(
+            event["name"].startswith("aclnnTextGatedResidual_TextGatedResidual_")
+            for event in kernels)
+        result["status"] = ("CAPTURED" if matches and result["profiler_dims_match_runtime"]
+                            and result["kernel_event_present"]
                             else "CALL_COMPLETED_PROFILER_METADATA_INCOMPLETE")
         if result["status"] == "CAPTURED":
             # This adapter serializes observed runtime metadata, without calculating shapes.
