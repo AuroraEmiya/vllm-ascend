@@ -37,21 +37,22 @@ def matrix():
                           gate=True, gamma=True, need_backward=False,
                           seed=20261103 + b, input_mode="random", phase="decode",
                           source="synthetic parameter sweep; actual NPU metadata captured by profiler"))
-    for label, gate, gamma, backward in [
-        ("optional-none", False, False, False),
-        ("aux-five", True, True, True),
-        ("aux-no-gate", False, True, True),
-    ]:
-        cases.append(dict(cases[5], id=f"decode-b17-{label}", gate=gate,
-                          gamma=gamma, need_backward=backward))
-    for channels, hidden, rank in [
-        (2, 1024, 128), (2, 2560, 320), (8, 2560, 320),
-        (4, 1024, 128), (4, 2048, 256), (4, 4096, 512),
-        (4, 2560, 128), (4, 2560, 512), (8, 4096, 512),
-    ]:
-        cases.append(dict(cases[5], id=f"decode-b17-c{channels}-h{hidden}-r{rank}",
-                          C=channels, H=hidden, R=rank,
-                          source="generic public ABI parameter sweep; actual NPU metadata captured by profiler"))
+    for batch in (17, 16):
+        for label, gate, gamma, backward in [
+            ("optional-none", False, False, False),
+            ("aux-five", True, True, True),
+            ("aux-no-gate", False, True, True),
+        ]:
+            cases.append(dict(cases[5], id=f"decode-b{batch}-{label}", B=batch, gate=gate,
+                              gamma=gamma, need_backward=backward))
+        for channels, hidden, rank in [
+            (2, 1024, 128), (2, 2560, 320), (8, 2560, 320),
+            (4, 1024, 128), (4, 2048, 256), (4, 4096, 512),
+            (4, 2560, 128), (4, 2560, 512), (8, 4096, 512),
+        ]:
+            cases.append(dict(cases[5], id=f"decode-b{batch}-c{channels}-h{hidden}-r{rank}",
+                              B=batch, C=channels, H=hidden, R=rank,
+                              source="generic public ABI parameter sweep; actual NPU metadata captured by profiler"))
     return {"kind": "operator_level_runtime_capture_matrix",
             "model_config_dimensions": "anchor H2560/C4/R320; generic H1024..4096/C2,4,8/R128..512 samples",
             "batch_selection": "explicit minimum, powers and branch-adjacent discrete samples",
