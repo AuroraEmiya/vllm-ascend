@@ -3,6 +3,8 @@
 
 import importlib.util
 import json
+import random
+import struct
 import subprocess
 import sys
 import unittest
@@ -237,6 +239,128 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertIn("B>=32", plan["protocol"]["changed"])
         self.assertIn("mode1", plan["protocol"]["native_comparison"])
         self.assertIn("mode6", plan["protocol"]["native_comparison"])
+
+    def test_coefficient_pack_plan_pins_exact_round7_control(self):
+        pinned = TRIAL.pinned_inputs("split-coefficient-pack")
+        self.assertEqual(pinned["baseline_commit"], "7ada452c33c5748fe141a786250c2b30345b637f")
+        self.assertEqual(
+            pinned["baseline_canonical_sha256"],
+            "1030da1293222b46d337840a496acc87d0bae152c532007121368da507096d56",
+        )
+        self.assertNotIn("baseline_derivation", pinned)
+        result = subprocess.run(
+            [sys.executable, str(HARNESS), "--plan", "--comparison", "split-coefficient-pack", "--mode", "paired"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 8)
+        self.assertEqual(len(plan["selected_cases"]), 15)
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+
+    def test_packed_coefficients_cover_legal_head_tiles_and_keep_fp32_operation_order(self):
+        def fp32(value):
+            return struct.unpack("<f", struct.pack("<f", value))[0]
+
+        generator = random.Random(718032)
+        sine = [fp32(generator.uniform(-1, 1)) for _ in range(64)]
+        cosine = [fp32(generator.uniform(-1, 1)) for _ in range(64)]
+        packed = [777.0] * 2048
+        halves = (cosine[:32], cosine[32:], sine[:32], sine[32:])
+        for index, half in enumerate(halves):
+            packed[index * 64 : (index + 1) * 64] = [fp32(value + 0.0) for value in half] * 2
+        self.assertEqual(packed[256:], [777.0] * (2048 - 256))
+
+        def product(values, offset, heads):
+            if heads not in (1, 2, 4, 8, 16, 32):
+                raise ValueError("outside the fixed power-of-two head contract")
+            mask, repeats = (32, 1) if heads == 1 else (64, heads // 2)
+            result = [None] * (heads * 32)
+            for repeat in range(repeats):
+                for lane in range(mask):
+                    destination = repeat * 64 + lane
+                    result[destination] = fp32(values[destination] * packed[offset + lane])
+            self.assertNotIn(None, result)
+            return result
+
+        for heads in (1, 2, 4, 8, 16, 32):
+            original = [[fp32(generator.uniform(-4, 4)) for _ in range(64)] for _ in range(heads)]
+            even = [value for head in original for value in head[::2]]
+            odd = [value for head in original for value in head[1::2]]
+            cos_even, cos_odd = product(even, 0, heads), product(odd, 64, heads)
+            sin_odd, sin_even = product(odd, 128, heads), product(even, 192, heads)
+            actual = [fp32(c - s) for c, s in zip(cos_even, sin_odd)]
+            actual += [fp32(c + s) for c, s in zip(cos_odd, sin_even)]
+            expected_even, expected_odd = [], []
+            for head in original:
+                for lane in range(32):
+                    expected_even.append(
+                        fp32(fp32(head[2 * lane] * cosine[lane]) - fp32(head[2 * lane + 1] * sine[lane]))
+                    )
+                    expected_odd.append(
+                        fp32(fp32(head[2 * lane + 1] * cosine[32 + lane]) + fp32(head[2 * lane] * sine[32 + lane]))
+                    )
+            self.assertEqual(
+                b"".join(struct.pack("<f", value) for value in actual),
+                b"".join(struct.pack("<f", value) for value in expected_even + expected_odd),
+            )
+        # An odd legal tail is one head. Other odd head counts are rejected
+        # by the existing contract; the trial does not extend that domain.
+        for heads in (3, 5, 31):
+            with self.assertRaisesRegex(ValueError, "fixed power-of-two"):
+                product([0.0] * (heads * 32), 0, heads)
+
+    def test_packed_rope_barriers_order_gather_reuse_and_all_true_vector_dependencies(self):
+        def hazards(missing=None):
+            coefficients = ("CE", "CO", "SO", "SE")
+            reads_f0 = {"f0-" + name: "R" for name in coefficients}
+            phases = [
+                [("gather-E", {**reads_f0, "f3-E": "W"}), ("gather-O", {**reads_f0, "f3-O": "W"})],
+                [("pack-" + name, {"f0-" + name: "W"}) for name in coefficients],
+                [
+                    ("cos-E", {"f3-E": "R", "f0-CE": "R", "f4-E": "W"}),
+                    ("cos-O", {"f3-O": "R", "f0-CO": "R", "f4-O": "W"}),
+                ],
+                [("sin-O", {"f3-O": "W", "f0-SO": "R"}), ("sin-E", {"f3-E": "W", "f0-SE": "R"})],
+                [("sub-E", {"f4-E": "W", "f3-O": "R"}), ("add-O", {"f4-O": "W", "f3-E": "R"})],
+                [("output-cast", {"f4-E": "R", "f4-O": "R", "b3": "W"})],
+            ]
+            operations, before = {}, {}
+            earlier_fence = set()
+            for index, phase in enumerate(phases):
+                dependencies = set(earlier_fence)
+                if index and index != missing:
+                    dependencies.update(name for name, _ in phases[index - 1])
+                for name, accesses in phase:
+                    operations[name] = accesses
+                    before[name] = set(dependencies)
+                earlier_fence = dependencies
+            for name in before:
+                pending = list(before[name])
+                while pending:
+                    predecessor = pending.pop()
+                    for ancestor in before[predecessor] - before[name]:
+                        before[name].add(ancestor)
+                        pending.append(ancestor)
+            conflicts = []
+            names = list(operations)
+            for index, left in enumerate(names):
+                for right in names[index + 1 :]:
+                    shared = operations[left].keys() & operations[right].keys()
+                    if any("W" in (operations[left][buffer], operations[right][buffer]) for buffer in shared):
+                        if left not in before[right] and right not in before[left]:
+                            conflicts.append((left, right))
+            return conflicts, before
+
+        conflicts, before = hazards()
+        self.assertEqual(conflicts, [])
+        self.assertNotIn("cos-E", before["cos-O"])
+        self.assertNotIn("sin-E", before["sin-O"])
+        self.assertNotIn("sub-E", before["add-O"])
+        for barrier in range(1, 6):
+            self.assertTrue(hazards(missing=barrier)[0], f"missing barrier{barrier} must expose a hazard")
 
     def test_norm_output_overlap_pins_the_retained_round6_control(self):
         result = subprocess.run(
