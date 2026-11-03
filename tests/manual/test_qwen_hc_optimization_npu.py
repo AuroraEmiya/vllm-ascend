@@ -23,7 +23,11 @@ def main():
     torch.set_num_threads(4)
     torch.npu.set_device(0)
     four = four_implementations(args.extension)
-    funcs = {"ascendc_serial": four["ascendc_matmul"], "triton_serial": four["triton_matmul"]}
+    funcs = {
+        "ascendc_serial": four["ascendc_matmul"],
+        "triton_serial": four["triton_linear"],
+        "triton_matmul": four["triton_matmul"],
+    }
     cases = json.loads(args.cases.read_text())["cases"] if args.cases else BOUNDARIES
     result = {
         "mode": args.mode,
@@ -31,7 +35,11 @@ def main():
         "torch": torch.__version__,
         "torch_npu": torch_npu.__version__,
         "soc": torch.npu.get_device_name(0),
-        "c_api": "torch.matmul(input, weight.transpose(0, 1))",
+        "c_api": {
+            "candidate": "torch.matmul",
+            "original_baseline": "F.linear",
+            "api_control": "torch.matmul",
+        },
         "weight_mode": "original",
         "cases": [],
     }
