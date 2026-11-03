@@ -31,13 +31,17 @@ def metadata(value):
     }
 
 
-def run_case(case, candidate_only=False, mix_tile_control=False):
+def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_control=False):
     cpu = validation.make_inputs(case)
     refs = validation.oracle(cpu, case)
     inputs = [v.npu() if v is not None else None for v in cpu]
     x, wd, wu, wg, gamma = inputs
     objects = {"candidate": Candidate(wd, wu, wg)}
-    if mix_tile_control:
+    if norm_buffer_control:
+        control = Candidate(wd, wu, wg)
+        control._norm_mode = 8
+        objects = {"original": control, **objects}
+    elif mix_tile_control:
         control = Candidate(wd, wu, wg)
         control._mix_mode = 6
         objects = {"original": control, **objects}
@@ -49,7 +53,9 @@ def run_case(case, candidate_only=False, mix_tile_control=False):
         "checks": {},
         "input_metadata": [metadata(v) if v is not None else None for v in inputs],
         "timing": None,
-        "comparison": "same-binary legacy-mix-tile / candidate"
+        "comparison": "same-binary legacy-norm / candidate"
+        if norm_buffer_control
+        else "same-binary legacy-mix-tile / candidate"
         if mix_tile_control
         else "historical-wrapper / candidate",
     }
@@ -135,9 +141,10 @@ def main():
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--candidate-only", action="store_true")
     parser.add_argument("--mix-tile-control", action="store_true")
+    parser.add_argument("--norm-buffer-control", action="store_true")
     args = parser.parse_args()
-    if args.mix_tile_control and args.candidate_only:
-        parser.error("select either candidate-only or mix-tile-control")
+    if sum((args.mix_tile_control, args.norm_buffer_control, args.candidate_only)) > 1:
+        parser.error("select one control or candidate-only option")
     root = Path(__file__).resolve().parents[3]
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     if actual != args.source_commit:
@@ -155,7 +162,9 @@ def main():
     result = {
         "source_commit": actual,
         "baseline_wrapper": (
-            "current Candidate with internal legacy-mix-tile mode6; only tile differs"
+            "current Candidate with legacy-norm mode8; only buffering differs"
+            if args.norm_buffer_control
+            else "current Candidate with internal legacy-mix-tile mode6; only tile differs"
             if args.mix_tile_control
             else "a0d271767512cce899982182f44ceb4824f8d3b7"
         ),
@@ -174,7 +183,7 @@ def main():
     for case in cases:
         start = time.time_ns()
         try:
-            row = run_case(case, args.candidate_only, args.mix_tile_control)
+            row = run_case(case, args.candidate_only, args.mix_tile_control, args.norm_buffer_control)
         except Exception:
             row = {"case": case, "status": "INVALID", "timing": None, "error": traceback.format_exc()}
         row["host_begin_ns"] = start
