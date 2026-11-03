@@ -12,16 +12,19 @@ class HcSilu {
     inputGm.SetGlobalBuffer((__gm__ T*)input);
     outputGm.SetGlobalBuffer((__gm__ T*)output);
     TPipe pipe;
-    TBuf<TPosition::VECCALC> inputBuffer, outputBuffer, valueBuffer, activationBuffer;
     const uint32_t alignedHiddenSize = alignElements(tilingData.hiddenSize);
-    pipe.InitBuffer(inputBuffer, alignedHiddenSize * sizeof(T));
-    pipe.InitBuffer(outputBuffer, alignedHiddenSize * sizeof(T));
-    pipe.InitBuffer(valueBuffer, alignedHiddenSize * sizeof(float));
-    pipe.InitBuffer(activationBuffer, alignedHiddenSize * sizeof(float));
-    auto inputLocal = inputBuffer.Get<T>();
-    auto outputLocal = outputBuffer.Get<T>();
-    auto values = valueBuffer.Get<float>();
-    auto activation = activationBuffer.Get<float>();
+    const uint32_t inputBytes = alignedHiddenSize * sizeof(T);
+    const uint32_t floatBytes = alignedHiddenSize * sizeof(float);
+    const uint32_t outputOffsetBytes = inputBytes;
+    const uint32_t valueOffsetBytes = outputOffsetBytes + inputBytes;
+    const uint32_t activationOffsetBytes = valueOffsetBytes + floatBytes;
+    TBuf<TPosition::VECCALC> storage;
+    // Disjoint DMA-aligned regions, with the same total live UB as four TBufs.
+    pipe.InitBuffer(storage, activationOffsetBytes + floatBytes);
+    auto inputLocal = storage.Get<T>();
+    auto outputLocal = storage.Get<T>()[outputOffsetBytes / sizeof(T)];
+    auto values = storage.Get<float>()[valueOffsetBytes / sizeof(float)];
+    auto activation = storage.Get<float>()[activationOffsetBytes / sizeof(float)];
     for (uint32_t row = GetBlockIdx(); row < tilingData.rows; row += GetBlockNum()) {
       syncPipeline<HardEvent::MTE3_MTE2>();
       loadTile(inputLocal, inputGm, row * tilingData.residualStride, tilingData.hiddenSize);
@@ -50,15 +53,18 @@ class BatchedSilu {
     outputGm.SetGlobalBuffer((__gm__ T*)output);
     const uint32_t capacity = tilingData.rowBatch * tilingData.hiddenSize;
     TPipe pipe;
-    TBuf<TPosition::VECCALC> inputBuffer, outputBuffer, valueBuffer, activationBuffer;
-    pipe.InitBuffer(inputBuffer, capacity * sizeof(T) + kTransferGuardBytes);
-    pipe.InitBuffer(outputBuffer, capacity * sizeof(T) + kTransferGuardBytes);
-    pipe.InitBuffer(valueBuffer, capacity * sizeof(float) + kTransferGuardBytes);
-    pipe.InitBuffer(activationBuffer, capacity * sizeof(float) + kTransferGuardBytes);
-    auto inputLocal = inputBuffer.Get<T>();
-    auto outputLocal = outputBuffer.Get<T>();
-    auto values = valueBuffer.Get<float>();
-    auto activation = activationBuffer.Get<float>();
+    const uint32_t inputBytes = capacity * sizeof(T) + kTransferGuardBytes;
+    const uint32_t floatBytes = capacity * sizeof(float) + kTransferGuardBytes;
+    const uint32_t outputOffsetBytes = inputBytes;
+    const uint32_t valueOffsetBytes = outputOffsetBytes + inputBytes;
+    const uint32_t activationOffsetBytes = valueOffsetBytes + floatBytes;
+    TBuf<TPosition::VECCALC> storage;
+    // Retain a separate transfer guard for every logical region.
+    pipe.InitBuffer(storage, activationOffsetBytes + floatBytes);
+    auto inputLocal = storage.Get<T>();
+    auto outputLocal = storage.Get<T>()[outputOffsetBytes / sizeof(T)];
+    auto values = storage.Get<float>()[valueOffsetBytes / sizeof(float)];
+    auto activation = storage.Get<float>()[activationOffsetBytes / sizeof(float)];
     const uint32_t taskCount = (tilingData.rows + tilingData.rowBatch - 1) / tilingData.rowBatch;
     for (uint32_t taskIndex = GetBlockIdx(); taskIndex < taskCount; taskIndex += GetBlockNum()) {
       const uint32_t row = taskIndex * tilingData.rowBatch;
