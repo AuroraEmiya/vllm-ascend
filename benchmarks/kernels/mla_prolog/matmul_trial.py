@@ -16,6 +16,7 @@ BASE_COMMIT = "af0d582472abb826d3ea6cbe37c75e7f49f9481c"
 BASE_SHA256 = "654bb8fe5761e19edfdaf2e8a595c9d599cf10a7e40f1f410d44008b2107af51"
 HEAD_BASE_COMMIT = "592d3963e3ef59fc147ef88ab0f114f35b731776"
 HEAD_BASE_SHA256 = "0ee2fe6008ea62b83d1b815249d2517b3d39550e587850858a60ad1f07e7ba8c"
+GMM_DOWN_SHA256 = "6ab63adaad223b69eda5e02f2690b8fe052c4c357b13bc19eeafecdf5b2f2cfe"
 HEAD_LAYOUT_SHA256 = "7f6e2de290735bce07a27fe7d7f2523352eb7a8a763065048d525566d7a177df"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
@@ -75,6 +76,23 @@ def comparison_definition(comparison):
             "round": 3,
             "changed": "ND-route merged-down only: matmul to single-group npu_grouped_matmul",
             "unchanged": "BF16, prepared weights, static ND/NZ row route, NZ down, all up/head and V versus round1",
+        }
+    if comparison == "norm-broadcast":
+        return {
+            "baseline_commit": HEAD_BASE_COMMIT,
+            "baseline_file": "baseline_serial_592d3963.py",
+            "baseline_sha256": HEAD_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 4,
+            "changed": "RMS inverse application only: V_S/GetValue/Muls to UB Brcb/broadcast Mul",
+            "unchanged": (
+                "all public BF16 matrices, preparation, static routes, "
+                "V arithmetic/order outside inverse broadcast, cache and thresholds versus round1"
+            ),
+            "native_comparison": (
+                "one rebuilt package retains original mode3 scalar-read control; "
+                "candidate mode4 broadcasts the same FP32 inverse in UB"
+            ),
         }
     raise ValueError(f"unknown comparison {comparison}")
 
@@ -556,7 +574,9 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--source-commit")
     parser.add_argument("--case-id", action="append")
-    parser.add_argument("--comparison", choices=("projection", "head-layout", "gmm-down"), default="projection")
+    parser.add_argument(
+        "--comparison", choices=("projection", "head-layout", "gmm-down", "norm-broadcast"), default="projection"
+    )
     parser.add_argument("--mode", choices=("verify", "paired", "micro", "head-micro", "profile"), default="verify")
     parser.add_argument("--implementation", choices=("original", "matmul", "control", "candidate"))
     parser.add_argument(
@@ -591,6 +611,7 @@ def main():
         "micro_scope": "identical BF16 inputs/weight storage; explicit output layout operations included",
         "changed": definition["changed"],
         "unchanged": definition["unchanged"],
+        "native_comparison": definition.get("native_comparison", "unchanged shared V algorithm"),
         "fusion_comparison": "unchanged validate.py --baseline-route aclnn, current candidate wrapper",
         "no_new_V3_domain": True,
         "kernel_versions": "observed from full msprof; no presumption of V2 or V3",
@@ -611,7 +632,11 @@ def main():
     if args.out.exists():
         parser.error("refusing to overwrite existing output; choose a new attempt path")
     repo = Path(__file__).resolve().parents[3]
-    historical_hash = {"projection": HEAD_BASE_SHA256, "head-layout": HEAD_LAYOUT_SHA256}.get(args.comparison)
+    historical_hash = {
+        "projection": HEAD_BASE_SHA256,
+        "head-layout": HEAD_LAYOUT_SHA256,
+        "gmm-down": GMM_DOWN_SHA256,
+    }.get(args.comparison)
     if historical_hash and args.mode in {"verify", "paired", "profile"}:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
             parser.error("historical full trials require their exact candidate wrapper; select the current comparison")
