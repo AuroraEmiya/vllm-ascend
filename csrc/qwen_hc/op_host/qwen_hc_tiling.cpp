@@ -45,11 +45,6 @@ uint64_t requiredUbBytes(const HcTilingData& data) {
       return (3 * kBf16Bytes + 2 * kFloatBytes) * flatElements + (kBf16Bytes + kFloatBytes) * hiddenSize +
              kBf16BlockElements * kBf16Bytes + (kNormScalarElements + kNormBroadcastElements) * kFloatBytes +
              8 * kTransferGuardBytes;
-    case HcTilingKey::NormBatchedCached:
-      // Reuse BF16 normalized storage for the initial weight DMA; keep FP32 weights resident.
-      return (2 * kBf16Bytes + 3 * kFloatBytes) * flatElements + (kBf16Bytes + kFloatBytes) * hiddenSize +
-             kBf16BlockElements * kBf16Bytes + (kNormScalarElements + kNormBroadcastElements) * kFloatBytes +
-             8 * kTransferGuardBytes;
     case HcTilingKey::SiluSingle:
       return (2 * kBf16Bytes + 2 * kFloatBytes) * alignUp(hiddenSize, kBf16BlockElements);
     case HcTilingKey::SiluBatched:
@@ -82,14 +77,7 @@ HcTilingPlan makeCombineNormTiling(HcTilingData data, DeviceResources resources)
       data.tilingKey = HcTilingKey::NormSingle;
     }
   }
-  const uint64_t tasks = groupTasks / data.rowBatch;
-  const uint32_t groupsPerRow = data.groupCount / data.rowBatch;
-  if (data.tilingKey == HcTilingKey::NormBatched && tasks > resources.vectorCoreCount &&
-      resources.vectorCoreCount % groupsPerRow == 0) {
-    data.tilingKey = HcTilingKey::NormBatchedCached;
-    if (requiredUbBytes(data) > resources.ubSizeBytes) data.tilingKey = HcTilingKey::NormBatched;
-  }
-  return finishPlan(data, resources, tasks);
+  return finishPlan(data, resources, groupTasks / data.rowBatch);
 }
 
 HcTilingPlan makeSiluTiling(HcTilingData data, DeviceResources resources) {
@@ -103,7 +91,9 @@ HcTilingPlan makeSiluTiling(HcTilingData data, DeviceResources resources) {
     const uint64_t ubRows = resources.ubSizeBytes > guardBytes
                                 ? (resources.ubSizeBytes - guardBytes) / (bytesPerElement * data.hiddenSize)
                                 : 0;
-    const auto batch = std::min({rowWaves, ubRows, uint64_t(kMaxDmaBlockCount)});
+    const uint64_t usefulRows = ceilDivide(kMinSiluInputBytesPerCore, uint64_t(data.hiddenSize) * kBf16Bytes);
+    const auto batch = std::min({std::max(rowWaves, usefulRows), ubRows, uint64_t(kMaxDmaBlockCount),
+                                 std::max(uint64_t(1), uint64_t(data.rows))});
     if (batch > 1) {
       data.rowBatch = static_cast<uint32_t>(batch);
       data.tilingKey = HcTilingKey::SiluBatched;

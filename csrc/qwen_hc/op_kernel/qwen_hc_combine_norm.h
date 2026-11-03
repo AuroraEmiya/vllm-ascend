@@ -116,7 +116,7 @@ class CombineNorm {
   }
 };
 
-template <typename T, bool cacheWeight = false>
+template <typename T>
 class BatchedCombineNorm {
  public:
   __aicore__ inline void run(GM_ADDR residual, GM_ADDR block, GM_ADDR injection, GM_ADDR weight, GM_ADDR combined,
@@ -131,14 +131,10 @@ class BatchedCombineNorm {
     const uint32_t flatElements = tilingData.rowBatch * tilingData.hiddenSize;
     TPipe pipe;
     TBuf<TPosition::VECCALC> residualBuffer, blockBuffer, weightBuffer, normalizedBuffer, injectionBuffer, valueBuffer,
-        squareBuffer, workBuffer, scalarBuffer, broadcastBuffer, cachedWeightBuffer;
+        squareBuffer, workBuffer, scalarBuffer, broadcastBuffer;
     pipe.InitBuffer(residualBuffer, flatElements * sizeof(T) + kTransferGuardBytes);
     pipe.InitBuffer(blockBuffer, tilingData.hiddenSize * sizeof(T) + kTransferGuardBytes);
-    if constexpr (cacheWeight) {
-      pipe.InitBuffer(cachedWeightBuffer, flatElements * sizeof(float) + kTransferGuardBytes);
-    } else {
-      pipe.InitBuffer(weightBuffer, flatElements * sizeof(T) + kTransferGuardBytes);
-    }
+    pipe.InitBuffer(weightBuffer, flatElements * sizeof(T) + kTransferGuardBytes);
     pipe.InitBuffer(normalizedBuffer, flatElements * sizeof(T) + kTransferGuardBytes);
     pipe.InitBuffer(injectionBuffer, kBf16BlockElements * sizeof(T) + kTransferGuardBytes);
     pipe.InitBuffer(valueBuffer, flatElements * sizeof(float) + kTransferGuardBytes);
@@ -148,11 +144,8 @@ class BatchedCombineNorm {
     pipe.InitBuffer(broadcastBuffer, kFloatVectorElements * sizeof(float));
     auto residualLocal = residualBuffer.Get<T>();
     auto blockLocal = blockBuffer.Get<T>();
+    auto weightLocal = weightBuffer.Get<T>();
     auto normalizedLocal = normalizedBuffer.Get<T>();
-    auto weightLocal = normalizedLocal;
-    if constexpr (!cacheWeight) weightLocal = weightBuffer.Get<T>();
-    LocalTensor<float> cachedWeight;
-    if constexpr (cacheWeight) cachedWeight = cachedWeightBuffer.Get<float>();
     auto injectionLocal = injectionBuffer.Get<T>();
     auto values = valueBuffer.Get<float>();
     auto temporary = squareBuffer.Get<float>();
@@ -160,26 +153,14 @@ class BatchedCombineNorm {
     auto scalars = scalarBuffer.Get<float>();
     auto broadcast = broadcastBuffer.Get<float>();
     const uint32_t groupsPerRow = tilingData.groupCount / tilingData.rowBatch;
-    if constexpr (cacheWeight) {
-      // Host guarantees the group chunk is invariant across this core's grid-stride loop.
-      const uint32_t firstGroup = (GetBlockIdx() % groupsPerRow) * tilingData.rowBatch;
-      const uint32_t weightElements = tilingData.sharedWeight ? tilingData.hiddenSize : flatElements;
-      loadTile(weightLocal, weightGm, tilingData.sharedWeight ? 0 : firstGroup * tilingData.hiddenSize,
-               weightElements);
-      syncPipeline<HardEvent::MTE2_V>();
-      Cast(cachedWeight, weightLocal, RoundMode::CAST_NONE, weightElements);
-      PipeBarrier<PIPE_V>();
-    }
     for (uint32_t taskIndex = GetBlockIdx(); taskIndex < tilingData.rows * groupsPerRow; taskIndex += GetBlockNum()) {
       const uint32_t row = taskIndex / groupsPerRow, firstGroup = (taskIndex % groupsPerRow) * tilingData.rowBatch;
       syncPipeline<HardEvent::MTE3_MTE2>();
       loadTile(residualLocal, residualGm, row * tilingData.residualStride + firstGroup * tilingData.hiddenSize,
                flatElements);
       loadTile(blockLocal, blockGm, row * tilingData.blockStride, tilingData.hiddenSize);
-      if constexpr (!cacheWeight) {
-        loadTile(weightLocal, weightGm, tilingData.sharedWeight ? 0 : firstGroup * tilingData.hiddenSize,
-                 tilingData.sharedWeight ? tilingData.hiddenSize : flatElements);
-      }
+      loadTile(weightLocal, weightGm, tilingData.sharedWeight ? 0 : firstGroup * tilingData.hiddenSize,
+               tilingData.sharedWeight ? tilingData.hiddenSize : flatElements);
       if (tilingData.hasInjection)
         loadTile(injectionLocal, injectionGm, row * tilingData.injectionStride + firstGroup, tilingData.rowBatch);
       syncPipeline<HardEvent::MTE2_V>();
@@ -236,27 +217,17 @@ class BatchedCombineNorm {
         PipeBarrier<PIPE_V>();
       }
       if (tilingData.sharedWeight) {
-        auto sharedWeightValues = workspace;
-        if constexpr (cacheWeight) {
-          sharedWeightValues = cachedWeight;
-        } else {
-          Cast(workspace, weightLocal, RoundMode::CAST_NONE, tilingData.hiddenSize);
-          PipeBarrier<PIPE_V>();
-        }
+        Cast(workspace, weightLocal, RoundMode::CAST_NONE, tilingData.hiddenSize);
+        PipeBarrier<PIPE_V>();
         for (uint32_t batchIndex = 0; batchIndex < tilingData.rowBatch; batchIndex++) {
-          MulAddDst(values[batchIndex * tilingData.hiddenSize], values[batchIndex * tilingData.hiddenSize], sharedWeightValues,
+          MulAddDst(values[batchIndex * tilingData.hiddenSize], values[batchIndex * tilingData.hiddenSize], workspace,
                     tilingData.hiddenSize);
         }
         PipeBarrier<PIPE_V>();
       } else {
-        auto groupWeightValues = temporary;
-        if constexpr (cacheWeight) {
-          groupWeightValues = cachedWeight;
-        } else {
-          Cast(temporary, weightLocal, RoundMode::CAST_NONE, flatElements);
-          PipeBarrier<PIPE_V>();
-        }
-        MulAddDst(values, values, groupWeightValues, flatElements);
+        Cast(temporary, weightLocal, RoundMode::CAST_NONE, flatElements);
+        PipeBarrier<PIPE_V>();
+        MulAddDst(values, values, temporary, flatElements);
         PipeBarrier<PIPE_V>();
       }
       Cast(normalizedLocal, values, RoundMode::CAST_RINT, flatElements);

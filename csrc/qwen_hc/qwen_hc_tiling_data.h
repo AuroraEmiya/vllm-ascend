@@ -21,13 +21,15 @@ constexpr uint32_t kMaxBatchedGateGroups = 8;
 // Measured A3 launch policy: amortize scheduling with at least eight FP32 repeats.
 constexpr uint32_t kMinGateVectorRepeats = 8;
 constexpr uint32_t kMinGateTileElements = kMinGateVectorRepeats * kFloatVectorElements;
+// Candidate policy: amortize short-row launches with at least 4 KiB input per core.
+constexpr uint32_t kMinSiluInputBytesPerCore = 4 * 1024;
 constexpr uint32_t kMaxDmaBlockCount = 4095;
 constexpr uint32_t kMaxSupportedHiddenSize = 8192;
 
 } // namespace vllm_ascend::hc
 
 // Ascend C launch generation forward-declares parameter types globally.
-enum HcTilingKey : uint32_t { NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched, NormBatchedCached };
+enum HcTilingKey : uint32_t { NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched };
 
 // Host computes the complete launch plan. Device code does no capacity guessing.
 struct HcTilingData {

@@ -11,10 +11,7 @@ extern "C" __global__ __aicore__ void qwen_hc_combine_norm(GM_ADDR residual, GM_
                                                            GM_ADDR weight, GM_ADDR combined, GM_ADDR normalized,
                                                            HcTilingData tilingData) {
   KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-  if (tilingData.tilingKey == HcTilingKey::NormBatchedCached) {
-    BatchedCombineNorm<bfloat16_t, true> kernel;
-    kernel.run(residual, block, injection, weight, combined, normalized, tilingData);
-  } else if (tilingData.tilingKey == HcTilingKey::NormBatched) {
+  if (tilingData.tilingKey == HcTilingKey::NormBatched) {
     BatchedCombineNorm<bfloat16_t> kernel;
     kernel.run(residual, block, injection, weight, combined, normalized, tilingData);
   } else {
