@@ -39,7 +39,6 @@ def run_case(
     up_format_control=False,
     up_large_control=False,
     activation_group_control=False,
-    down_layout_control=False,
 ):
     cpu = validation.make_inputs(case)
     refs = validation.oracle(cpu, case)
@@ -55,11 +54,7 @@ def run_case(
         "candidate_extra_device_bytes": torch.npu.memory_allocated() - memory_before,
         "scope": "outside capture, includes packed down/gate and explicit NZ up",
     }
-    if down_layout_control:
-        control = Candidate(wd, wu, wg)
-        control._use_logical_down = False
-        objects = {"original": control, **objects}
-    elif activation_group_control:
+    if activation_group_control:
         control = Candidate(wd, wu, wg)
         control._activation_mode = 9
         objects = {"original": control, **objects}
@@ -88,9 +83,7 @@ def run_case(
         "input_metadata": [metadata(v) if v is not None else None for v in inputs],
         "timing": None,
         "preparation": preparation,
-        "comparison": "same-binary transposed ND down / logical ND down"
-        if down_layout_control
-        else "same-binary activation group4 / candidate group8"
+        "comparison": "same-binary activation group4 / candidate group8"
         if activation_group_control
         else "same-binary NZ-up cutoff64 / candidate"
         if up_large_control
@@ -107,7 +100,6 @@ def run_case(
             "down": metadata(obj.w_down),
             "up": metadata(obj.w_up),
             "up_nz": None if getattr(obj, "up_nz", None) is None else metadata(obj.up_nz),
-            "packed_down_nd": None if getattr(obj, "packed_down_nd", None) is None else metadata(obj.packed_down_nd),
             "packed": None if obj.packed_weight is None else metadata(obj.packed_weight),
         }
         for name, obj in objects.items()
@@ -148,10 +140,8 @@ def run_case(
                 stream.synchronize()
                 result["checks"][name + "_" + phase] = validation.check_outputs(outputs[name], expected)
         result["prepared_addresses_stable"] = all(
-            getattr(obj, field, None) is None
-            or result["prepared"][name][field]["data_ptr"] == getattr(obj, field).data_ptr()
+            getattr(obj, "up_nz", None) is None or result["prepared"][name]["up_nz"]["data_ptr"] == obj.up_nz.data_ptr()
             for name, obj in objects.items()
-            for field in ("up_nz", "packed_down_nd")
         )
         result["same_addresses"] = addresses == [v.data_ptr() if v is not None else None for v in inputs]
         passed = (
@@ -198,7 +188,6 @@ def main():
     parser.add_argument("--up-large-control", action="store_true")
     parser.add_argument("--activation-group-control", action="store_true")
     parser.add_argument("--activation-boundaries", action="store_true")
-    parser.add_argument("--down-layout-control", action="store_true")
     args = parser.parse_args()
     if (
         sum(
@@ -208,7 +197,6 @@ def main():
                 args.up_format_control,
                 args.up_large_control,
                 args.activation_group_control,
-                args.down_layout_control,
                 args.candidate_only,
             )
         )
@@ -240,9 +228,7 @@ def main():
     result = {
         "source_commit": actual,
         "baseline_wrapper": (
-            "current Candidate with transposed ND down; only B32..64 right-hand layout differs"
-            if args.down_layout_control
-            else "current Candidate with packed mode9; only large-batch group size differs"
+            "current Candidate with packed mode9; only large-batch group size differs"
             if args.activation_group_control
             else "current Candidate with NZ cutoff64; only B>64 up format differs"
             if args.up_large_control
@@ -277,7 +263,6 @@ def main():
                 args.up_format_control,
                 args.up_large_control,
                 args.activation_group_control,
-                args.down_layout_control,
             )
         except Exception:
             row = {"case": case, "status": "INVALID", "timing": None, "error": traceback.format_exc()}
