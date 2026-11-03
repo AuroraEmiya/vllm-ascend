@@ -35,7 +35,7 @@ class CompiledSerialPipeline:
             os.environ["LOCAL_WORLD_SIZE"] = "1"
         self.optimize = optimize
         self.optimize_options = copy.deepcopy(
-            {"constant_codegen": 1} if optimize_options is None else optimize_options
+            {"constant_codegen": 1, "preload_code": 1} if optimize_options is None else optimize_options
         )
         self.pipeline = pipeline
         self.scope = scope

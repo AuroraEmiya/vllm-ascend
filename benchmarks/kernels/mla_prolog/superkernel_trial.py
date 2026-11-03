@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=4)
     parser.add_argument("--single-call-graph", action="store_true")
     parser.add_argument("--split-head-tile", type=int, choices=(0,16), default=16)
+    parser.add_argument("--preload-code", type=int, choices=(1,5), default=1)
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
     args = parser.parse_args()
@@ -37,6 +38,11 @@ def main():
             validation.capture = lambda call, stream, calls=1: capture_original(call, stream, calls=1)
         else:
             validation.CALLS_PER_GRAPH = 1
+    # Installed9.2 ignores container CPU quotas when choosing op_compiler -j.
+    # Bound only this benchmark process's compiler workers; no installed edits.
+    from torch_npu.dynamo.npugraph_ex._acl_concrete_graph import static_kernel
+
+    static_kernel._compute_opc_compile_jobs = lambda: "4"
     torch.set_num_threads(4)
     torch.npu.set_device(0)
     torch.npu.config.allow_internal_format = True
@@ -53,7 +59,7 @@ def main():
                 instance._head_layout = args.head_layout
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, head_layout=args.head_layout, split_head_tile=args.split_head_tile)
+        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode, "preload_code": args.preload_code}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, head_layout=args.head_layout, split_head_tile=args.split_head_tile)
         preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
@@ -71,6 +77,7 @@ def main():
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
               "calls_per_graph": 1 if args.single_call_graph else 10,
               "split_mode": args.split_mode,
+              "preload_code": args.preload_code, "compiler_workers": 4,
               "protocol": "frozen validation thresholds; single-call Graph correctness guard" if args.single_call_graph else "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
