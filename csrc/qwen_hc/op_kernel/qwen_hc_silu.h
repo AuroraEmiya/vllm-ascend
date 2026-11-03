@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright contributors to the vLLM-Ascend project
 #pragma once
 #include "qwen_hc_common.h"
+#include "adv_api/activation/silu.h"
 namespace vllm_ascend::hc {
 template <typename T>
 class HcSilu {
@@ -29,17 +30,10 @@ class HcSilu {
       PipeBarrier<PIPE_V>();
       Muls(values, values, 1.0f / tilingData.groupCount, tilingData.hiddenSize);
       PipeBarrier<PIPE_V>();
-      Muls(activation, values, -1.0f, tilingData.hiddenSize);
+      // Public Silu uses Div on A3; keep source separate from destination.
+      Silu<float>(activation, values, tilingData.hiddenSize);
       PipeBarrier<PIPE_V>();
-      Exp(activation, activation, tilingData.hiddenSize);
-      PipeBarrier<PIPE_V>();
-      Adds(activation, activation, 1.0f, tilingData.hiddenSize);
-      PipeBarrier<PIPE_V>();
-      Reciprocal(activation, activation, tilingData.hiddenSize);
-      PipeBarrier<PIPE_V>();
-      Mul(values, values, activation, tilingData.hiddenSize);
-      PipeBarrier<PIPE_V>();
-      Cast(outputLocal, values, RoundMode::CAST_RINT, tilingData.hiddenSize);
+      Cast(outputLocal, activation, RoundMode::CAST_RINT, tilingData.hiddenSize);
       syncPipeline<HardEvent::V_MTE3>();
       storeTile(outputGm, row * tilingData.hiddenSize, outputLocal, tilingData.hiddenSize);
     }
@@ -81,17 +75,10 @@ class BatchedSilu {
       PipeBarrier<PIPE_V>();
       Muls(values, values, 1.0f / tilingData.groupCount, count);
       PipeBarrier<PIPE_V>();
-      Muls(activation, values, -1.0f, count);
+      // Public Silu uses Div on A3; keep source separate from destination.
+      Silu<float>(activation, values, count);
       PipeBarrier<PIPE_V>();
-      Exp(activation, activation, count);
-      PipeBarrier<PIPE_V>();
-      Adds(activation, activation, 1.0f, count);
-      PipeBarrier<PIPE_V>();
-      Reciprocal(activation, activation, count);
-      PipeBarrier<PIPE_V>();
-      Mul(values, values, activation, count);
-      PipeBarrier<PIPE_V>();
-      Cast(outputLocal, values, RoundMode::CAST_RINT, count);
+      Cast(outputLocal, activation, RoundMode::CAST_RINT, count);
       syncPipeline<HardEvent::V_MTE3>();
       storeTile(outputGm, row * tilingData.hiddenSize, outputLocal, count);
     }
