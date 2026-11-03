@@ -81,6 +81,14 @@ def main():
         report["cases"].append(row)
         save()
         print("CASE_END", case["id"], row.get("status", row.get("comparison_admitted")), flush=True)
+    loaded = sorted({line.split()[-1] for line in Path("/proc/self/maps").read_text().splitlines()
+                     if ".so" in line and any(token in line for token in
+                        ("opapi", "nnopbase", "vllm_ascend", "custom_transformer"))})
+    report["runtime_identity"] = {
+        "torch": torch.__version__, "soc": torch.npu.get_device_name(0),
+        "allow_hf32_matmul": bool(torch.npu.matmul.allow_hf32),
+        "files": {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded if Path(p).is_file()}}
+    save()
     success = all(r.get("comparison_admitted", r.get("status") == "PASS") for r in report["cases"])
     raise SystemExit(0 if success else 1)
 

@@ -5,6 +5,7 @@
 #pragma once
 #include <memory>
 #include <torch/extension.h>
+#include <torch_npu/csrc/aten/CustomFunctions.h>
 #include <acl/acl.h>
 #include "serial_matmul_opdev.h"
 #include <torch_npu/csrc/framework/OpCommand.h>
@@ -30,8 +31,8 @@ inline void serial_matmul_v3_out(const at::Tensor& a, const at::Tensor& b,
     const at::Tensor* tensors[] = {&a, &b, &out};
     for (const at::Tensor* value : tensors) {
         TORCH_CHECK(value->scalar_type() == at::kBFloat16 && value->device() == a.device()
-            && value->is_contiguous() && at_npu::native::FormatHelper::IsBaseFormatType(*value),
-            "serial V3 requires contiguous BF16 in base format on one NPU");
+            && value->is_contiguous() && at_npu::native::custom_ops::get_npu_format(*value) == ACL_FORMAT_ND,
+            "serial V3 requires contiguous BF16 ND on one NPU");
     }
     const int64_t rank = batched ? 3 : 2;
     TORCH_CHECK(a.dim() == rank && b.dim() == rank && out.dim() == rank,
