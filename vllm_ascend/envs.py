@@ -78,6 +78,8 @@ env_variables: dict[str, Callable[[], Any]] = {
     "DYNAMIC_EPLB": lambda: os.getenv("DYNAMIC_EPLB", "false").lower(),
     # Control the aclrtMemcpyBatchAsync compile path for KV cache offloading.
     # "1": force enable, "0": force disable, None: auto-detect from CANN headers.
+    # Explicitly opt in to the version-pinned experimental serial V3 adapter.
+    "VLLM_ASCEND_ENABLE_SERIAL_V3": lambda: _strict_binary_env("VLLM_ASCEND_ENABLE_SERIAL_V3"),
     "VLLM_ASCEND_ENABLE_BATCH_MEMCPY": lambda: os.getenv("VLLM_ASCEND_ENABLE_BATCH_MEMCPY", None),
     # Emit per-layer KVPool ranged transfer audit events. Default: 0 (disabled).
     # Valid values: 0 or 1. This configuration is not sensitive.

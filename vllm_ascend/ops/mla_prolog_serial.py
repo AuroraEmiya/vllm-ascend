@@ -124,7 +124,7 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3", optimize_options=None):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -157,12 +157,14 @@ class MlaPrologSerial:
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
 
-        use_v3 = self._matrix_backend == "v3"
+        use_v3 = self._matrix_backend in ("v3", "v3_nz")
+        use_nz = self._matrix_backend == "v3_nz"
         if use_v3:
             from vllm_ascend.ops.serial_superkernel import serial_matmul_v3
 
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
         down_q_kv = (
+            serial_matmul_v3(x, self._matrix_nz[0]) if use_nz else
             serial_matmul_v3(x, self._matrix_nd[0], transpose_b=True) if use_v3 else
             torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
         )
@@ -185,6 +187,7 @@ class MlaPrologSerial:
         )
 
         up = (
+            serial_matmul_v3(normalized_q, self._matrix_nz[1]) if use_nz else
             serial_matmul_v3(normalized_q, self._matrix_nd[1], transpose_b=True) if use_v3 else
             torch.matmul(normalized_q, self._matrix_nd[1].t())
             if use_linear or use_v3

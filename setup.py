@@ -318,6 +318,8 @@ class cmake_build_ext(build_ext):
         if envs.VLLM_ASCEND_ENABLE_BATCH_MEMCPY is not None:
             cmake_args += [f"-DVLLM_ASCEND_ENABLE_BATCH_MEMCPY={envs.VLLM_ASCEND_ENABLE_BATCH_MEMCPY}"]
 
+        cmake_args += [f"-DVLLM_ASCEND_ENABLE_SERIAL_V3={envs.VLLM_ASCEND_ENABLE_SERIAL_V3}"]
+
         cmake_args += [ext.cmake_lists_dir]
         logging.info("cmake config command: %s", cmake_args)
         try:

@@ -4,6 +4,7 @@
 // This adapter selects V3 explicitly; matrix arithmetic remains in CANN.
 #pragma once
 #include <memory>
+#include "../aclnn_torch_adapter/NPUBridge.h"
 #include <torch/extension.h>
 #include <torch_npu/csrc/aten/CustomFunctions.h>
 #include <acl/acl.h>
@@ -13,12 +14,17 @@
 #include <torch_npu/csrc/core/npu/NPUGuard.h>
 
 namespace vllm_ascend {
-inline std::shared_ptr<aclTensor> serial_nd_descriptor(const at::Tensor& tensor)
+inline std::shared_ptr<aclTensor> serial_tensor_descriptor(const at::Tensor& tensor)
 {
+    const auto format = static_cast<aclFormat>(at_npu::native::custom_ops::get_npu_format(tensor));
+    const auto& storage = vllm_ascend::NPUBridge::GetNpuStorageImplDesc(tensor);
+    const bool nz = format == ACL_FORMAT_FRACTAL_NZ;
+    const auto* storageDims = nz ? storage.storage_sizes_.data() : tensor.sizes().data();
+    const size_t storageRank = nz ? storage.storage_sizes_.size() : tensor.dim();
     auto* descriptor = aclCreateTensor(tensor.sizes().data(), tensor.dim(), ACL_BF16,
-        tensor.strides().data(), tensor.storage_offset(), ACL_FORMAT_ND,
-        tensor.sizes().data(), tensor.dim(), const_cast<void*>(tensor.storage().data()));
-    TORCH_CHECK(descriptor, "cannot create serial V3 ND descriptor");
+        tensor.strides().data(), tensor.storage_offset(), format,
+        storageDims, storageRank, const_cast<void*>(tensor.storage().data()));
+    TORCH_CHECK(descriptor, "cannot create serial V3 tensor descriptor");
     return std::shared_ptr<aclTensor>(descriptor, [](aclTensor* p) { aclDestroyTensor(p); });
 }
 
@@ -29,9 +35,11 @@ inline void serial_matmul_v3_out(const at::Tensor& a, const at::Tensor& b,
     const c10_npu::NPUGuard guard(a.device());
     const at::Tensor* tensors[] = {&a, &b, &out};
     for (const at::Tensor* value : tensors) {
+        const auto format = at_npu::native::custom_ops::get_npu_format(*value);
+        const bool allowedNzWeight = value == &b && !batched && format == ACL_FORMAT_FRACTAL_NZ;
         TORCH_CHECK(value->scalar_type() == at::kBFloat16 && value->device() == a.device()
-            && value->is_contiguous() && at_npu::native::custom_ops::get_npu_format(*value) == ACL_FORMAT_ND,
-            "serial V3 requires contiguous BF16 ND on one NPU");
+            && value->is_contiguous() && (format == ACL_FORMAT_ND || allowedNzWeight),
+            "serial V3 requires contiguous BF16 ND, with optional NZ matrix weight on one NPU");
     }
     const int64_t rank = batched ? 3 : 2;
     TORCH_CHECK(a.dim() == rank && b.dim() == rank && out.dim() == rank,
@@ -42,7 +50,7 @@ inline void serial_matmul_v3_out(const at::Tensor& a, const at::Tensor& b,
         "serial V3 matrix/output shapes differ");
     TORCH_CHECK(!batched || (a.size(0) == b.size(0) && out.size(0) == a.size(0)),
         "serial V3 batch broadcasting is unsupported");
-    auto da = serial_nd_descriptor(a), db = serial_nd_descriptor(b), dy = serial_nd_descriptor(out);
+    auto da = serial_tensor_descriptor(a), db = serial_tensor_descriptor(b), dy = serial_tensor_descriptor(out);
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
     const auto status = aclnnSerialMatmulV3GetWorkspaceSize(da.get(), db.get(), transposeB, batched,

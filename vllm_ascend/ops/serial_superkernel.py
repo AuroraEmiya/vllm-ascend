@@ -21,10 +21,10 @@ class CompiledSerialPipeline:
     every child kernel was grouped; inspect the device trace for that claim.
     """
 
-    def __init__(self, pipeline, scope, *, optimize=True, matrix_backend="v3", optimize_options=None):
-        if matrix_backend not in ("torch", "v3"):
-            raise ValueError("matrix_backend must be torch or v3")
-        if matrix_backend == "v3" and not hasattr(torch.ops._C_ascend, "serial_matmul_v3_out"):
+    def __init__(self, pipeline, scope, *, optimize=True, matrix_backend="v3_nz", optimize_options=None):
+        if matrix_backend not in ("torch", "v3", "v3_nz"):
+            raise ValueError("matrix_backend must be torch, v3 or v3_nz")
+        if matrix_backend in ("v3", "v3_nz") and not hasattr(torch.ops._C_ascend, "serial_matmul_v3_out"):
             raise RuntimeError("explicit V3 adapter requires the CANN opdev build")
         execution = copy.copy(pipeline)
         execution._matrix_backend = matrix_backend
@@ -94,7 +94,7 @@ class CompiledSerialPipeline:
 
 
 def serial_matmul_v3(a, b, *, transpose_b=False):
-    """BF16 ND matrix or equal-batch matrix product via the generic CANN V3 L0."""
+    """BF16 ND/NZ-weight matrix or ND equal-batch matrix product via the generic CANN V3 L0."""
     n = b.shape[-2] if transpose_b else b.shape[-1]
     output = a.new_empty((*a.shape[:-1], n))
     torch.ops._C_ascend.serial_matmul_v3_out(a, b, transpose_b, a.ndim == 3, output)

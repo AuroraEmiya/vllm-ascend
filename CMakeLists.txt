@@ -101,7 +101,11 @@ set(
 )
 
 pybind11_add_module(vllm_ascend_C ${VLLM_ASCEND_SRC})
-if(EXISTS "${ASCEND_HOME_PATH}/include/aclnn/opdev/make_op_executor.h")
+option(VLLM_ASCEND_ENABLE_SERIAL_V3 "Build the version-pinned CANN 9.2 serial V3 adapter" OFF)
+if(VLLM_ASCEND_ENABLE_SERIAL_V3)
+  if(NOT EXISTS "${ASCEND_HOME_PATH}/include/aclnn/opdev/make_op_executor.h")
+    message(FATAL_ERROR "Serial V3 requires the selected CANN opdev headers")
+  endif()
   target_compile_definitions(vllm_ascend_C PRIVATE VLLM_ASCEND_SERIAL_V3)
   target_include_directories(vllm_ascend_C PRIVATE ${ASCEND_HOME_PATH}/include/aclnn)
   # CANN 9.2 opdev is built with the old libstdc++ ABI. Keep the Torch
