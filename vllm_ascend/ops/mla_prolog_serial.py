@@ -75,6 +75,7 @@ class MlaPrologSerial:
         self.weight_dq, self.weight_uq_qr, self.weight_uk = weight_dq, weight_uq_qr, weight_uk
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
+        self._matrix_backend = "torch"
         values = self._matrix_values()
         self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in values)
         self._matrix_nd = tuple(torch_npu.npu_format_cast(value.t().contiguous(), ND_FORMAT) for value in values)
@@ -123,7 +124,7 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def compile_superkernel(self, *, optimize=True):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3"):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -131,7 +132,7 @@ class MlaPrologSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
-        return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize)
+        return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend)
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
         if token_x.ndim != 3 or token_x.shape[1] != 1 or not 1 <= token_x.shape[0] <= MAX_BATCH:
@@ -156,8 +157,15 @@ class MlaPrologSerial:
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
 
+        use_v3 = self._matrix_backend == "v3"
+        if use_v3:
+            from vllm_ascend.ops.serial_superkernel import serial_matmul_v3
+
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
-        down_q_kv = torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
+        down_q_kv = (
+            serial_matmul_v3(x, self._matrix_nd[0], transpose_b=True) if use_v3 else
+            torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
+        )
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q_kv,
@@ -177,8 +185,9 @@ class MlaPrologSerial:
         )
 
         up = (
+            serial_matmul_v3(normalized_q, self._matrix_nd[1], transpose_b=True) if use_v3 else
             torch.matmul(normalized_q, self._matrix_nd[1].t())
-            if use_linear
+            if use_linear or use_v3
             else torch.matmul(normalized_q, self._matrix_nz[1])
         )
         head_q = torch.empty((self.heads, rows, NOPE_DIM), device=self.device, dtype=torch.bfloat16)
@@ -200,7 +209,9 @@ class MlaPrologSerial:
             cache_kr_flat,
         )
 
-        if rows == 1:
+        if use_v3:
+            query = serial_matmul_v3(head_q, self.weight_uk).transpose(0, 1).contiguous()
+        elif rows == 1:
             query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
         else:
             query = torch_npu.npu_transpose_batchmatmul(

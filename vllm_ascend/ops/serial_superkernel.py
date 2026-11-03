@@ -7,6 +7,7 @@ The caller retains input, weight and cache ownership. Refresh prepared weights
 on the original object outside replay; recapture after address/metadata changes.
 """
 
+import copy
 import os
 
 import torch
@@ -19,7 +20,14 @@ class CompiledSerialPipeline:
     every child kernel was grouped; inspect the device trace for that claim.
     """
 
-    def __init__(self, pipeline, scope, *, optimize=True):
+    def __init__(self, pipeline, scope, *, optimize=True, matrix_backend="v3"):
+        if matrix_backend not in ("torch", "v3"):
+            raise ValueError("matrix_backend must be torch or v3")
+        if matrix_backend == "v3" and not hasattr(torch.ops._C_ascend, "serial_matmul_v3_out"):
+            raise RuntimeError("explicit V3 adapter requires the CANN opdev build")
+        execution = copy.copy(pipeline)
+        execution._matrix_backend = matrix_backend
+        self.matrix_backend = matrix_backend
         if not hasattr(torch.npu.NPUGraph, "super_kernel_optimize"):
             raise RuntimeError("this Torch-NPU build does not provide SuperKernel")
         if "LOCAL_WORLD_SIZE" not in os.environ:
@@ -41,7 +49,7 @@ class CompiledSerialPipeline:
         def forward(*args, **kwargs):
             if optimize:
                 torch.npu.super_kernel_scope_begin(scope)
-            outputs = pipeline(*args, **kwargs)
+            outputs = execution(*args, **kwargs)
             if optimize:
                 torch.npu.super_kernel_scope_end(scope)
             return outputs
@@ -66,3 +74,11 @@ class CompiledSerialPipeline:
     def __getattr__(self, name):
         # Preparation and refresh methods keep operating on the original owner.
         return getattr(self.pipeline, name)
+
+
+def serial_matmul_v3(a, b, *, transpose_b=False):
+    """BF16 ND matrix or equal-batch matrix product via the generic CANN V3 L0."""
+    n = b.shape[-2] if transpose_b else b.shape[-1]
+    output = a.new_empty((*a.shape[:-1], n))
+    torch.ops._C_ascend.serial_matmul_v3_out(a, b, transpose_b, a.ndim == 3, output)
+    return output
