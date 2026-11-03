@@ -32,6 +32,17 @@ public:
         pipe.InitBuffer(scalar,32);
     }
     __aicore__ inline void Process() {
+        // With40 AIVs, striding by the block count preserves the channel.
+        // Cache (1+gamma) only when every active core has at least two rows;
+        // reload it for every kernel invocation so same-address updates work.
+        gammaCached=t.mode==4 && t.hasGamma &&
+            t.units>=2*GetBlockNum() && GetBlockNum()%t.channels==0;
+        if(gammaCached) {
+            const uint32_t h=t.width/t.channels;
+            auto g=f3.Get<float>();
+            DataCopy(g,gG[(GetBlockIdx()%t.channels)*h],h);
+            Fence<HardEvent::MTE2_V>(); Adds(g,g,1.0f,h); Barrier();
+        }
         for (uint32_t unit=GetBlockIdx(); unit<t.units; unit+=GetBlockNum()) {
             if(t.mode==0 || t.mode==4) Norm(unit);
             else if(t.mode==1) Activation(unit);
@@ -61,7 +72,7 @@ private:
         auto r=scalar.Get<float>();
         auto g=f3.Get<float>();
         DataCopy(xb,xG[off],h);
-        if(t.hasGamma) DataCopy(g,gG[(row%t.channels)*h],h);
+        if(t.hasGamma && !gammaCached) DataCopy(g,gG[(row%t.channels)*h],h);
         Fence<HardEvent::MTE2_V>();
         Cast(z,xb,RoundMode::CAST_NONE,h); Barrier();
         Mul(q,z,z,h); Barrier();
@@ -82,7 +93,8 @@ private:
         Brcb(q,r,1,{1,8}); Barrier();
         Mul(z,z,q,64,h/64,{1,1,0,8,8,0}); Barrier();
         if(t.hasGamma) {
-            Adds(g,g,1.0f,h); Barrier(); Mul(z,z,g,h); Barrier();
+            if(!gammaCached) { Adds(g,g,1.0f,h); Barrier(); }
+            Mul(z,z,g,h); Barrier();
         }
         // Inference has no MTE3 reader of r. Its input b0/gamma and output
         // b1 are separate buffers, so the next input DMA can overlap the
@@ -177,6 +189,7 @@ private:
     GlobalTensor<bfloat16_t> xG,uG,gateG,yG,injectG;
     GlobalTensor<float> gG,invG;
     XTgrVectorTilingData t;
+    bool gammaCached=false;
 };
 
 extern "C" __global__ __aicore__ void x_tgr_vector(GM_ADDR x, GM_ADDR gamma, GM_ADDR aux, GM_ADDR gate, GM_ADDR y, GM_ADDR inv, GM_ADDR inject, GM_ADDR workspace, GM_ADDR tiling) {
