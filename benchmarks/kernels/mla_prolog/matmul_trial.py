@@ -24,6 +24,8 @@ GAMMA_CACHE_BASE_SHA256 = "ff46e1fa24ed70794a191aaee14bdb68fa5512bffab0f09eedbe4
 SPLIT_OVERLAP_BASE_COMMIT = "f1f0dba2d1202579b8bea9b2d03f480d7fb003ed"
 SPLIT_OVERLAP_BASE_SHA256 = "21279de14dfd20af8078b15c680982104de9b29aaee67fbee2cd9cabe8dd6508"
 RETAINED_SPLIT_BASE_SHA256 = "a2c2e333f94e9e62f3f13bdaa644fc1658cc9fffbf3777a71061d27f23d1fc44"
+NORM_OVERLAP_BASE_COMMIT = "7ada452c33c5748fe141a786250c2b30345b637f"
+NORM_OVERLAP_BASE_SHA256 = "1030da1293222b46d337840a496acc87d0bae152c532007121368da507096d56"
 HEAD_LAYOUT_SHA256 = "7f6e2de290735bce07a27fe7d7f2523352eb7a8a763065048d525566d7a177df"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
@@ -147,6 +149,22 @@ def comparison_definition(comparison):
             "native_comparison": (
                 "mode5 keeps original input-blocking MTE3_MTE2; mode7 protects b3 with MTE3_V before each "
                 "norm/KR output Cast, retains input V_MTE2 protection and drains final MTE3 output"
+            ),
+        }
+    if comparison == "split-coefficient-pack":
+        return {
+            "baseline_commit": NORM_OVERLAP_BASE_COMMIT,
+            "baseline_file": "baseline_serial_7ada452c.py",
+            "baseline_sha256": NORM_OVERLAP_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 8,
+            "changed": (
+                "B>=32 split: pack four coefficient pairs into disjoint f0 windows and group independent V operations"
+            ),
+            "unchanged": "round7 norm7, split DMA32..64, FP32 math order, BF16 matrices, UB, cache and precision",
+            "native_comparison": (
+                "mode1/6 retain serial BroadcastHalf barriers; mode8 reuses f0 only after GatherMask barrier, "
+                "then barriers separate coefficient, cos, sine and final sum phases; same DMA route and drain"
             ),
         }
     raise ValueError(f"unknown comparison {comparison}")
@@ -642,6 +660,7 @@ def main():
             "norm-gamma-cache",
             "split-dma-overlap",
             "norm-output-overlap",
+            "split-coefficient-pack",
         ),
         default="projection",
     )
@@ -707,6 +726,7 @@ def main():
         "norm-broadcast": BROADCAST_BASE_SHA256,
         "norm-gamma-cache": GAMMA_CACHE_BASE_SHA256,
         "split-dma-overlap": SPLIT_OVERLAP_BASE_SHA256,
+        "norm-output-overlap": NORM_OVERLAP_BASE_SHA256,
     }.get(args.comparison)
     if historical_hash and args.mode in {"verify", "paired", "profile"}:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
