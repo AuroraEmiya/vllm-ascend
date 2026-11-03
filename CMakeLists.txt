@@ -62,6 +62,7 @@ ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/*.cpp)
 
 set(VLLM_ASCEND_CUSTOM_OP
     ${KERNEL_FILES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/qwen_hc/op_kernel/qwen_hc.cpp
 )
 
 if(SOC_VERSION MATCHES "ascend310p.*|ascend950")
@@ -106,6 +107,10 @@ set(
   ${ASCEND_HOME_PATH}/include
 )
 
+list(APPEND VLLM_ASCEND_SRC
+  ${CMAKE_CURRENT_SOURCE_DIR}/csrc/qwen_hc/op_host/qwen_hc.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/csrc/qwen_hc/op_host/qwen_hc_tiling.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/csrc/qwen_hc/op_host/qwen_hc_platform.cpp)
 pybind11_add_module(vllm_ascend_C ${VLLM_ASCEND_SRC})
 if(SOC_VERSION MATCHES "ascend910_93.*")
   target_compile_definitions(vllm_ascend_C PRIVATE VLLM_ASCEND_ENABLE_SPARSE_KV_OFFLOAD)
