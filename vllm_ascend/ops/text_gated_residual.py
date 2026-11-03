@@ -60,6 +60,7 @@ class TextGatedResidualSerial:
         self.device = w_down.device
         self.eps = eps
         self._mix_mode = 2
+        self._norm_mode = 4
         self.dummy = torch.empty(1, device=self.device, dtype=torch.bfloat16)
         self.dummy_gamma = torch.empty(1, device=self.device, dtype=torch.float32)
         self.packed_weight = (
@@ -112,7 +113,7 @@ class TextGatedResidualSerial:
             self.dummy_gamma if gamma is None else gamma,
             self.dummy,
             self.dummy,
-            0 if need_backward else 4,
+            0 if need_backward else self._norm_mode,
             CHANNELS,
             self.eps,
             norm,
