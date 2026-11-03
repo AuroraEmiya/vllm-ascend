@@ -117,12 +117,48 @@ The original qwen_hc_serial F.linear entry and the unprepared matmul entry remai
 available as controls. The default model path is still Triton; this change does
 not activate the prepared path automatically in a running model.
 
-CombineNorm batches two HC branches for M16 and four for M32/64 when the H/K/UB
-conditions allow it; other inputs use the per-branch path. BF16 combine is
-preserved before RMS. A3 memory-vector MulAddDst shortens combine/affine work.
-Gate batches HC branches and uses a two-level FP32 reduction for K4. SiLU uses a UB-bounded batch derived from row waves and rank; M64
-batches two aligned rows and larger M can batch more rows. Generic tail, stride, shared-weight, and larger-K
-fallbacks remain available. No C calls or V stages are reordered across C.
+HC sources are split into `csrc/qwen_hc/op_host` (Torch registration,
+resource queries and pure host tiling), `op_kernel` (three Vector stages), and
+shared launch/tiling records. Both the HC-only and regular extension targets use
+these files. Owned C++ uses camelCase/PascalCase; public registered names retain
+the framework ABI.
+
+`queryDeviceResources` runs under the input-device guard, queries Vector Core
+count through `aclrtGetDeviceInfo`, and resolves UB capacity through the current
+SoC's public platform API. Missing or zero resources fail explicitly. The cache
+stores only immutable hardware information per device. The Torch-free platform
+bridge uses the CANN library ABI; the rest of the host code retains Torch's ABI.
+No core count or UB capacity is guessed. DMA/vector instruction widths, API
+limits and measured work-grain policies have named constants.
+
+The host computes task count, batch, tile width and exact live UB bytes before
+launch. Block count is bounded by the queried Vector Core count. CombineNorm
+chooses a divisor of K, up to four branches, from total groups and a target work
+density of half the queried cores; H alignment and exact UB capacity can reduce
+that batch. The final launch still uses min(task count, queried cores). This
+preserves the BF16 combine boundary before RMS and uses the existing A3
+memory-vector MulAddDst combine/affine path.
+
+SiLU uses public `Silu<float>` and a row batch bounded by row waves, a measured
+4 KiB input grain, current UB capacity and DMA block-count limits. Gate chooses
+an aligned column tile using floor(queried cores / rows), a measured minimum of
+eight FP32 vector repeats, and the actual UB budget. Its small-K path batches
+HC branches and uses direct FP32 division plus a two-level reduction for K4.
+Generic tail, stride, shared-weight and larger-K fallbacks remain. No C calls or
+V stages are reordered across C.
+
+The selected algorithm is the eighth candidate of the device-tiling budget.
+Later 8 KiB SiLU grain and single-allocation SiLU experiments were measured and
+rejected by the frozen full-Graph ranking; they are not combined into this
+implementation. Pure host tiling tests exercise seven core counts and four UB
+capacities, coverage/launch bounds, alignment and explicit capacity rejection:
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Werror \
+  tests/cpp/test_qwen_hc_tiling.cpp \
+  csrc/qwen_hc/op_host/qwen_hc_tiling.cpp -o test-hc-tiling
+./test-hc-tiling
+```
 
 ## Device correctness and Graph timing
 
@@ -205,9 +241,9 @@ The optimization process uses CANNBot as a method and knowledge library:
 The frozen generalization manifest covers 26 explicit M values times two
 phases at H2560/K4/R320/BF16. It tests one model geometry with synthetic
 operands and does not estimate production traffic frequency or serving
-throughput. Nine boundary cases additionally cover nonaligned dimensions,
-strides, missing injection, shared norm, K2/6/8, empty rows and saturation;
-the default boundary invocation covers six, and the additional three use
+throughput. Ten boundary cases additionally cover nonaligned dimensions,
+strides, missing injection, shared norm, K2/6/8/9, empty rows and saturation;
+the default boundary invocation covers six, and the additional four use
 qwen_hc_tiling_boundaries.json. No cross-model performance claim is made.
 
 Full format.sh ci attempts are preserved separately from focused checks and

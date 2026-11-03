@@ -28,7 +28,7 @@ constexpr uint32_t kMinSiluInputBytesPerCore = 4 * 1024;
 constexpr uint32_t kMaxDmaBlockCount = 4095;
 constexpr uint32_t kMaxSupportedHiddenSize = 8192;
 
-} // namespace vllm_ascend::hc
+}  // namespace vllm_ascend::hc
 
 // Ascend C launch generation forward-declares parameter types globally.
 enum HcTilingKey : uint32_t { NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched };
