@@ -45,8 +45,22 @@ The RoPE input is consumed before the later vector barrier and BF16 output
 cast reuse `b3`. Both next-unit reuse events remain; mode6 additionally drains
 the last MTE3 output through `MTE3_S`. Mode1 keeps its original algorithm.
 The norm modes5/4, all public BF16 matrix calls, layouts, math order, UB size,
-prepared weights and cache contracts remain those of round5. This local
-round6 source has no new A3 result yet.
+prepared weights and cache contracts remain those of round5. Round6 passed
+all15 checks. Its Graph control/candidate ratios were1.006923 at B32,
+1.018394 at B64 and0.989799 at B128. Mode6 is retained only for32<=B<=64;
+mode1 is restored outside that interval in both round7 classes. This rollback
+is not a new round7 performance gain.
+
+Round7 selects norm mode7 only for B>=32, with retained round6 as its control.
+Mode7 keeps mode5's gamma cache, FP32 arithmetic, buffers and BF16 results.
+It permits input DMA into `b0`/`b1` while an earlier output DMA reads `b3`,
+then waits with `MTE3_V` immediately before each output Cast overwrites `b3`.
+This applies to both norm outputs and the KV-to-KR transition. Existing
+`V_MTE2` protects the next input load; the final `MTE3_S` drains output before
+return. The mode5 control keeps its original input-blocking waits. Mode6
+remains a split mode, and the host explicitly treats mode7 as merged norm.
+See `benchmarks/kernels/mla_prolog/NORM_OUTPUT_OVERLAP_TRIAL.md` for the
+control derivation and buffer dependencies. Round7 awaits A3 validation.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -59,7 +73,7 @@ The kernel uses complete per-row FP32 RMS reductions, `Rsqrt` for the reciprocal
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-Mode 0/1/3/4/5/6 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
+Mode 0/1/3/4/5/6/7 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
 1536-element BF16 buffers, one2048-element BF16 buffer, five2048-element FP32
 buffers, and32 index bytes.
 Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
