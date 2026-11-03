@@ -24,7 +24,7 @@ constexpr uint32_t kMaxSupportedHiddenSize = 8192;
 } // namespace vllm_ascend::hc
 
 // Ascend C launch generation forward-declares parameter types globally.
-enum class HcTilingKey : uint32_t { NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched };
+enum HcTilingKey : uint32_t { NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched };
 
 // Host computes the complete launch plan. Device code does no capacity guessing.
 struct HcTilingData {
@@ -40,6 +40,6 @@ struct HcTilingData {
   uint32_t rowBatch = 1;
   uint32_t taskCount = 0;
   uint32_t blockDim = 0;
-  HcTilingKey tilingKey = HcTilingKey::NormSingle;
+  uint32_t tilingKey = 0;  // HcTilingKey; generated launch ABI copies primitive fields only.
   float eps = 0;
 };
