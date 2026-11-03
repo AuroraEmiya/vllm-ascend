@@ -30,6 +30,10 @@ public:
         pipe.InitBuffer(f0,count*4); pipe.InitBuffer(f1,count*4);
         pipe.InitBuffer(f2,sumCount*4); pipe.InitBuffer(f3,(t.mode==0 || t.mode==4)?2560*4:32);
         pipe.InitBuffer(scalar,32);
+        if(t.mode==4 && t.tile==2) {
+            pipe.InitBuffer(normInput,2,2560*2);
+            pipe.InitBuffer(normOutput,2,2560*2);
+        }
     }
     __aicore__ inline void Process() {
         // With40 AIVs, striding by the block count preserves the channel.
@@ -42,6 +46,11 @@ public:
             auto g=f3.Get<float>();
             DataCopy(g,gG[(GetBlockIdx()%t.channels)*h],h);
             Fence<HardEvent::MTE2_V>(); Adds(g,g,1.0f,h); Barrier();
+        }
+        if(t.mode==4 && t.tile==2) {
+            for(uint32_t unit=GetBlockIdx();unit<t.units;unit+=GetBlockNum()) BufferedNorm(unit);
+            Fence<HardEvent::MTE3_MTE2>();
+            return;
         }
         for (uint32_t unit=GetBlockIdx(); unit<t.units; unit+=GetBlockNum()) {
             if(t.mode==0 || t.mode==4) Norm(unit);
@@ -116,6 +125,30 @@ private:
         } else {
             Fence<HardEvent::MTE3_MTE2>();
         }
+    }
+    __aicore__ inline void BufferedNorm(uint32_t row) {
+        const uint32_t h=t.width/t.channels,off=row*h;
+        auto input=normInput.AllocTensor<bfloat16_t>();
+        DataCopy(input,xG[off],h);
+        normInput.EnQue(input);
+        auto xb=normInput.DeQue<bfloat16_t>();
+        auto yb=normOutput.AllocTensor<bfloat16_t>();
+        auto z=f0.Get<float>(),q=f1.Get<float>(),tmp=f2.Get<float>();
+        auto r=scalar.Get<float>(),g=f3.Get<float>();
+        Cast(z,xb,RoundMode::CAST_NONE,h); Barrier();
+        normInput.FreeTensor(xb);
+        Mul(q,z,z,h); Barrier();
+        ReduceSum(r,q,tmp,h); Barrier();
+        Muls(r,r,1.0f/h,1); Barrier(); Adds(r,r,t.eps,1); Barrier();
+        Rsqrt(r,r,1); Barrier();
+        Brcb(q,r,1,{1,8}); Barrier();
+        Mul(z,z,q,64,h/64,{1,1,0,8,8,0}); Barrier();
+        if(t.hasGamma) { Mul(z,z,g,h); Barrier(); }
+        Cast(yb,z,RoundMode::CAST_RINT,h);
+        normOutput.EnQue(yb);
+        auto output=normOutput.DeQue<bfloat16_t>();
+        DataCopy(yG[off],output,h);
+        normOutput.FreeTensor(output);
     }
     __aicore__ inline void Activation(uint32_t unit) {
         uint32_t off=unit*t.tile,n=t.rows*t.width-off;
@@ -208,6 +241,8 @@ private:
         Fence<HardEvent::MTE3_MTE2>();
     }
     TPipe pipe;
+    TQue<TPosition::VECIN,2> normInput;
+    TQue<TPosition::VECOUT,2> normOutput;
     TBuf<TPosition::VECCALC> b0,b1,f0,f1,f2,f3,scalar;
     GlobalTensor<bfloat16_t> xG,uG,gateG,yG,injectG;
     GlobalTensor<float> gG,invG;
