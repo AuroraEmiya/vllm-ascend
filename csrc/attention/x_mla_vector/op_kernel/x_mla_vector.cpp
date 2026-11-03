@@ -67,16 +67,18 @@ public:
     __aicore__ inline void Process()
     {
         for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
-            // The same UB buffers are reused after both previous consumers complete.
+            // Protect input-buffer reuse after the previous vector consumers.
             Sync<HardEvent::V_MTE2>();
-            Sync<HardEvent::MTE3_MTE2>();
-            if (t.mode == 0 || (t.mode >= 3 && t.mode <= 5)) NormAndCache(unit);
+            // Mode7 input uses b0/b1; previous output DMA only reads b3.
+            // Its b3 reuse fence is delayed until the next output Cast.
+            if (t.mode != 7) Sync<HardEvent::MTE3_MTE2>();
+            if (t.mode == 0 || (t.mode >= 3 && t.mode <= 5) || t.mode == 7) NormAndCache(unit);
             else if (t.mode == 1 || t.mode == 6) SplitAndRope(unit);
             else RestoreLayout(unit);
         }
         // The last unit has no following reuse fence. Explicitly drain its
-        // mode6 output transfers before leaving the pipelined split stage.
-        if (t.mode == 6) Sync<HardEvent::MTE3_S>();
+        // pipelined mode's output transfers before leaving the V stage.
+        if (t.mode == 6 || t.mode == 7) Sync<HardEvent::MTE3_S>();
     }
 
 private:
@@ -85,7 +87,7 @@ private:
         GlobalTensor<bfloat16_t> output, uint64_t outputOffset)
     {
         DataCopy(b0, input[offset], width);
-        if (t.mode == 5) {
+        if (t.mode == 5 || t.mode == 7) {
             // The width tag also handles a platform with odd blockDim where
             // a core alternates query/KV units. Init invalidates it per launch.
             const bool loadGamma = cachedGammaWidth != width;
@@ -130,9 +132,12 @@ private:
             Muls(f0, f0, inverse, width);
         }
         PipeBarrier<PIPE_V>();
-        if (t.mode == 5) Mul(f0, f0, f1[GAMMA_OFFSET], width);
+        if (t.mode == 5 || t.mode == 7) Mul(f0, f0, f1[GAMMA_OFFSET], width);
         else Mul(f0, f0, f1, width);
         PipeBarrier<PIPE_V>();
+        // Mode7 may still have a previous norm/RoPE DMA reading b3.
+        // Input b0 and FP32 arithmetic can proceed before this exact reuse.
+        if (t.mode == 7) Sync<HardEvent::MTE3_V>();
         Cast(b3, f0, RoundMode::CAST_RINT, width);
         Sync<HardEvent::V_MTE3>();
         DataCopy(output[outputOffset], b3, width);
@@ -142,13 +147,13 @@ private:
         uint32_t row, GlobalTensor<bfloat16_t> output, uint64_t outputOffset)
     {
         Sync<HardEvent::V_MTE2>();
-        Sync<HardEvent::MTE3_MTE2>();
+        if (t.mode != 7) Sync<HardEvent::MTE3_MTE2>();
         DataCopy(b0, input[offset], ROPE_DIM);
         DataCopy(b1, sinGm[row * ROPE_DIM], ROPE_DIM);
         DataCopy(b2, cosGm[row * ROPE_DIM], ROPE_DIM);
         Sync<HardEvent::MTE2_V>();
         Cast(f0, b0, RoundMode::CAST_NONE, ROPE_DIM);
-        // Mode5 gamma starts at GAMMA_OFFSET; RoPE only overwrites [0,64).
+        // Cached gamma starts at GAMMA_OFFSET; RoPE only overwrites [0,64).
         Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
         Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
         PipeBarrier<PIPE_V>();
@@ -170,6 +175,8 @@ private:
         PipeBarrier<PIPE_V>();
         Add(f4[ROPE_DIM / 2], f4[ROPE_DIM / 2], f0, ROPE_DIM / 2);
         PipeBarrier<PIPE_V>();
+        // Protect the KV output still being read from this same b3.
+        if (t.mode == 7) Sync<HardEvent::MTE3_V>();
         Cast(b3, f4, RoundMode::CAST_RINT, ROPE_DIM);
         Sync<HardEvent::V_MTE3>();
         DataCopy(output[outputOffset], b3, ROPE_DIM);
