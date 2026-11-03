@@ -19,6 +19,8 @@ HEAD_BASE_SHA256 = "0ee2fe6008ea62b83d1b815249d2517b3d39550e587850858a60ad1f07e7
 GMM_DOWN_SHA256 = "6ab63adaad223b69eda5e02f2690b8fe052c4c357b13bc19eeafecdf5b2f2cfe"
 BROADCAST_BASE_COMMIT = "8b0d4da8d4897b3099736689c63ae7baea1dff3e"
 BROADCAST_BASE_SHA256 = "cc2cacc7d07beb06138643d1aa868f0ef0865b5166a574b94be7d95df7e734fc"
+GAMMA_CACHE_BASE_COMMIT = "5e35db3be11162a6edcb06e131d8dbaae7a2948e"
+GAMMA_CACHE_BASE_SHA256 = "ff46e1fa24ed70794a191aaee14bdb68fa5512bffab0f09eedbe46ea9b254b42"
 HEAD_LAYOUT_SHA256 = "7f6e2de290735bce07a27fe7d7f2523352eb7a8a763065048d525566d7a177df"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
@@ -108,6 +110,20 @@ def comparison_definition(comparison):
             "native_comparison": (
                 "mode4 retains round4 load/cast per unit; candidate mode5 caches gamma in f1[64:] "
                 "with per-launch width tag, RoPE uses only f1[:64]"
+            ),
+        }
+    if comparison == "split-dma-overlap":
+        return {
+            "baseline_commit": GAMMA_CACHE_BASE_COMMIT,
+            "baseline_file": "baseline_serial_5e35db3b.py",
+            "baseline_sha256": GAMMA_CACHE_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 6,
+            "changed": "B>=32 split: independent b0 Q-output and b3 RoPE-input DMA; B<32 keeps mode1",
+            "unchanged": "round5 norm modes5/4, BF16 matrix routes/layouts, FP32 math, UB size, cache and thresholds",
+            "native_comparison": (
+                "mode1 retains the shared-b0 wait; mode6 loads RoPE into b3 while Q is read from b0, "
+                "keeps both next-unit reuse fences and explicitly drains the last MTE3 output"
             ),
         }
     raise ValueError(f"unknown comparison {comparison}")
@@ -592,7 +608,7 @@ def main():
     parser.add_argument("--case-id", action="append")
     parser.add_argument(
         "--comparison",
-        choices=("projection", "head-layout", "gmm-down", "norm-broadcast", "norm-gamma-cache"),
+        choices=("projection", "head-layout", "gmm-down", "norm-broadcast", "norm-gamma-cache", "split-dma-overlap"),
         default="projection",
     )
     parser.add_argument("--mode", choices=("verify", "paired", "micro", "head-micro", "profile"), default="verify")
@@ -655,6 +671,7 @@ def main():
         "head-layout": HEAD_LAYOUT_SHA256,
         "gmm-down": GMM_DOWN_SHA256,
         "norm-broadcast": BROADCAST_BASE_SHA256,
+        "norm-gamma-cache": GAMMA_CACHE_BASE_SHA256,
     }.get(args.comparison)
     if historical_hash and args.mode in {"verify", "paired", "profile"}:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
