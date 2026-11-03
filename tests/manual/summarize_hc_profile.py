@@ -16,8 +16,6 @@ OWNED = START | END | {"qwen_hc_silu", "_hc_silu_kernel"}
 def classify(row):
     name = row["Op Name"]
     kind = row.get("OP Type", "")
-    if "MatMul" in kind or "Matmul" in name or "MatMul" in name:
-        return "C_all_matmul"
     if name in OWNED:
         return "V_owned_stage"
     if any(x in name for x in ("TransData", "Transpose", "Cast", "Reshape", "ViewCopy")):
@@ -26,6 +24,8 @@ def classify(row):
         return "V_copy"
     if any(x in name for x in ("Fill", "Memset")):
         return "V_other"
+    if "MatMul" in kind or "Matmul" in name or "MatMul" in name:
+        return "C_all_matmul"
     return "unclassified"
 
 

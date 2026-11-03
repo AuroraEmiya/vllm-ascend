@@ -40,7 +40,7 @@ def main():
         "torch_npu": torch_npu.__version__,
         "soc": torch.npu.get_device_name(0),
         "c_api": {
-            "candidate": "torch.matmul",
+            "candidate": "torch.bmm (singleton batch, 2 independent calls)",
             "original_baseline": "F.linear",
             "api_control": "torch.matmul",
         },
