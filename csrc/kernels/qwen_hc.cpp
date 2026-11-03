@@ -19,6 +19,12 @@ template<HardEvent E> __aicore__ inline void Sync() {
 template<typename T>
 __aicore__ inline void Load(LocalTensor<T> dst, GlobalTensor<T> src, uint32_t offset,
                             uint32_t count) {
+    constexpr uint32_t DMA_BLOCK_BYTES = 32;
+    if ((count * sizeof(T)) % DMA_BLOCK_BYTES == 0 &&
+        reinterpret_cast<uint64_t>(src.GetPhyAddr(offset)) % DMA_BLOCK_BYTES == 0) {
+        DataCopy(dst, src[offset], count);
+        return;
+    }
     DataCopyExtParams copy{1, static_cast<uint32_t>(count * sizeof(T)), 0, 0, 0};
     DataCopyPadExtParams<T> pad{true, 0, static_cast<uint8_t>(Align(count) - count), 0};
     DataCopyPad(dst, src[offset], copy, pad);
@@ -26,6 +32,12 @@ __aicore__ inline void Load(LocalTensor<T> dst, GlobalTensor<T> src, uint32_t of
 template<typename T>
 __aicore__ inline void Store(GlobalTensor<T> dst, uint32_t offset, LocalTensor<T> src,
                              uint32_t count) {
+    constexpr uint32_t DMA_BLOCK_BYTES = 32;
+    if ((count * sizeof(T)) % DMA_BLOCK_BYTES == 0 &&
+        reinterpret_cast<uint64_t>(dst.GetPhyAddr(offset)) % DMA_BLOCK_BYTES == 0) {
+        DataCopy(dst[offset], src, count);
+        return;
+    }
     DataCopyExtParams copy{1, static_cast<uint32_t>(count * sizeof(T)), 0, 0, 0};
     DataCopyPad(dst[offset], src, copy);
 }

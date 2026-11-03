@@ -28,7 +28,11 @@ def main():
         "triton_serial": four["triton_linear"],
         "triton_matmul": four["triton_matmul"],
     }
-    cases = json.loads(args.cases.read_text())["cases"] if args.cases else BOUNDARIES
+    boundaries = [
+        *BOUNDARIES,
+        {"id": "aligned-strided", "m": 3, "h": 64, "k": 3, "r": 16, "strided": True},
+    ]
+    cases = json.loads(args.cases.read_text())["cases"] if args.cases else boundaries
     result = {
         "mode": args.mode,
         "started": time.time(),
