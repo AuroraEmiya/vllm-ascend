@@ -223,6 +223,8 @@ def check_case(case, timing):
         result["input_immutability_eager"] = all(t is None or torch.equal(t.cpu(), c) for t, c in zip(tensors, cpu))
         for name, call in calls.items():
             graphs[name], gout[name] = capture(call, stream)
+            if name == "serial" and hasattr(serial, "optimize_graph"):
+                serial.optimize_graph(graphs[name])
             for _ in range(10):
                 graphs[name].replay()
             stream.synchronize()
@@ -273,7 +275,7 @@ def check_case(case, timing):
 
 def profile(case, out):
     cpu = make_inputs(case)
-    tensors, calls, prep, _ = make_calls(cpu, case)
+    tensors, calls, prep, serial = make_calls(cpu, case)
     stream = torch.npu.Stream()
     stream.wait_stream(torch.npu.current_stream())
     with torch.npu.stream(stream):
@@ -281,6 +283,8 @@ def profile(case, out):
             calls["serial"]()
         stream.synchronize()
         graph, outputs = capture(calls["serial"], stream)
+        if hasattr(serial, "optimize_graph"):
+            serial.optimize_graph(graph)
         for _ in range(10):
             graph.replay()
         stream.synchronize()
