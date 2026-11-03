@@ -74,12 +74,12 @@ public:
             // Its b3 reuse fence is delayed until the next output Cast.
             if (t.mode != 7) Sync<HardEvent::MTE3_MTE2>();
             if (t.mode == 0 || (t.mode >= 3 && t.mode <= 5) || t.mode == 7) NormAndCache(unit);
-            else if (t.mode == 1 || t.mode == 6 || t.mode == 8) SplitAndRope(unit);
+            else if (t.mode == 1 || t.mode == 6 || t.mode == 8 || t.mode == 10) SplitAndRope(unit);
             else RestoreLayout(unit);
         }
         // The last unit has no following reuse fence. Explicitly drain its
         // pipelined mode's output transfers before leaving the V stage.
-        if (t.mode == 2 || t.mode == 9 || t.mode == 6 || t.mode == 7 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64))
+        if (t.mode == 2 || t.mode == 9 || t.mode == 6 || t.mode == 7 || ((t.mode == 8 || t.mode == 10) && t.rows >= 32 && t.rows <= 64))
             Sync<HardEvent::MTE3_S>();
     }
 
@@ -256,13 +256,13 @@ private:
 
     __aicore__ inline void SplitAndRope(uint32_t unit)
     {
-        const uint32_t tileSize = t.rows >= 32 ? HEAD_TILE : SMALL_HEAD_TILE;
+        const uint32_t tileSize = t.mode != 10 && t.rows >= 32 ? HEAD_TILE : SMALL_HEAD_TILE;
         const uint32_t tiles = (t.heads + tileSize - 1) / tileSize;
         const uint32_t row = unit / tiles;
         const uint32_t head = (unit % tiles) * tileSize;
         const uint32_t headCount = t.heads - head < tileSize ? t.heads - head : tileSize;
         // Preserve round6's retained DMA selection in the mode8 path.
-        const bool overlapInput = t.mode == 6 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64);
+        const bool overlapInput = t.mode == 6 || ((t.mode == 8 || t.mode == 10) && t.rows >= 32 && t.rows <= 64);
         const uint64_t source = static_cast<uint64_t>(row * t.heads + head) * UP_HEAD_WIDTH;
         DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
         DataCopyExtParams copyQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),

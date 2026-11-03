@@ -77,6 +77,7 @@ class MlaPrologSerial:
         self.eps_q, self.eps_kv = eps_q, eps_kv
         self._matrix_backend = "torch"
         self._head_layout = "transpose"
+        self._split_head_tile = 0
         values = self._matrix_values()
         self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in values)
         self._matrix_nd = tuple(torch_npu.npu_format_cast(value.t().contiguous(), ND_FORMAT) for value in values)
@@ -125,7 +126,7 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, head_layout="tile8"):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, head_layout="row", split_head_tile=16):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -135,6 +136,9 @@ class MlaPrologSerial:
 
         if head_layout not in ("transpose", "row", "tile8"):
             raise ValueError("head_layout must be transpose, row or tile8")
+        if split_head_tile not in (0, 16):
+            raise ValueError("split_head_tile must be 0 or 16")
+        self._split_head_tile = split_head_tile
         self._head_layout = head_layout
         return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
 
@@ -207,7 +211,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1,
+            10 if use_v3 and self._split_head_tile == 16 else (6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1),
             rows,
             slots,
             head_q,
