@@ -8,7 +8,8 @@ namespace ops {
 static ge::graphStatus InferShape(gert::InferShapeContext* context)
 {
     const auto& x=*context->GetInputShape(0);
-    const auto mode=*context->GetAttrs()->GetInt(0), c=*context->GetAttrs()->GetInt(1);
+    const auto requestedMode=*context->GetAttrs()->GetInt(0), c=*context->GetAttrs()->GetInt(1);
+    const auto mode=requestedMode==9?5:requestedMode;
     if (x.GetDimNum()!=2 || c!=4) return ge::GRAPH_FAILED;
     *context->GetOutputShape(0)=x;
     if (mode==2) context->GetOutputShape(0)->SetDim(1,x.GetDim(1)/c);
