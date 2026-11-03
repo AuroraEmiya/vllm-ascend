@@ -67,7 +67,7 @@ public:
             // The same UB buffers are reused after both previous consumers complete.
             Sync<HardEvent::V_MTE2>();
             Sync<HardEvent::MTE3_MTE2>();
-            if (t.mode == 0 || t.mode == 3) NormAndCache(unit);
+            if (t.mode == 0 || t.mode >= 3) NormAndCache(unit);
             else if (t.mode == 1) SplitAndRope(unit);
             else RestoreLayout(unit);
         }
@@ -95,9 +95,22 @@ private:
         Adds(f2, f2, eps, 8);
         PipeBarrier<PIPE_V>();
         Rsqrt(f3, f2, 8);
-        Sync<HardEvent::V_S>();
-        const float inverse = f3.GetValue(0);
-        Muls(f0, f0, inverse, width);
+        if (t.mode == 4) {
+            // Broadcast only the exact FP32 inverse in lane0. The first Brcb
+            // output block repeats it eight times; Mul reuses this 32-byte
+            // block for every block/repeat without a vector-to-scalar read.
+            PipeBarrier<PIPE_V>();
+            Brcb(f4, f3, 1, {1, 8});
+            PipeBarrier<PIPE_V>();
+            const BinaryRepeatParams inverseBroadcast(1, 1, 0, 8, 8, 0);
+            Mul(f0, f0, f4, static_cast<uint64_t>(64),
+                static_cast<uint8_t>(width / 64), inverseBroadcast);
+        } else {
+            // Mode3 keeps the original control algorithm in this same binary.
+            Sync<HardEvent::V_S>();
+            const float inverse = f3.GetValue(0);
+            Muls(f0, f0, inverse, width);
+        }
         PipeBarrier<PIPE_V>();
         Mul(f0, f0, f1, width);
         PipeBarrier<PIPE_V>();
@@ -146,7 +159,7 @@ private:
     {
         const uint32_t row = unit / 2;
         if ((unit & 1u) == 0) {
-            const uint32_t inputWidth = t.mode == 3 ? QUERY_RANK + KV_RANK + ROPE_DIM : QUERY_RANK;
+            const uint32_t inputWidth = t.mode >= 3 ? QUERY_RANK + KV_RANK + ROPE_DIM : QUERY_RANK;
             Normalize(xGm, row * inputWidth, gammaQGm, QUERY_RANK, t.epsQ,
                 yGm, row * QUERY_RANK);
             return;
@@ -159,7 +172,7 @@ private:
         // Invalid slots never produce out-of-bounds device accesses. The public
         // wrapper's setup checker rejects invalid/duplicate host metadata.
         if (slot < 0 || slot >= t.slots) return;
-        if (t.mode == 3) {
+        if (t.mode >= 3) {
             const uint64_t offset = row * (QUERY_RANK + KV_RANK + ROPE_DIM) + QUERY_RANK;
             Normalize(xGm, offset, gammaKvGm, KV_RANK, t.epsKv,
                 kvGm, static_cast<uint64_t>(slot) * KV_RANK);
