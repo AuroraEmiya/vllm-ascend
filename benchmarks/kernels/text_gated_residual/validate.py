@@ -316,6 +316,7 @@ def main():
     args = parser.parse_args()
     torch.set_num_threads(4)
     torch.npu.set_device(0)
+    torch.npu.config.allow_internal_format = True
     cases = json.loads(Path(__file__).with_name("cases.json").read_text())
     if args.case_id:
         cases = [c for c in cases if c["id"] in args.case_id]
