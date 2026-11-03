@@ -47,14 +47,14 @@ inline void serial_matmul_v3_out(const at::Tensor& a, const at::Tensor& b,
     aclOpExecutor* executor = nullptr;
     const auto status = aclnnSerialMatmulV3GetWorkspaceSize(da.get(), db.get(), transposeB, batched,
         dy.get(), &workspaceSize, &executor);
-    TORCH_CHECK(status == ACLNN_SUCCESS, "serial V3 setup failed: ", status, ": ", aclGetRecentErrMsg());
+    TORCH_CHECK(status == ACL_SUCCESS, "serial V3 setup failed: ", status, ": ", aclGetRecentErrMsg());
     auto workspace = at::empty({static_cast<int64_t>(workspaceSize)}, a.options().dtype(at::kByte));
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
     // Retain descriptors and workspace until the queued host handler submits work.
     auto call = [da, db, dy, workspace, workspaceSize, executor, stream]() -> int {
         auto result = aclnnSerialMatmulV3(workspaceSize ? workspace.data_ptr() : nullptr,
             workspaceSize, executor, stream);
-        TORCH_CHECK(result == ACLNN_SUCCESS, "serial V3 execution failed: ", result,
+        TORCH_CHECK(result == ACL_SUCCESS, "serial V3 execution failed: ", result,
             ": ", aclGetRecentErrMsg());
         return result;
     };
