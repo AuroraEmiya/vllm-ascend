@@ -11,6 +11,7 @@ KV_RANK = 512
 NOPE_DIM = 128
 ROPE_DIM = 64
 MAX_BATCH = 128
+GAMMA_CACHE_MIN_BATCH = 32
 FRACTAL_NZ = 29
 ND_FORMAT = 2
 ALLOWED_HIDDEN = (1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192)
@@ -153,7 +154,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            4,
+            5 if rows >= GAMMA_CACHE_MIN_BATCH else 4,
             rows,
             slots,
             normalized_q,
