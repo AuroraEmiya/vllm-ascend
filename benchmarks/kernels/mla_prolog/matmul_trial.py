@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Pinned linear/mm versus matmul trial; retain the original 15-case contract."""
+"""Pinned MLA matrix-route trials; retain the original 15-case contract."""
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import statistics
 import subprocess
@@ -13,12 +14,15 @@ from pathlib import Path
 
 BASE_COMMIT = "af0d582472abb826d3ea6cbe37c75e7f49f9481c"
 BASE_SHA256 = "654bb8fe5761e19edfdaf2e8a595c9d599cf10a7e40f1f410d44008b2107af51"
+HEAD_BASE_COMMIT = "592d3963e3ef59fc147ef88ab0f114f35b731776"
+HEAD_BASE_SHA256 = "0ee2fe6008ea62b83d1b815249d2517b3d39550e587850858a60ad1f07e7ba8c"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
 EAGER_WARMUP = 10
 GRAPH_WARMUP = 10
 PAIRED_SAMPLES = 20
 PROFILE_REPLAYS = 2
+HEAD_ACTIVATION_SEED_OFFSET = 300
 
 
 def canonical_bytes(path):
@@ -40,14 +44,39 @@ def select_cases(manifest, requested):
     return cases
 
 
-def pinned_inputs():
+def comparison_definition(comparison):
+    if comparison == "projection":
+        return {
+            "baseline_commit": BASE_COMMIT,
+            "baseline_file": "baseline_serial_af0d5824.py",
+            "baseline_sha256": BASE_SHA256,
+            "labels": ("original", "matmul"),
+            "round": 1,
+            "changed": "down/up: ND linear(x,wt) to matmul(x,wt.t()); NZ mm to matmul",
+            "unchanged": "weight preparation, row route, head bmm/transpose_batchmatmul, V kernel, thresholds",
+        }
+    if comparison == "head-layout":
+        return {
+            "baseline_commit": HEAD_BASE_COMMIT,
+            "baseline_file": "baseline_serial_592d3963.py",
+            "baseline_sha256": HEAD_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 2,
+            "changed": "B>1 head: transpose_batchmatmul to bmm + permute + explicit contiguous",
+            "unchanged": "BF16 boundaries, down/up matmul, prepared weights, row route, B1 head, V, thresholds",
+        }
+    raise ValueError(f"unknown comparison {comparison}")
+
+
+def pinned_inputs(comparison="projection"):
+    definition = comparison_definition(comparison)
     folder = Path(__file__).resolve().parent
-    baseline = folder / "baseline_serial_af0d5824.py"
+    baseline = folder / definition["baseline_file"]
     manifest = folder / "cases.json"
-    if sha256(baseline) != BASE_SHA256 or sha256(manifest) != MANIFEST_SHA256:
+    if sha256(baseline) != definition["baseline_sha256"] or sha256(manifest) != MANIFEST_SHA256:
         raise ValueError("pinned original wrapper or frozen 15-case manifest changed")
     return {
-        "baseline_commit": BASE_COMMIT,
+        "baseline_commit": definition["baseline_commit"],
         "baseline_path": str(baseline),
         "baseline_canonical_sha256": sha256(baseline),
         "manifest_path": str(manifest),
@@ -56,9 +85,8 @@ def pinned_inputs():
     }
 
 
-def runtime():
+def runtime(comparison="projection"):
     # Import only in a device worker; --plan and CPU contract tests need no NPU.
-    import baseline_serial_af0d5824 as original
     import torch
     import torch.nn.functional as functional
     import torch_npu
@@ -66,12 +94,20 @@ def runtime():
 
     from vllm_ascend.ops.mla_prolog_serial import MlaPrologSerial
 
+    definition = comparison_definition(comparison)
+    spec = importlib.util.spec_from_file_location(
+        "mla_trial_baseline", Path(__file__).parent / definition["baseline_file"]
+    )
+    original = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(original)
+    control_label, candidate_label = definition["labels"]
     return {
         "torch": torch,
         "functional": functional,
         "torch_npu": torch_npu,
         "validate": validate,
-        "classes": {"original": original.MlaPrologSerial, "matmul": MlaPrologSerial},
+        "classes": {control_label: original.MlaPrologSerial, candidate_label: MlaPrologSerial},
+        "comparison": definition,
     }
 
 
@@ -85,6 +121,7 @@ def tensor_metadata(value, rt):
         "storage_bytes": value.untyped_storage().nbytes(),
         "storage_offset": value.storage_offset(),
         "format": int(rt["torch_npu"].get_npu_format(value)),
+        "is_contiguous": value.is_contiguous(),
     }
 
 
@@ -164,6 +201,7 @@ def profile_replays(graph, stream, case_id, implementation, torch, result):
 
 def run_pair(case, mode, implementation, rt, result):
     torch, validation = rt["torch"], rt["validate"]
+    control_label, candidate_label = rt["comparison"]["labels"]
     data, device, initial_kv, initial_kr, candidates, preparation = prepare(case, rt)
     expected = validation.oracle(data, case["heads"], initial_kv, initial_kr)
     immutable = {name: value.cpu().clone() for name, value in device.items()}
@@ -175,10 +213,11 @@ def run_pair(case, mode, implementation, rt, result):
         preparation=preparation,
         input_metadata=device_layouts,
         cache_metadata=cache_layouts,
-        matrix_route=candidates["matmul"].matrix_route(case["batch"]),
+        matrix_route=candidates[candidate_label].matrix_route(case["batch"]),
         route_label_is_original_layout_selector=True,
-        changed_apis="down/up: ND linear(x,wt) to matmul(x,wt.t()); NZ mm to matmul",
-        unchanged="weight preparation, row route, head bmm/transpose_batchmatmul, V kernel, thresholds",
+        changed_apis=rt["comparison"]["changed"],
+        unchanged=rt["comparison"]["unchanged"],
+        output_metadata={},
         timing=None,
     )
     stream = torch.npu.Stream()
@@ -194,6 +233,10 @@ def run_pair(case, mode, implementation, rt, result):
         return candidates[name](device["x"], device["sin"], device["cos"], device["index"], *caches[name])
 
     def check(name, phase, reference, host_data, host_kv, host_kr):
+        metadata = [tensor_metadata(value, rt) for value in outputs[name]]
+        result["output_metadata"][name + "_" + phase] = metadata
+        if any(not value.is_contiguous() or value.dtype != torch.bfloat16 for value in outputs[name]):
+            raise AssertionError(f"{name}/{phase}: all public outputs must be contiguous BF16")
         result["checks"][name + "_" + phase] = validation.check_outputs(
             outputs[name], caches[name], reference, host_data, host_kv, host_kr
         )
@@ -278,7 +321,7 @@ def run_pair(case, mode, implementation, rt, result):
             result["status"] = "FAIL_CHANGED_OR_RESTORED_GRAPH"
             return
     if mode == "paired":
-        result["timing"] = paired_timing(graphs, stream, "original", "matmul", torch)
+        result["timing"] = paired_timing(graphs, stream, control_label, candidate_label, torch)
     elif mode == "profile":
         profile_replays(graphs[implementation], stream, case["id"], implementation, torch, result)
     result["status"] = "PASS"
@@ -379,13 +422,105 @@ def run_micro(case, rt, result):
         result["status"] = "FAIL_PREPARED_MUTATION"
 
 
+def run_head_micro(case, rt, result):
+    torch, validation = rt["torch"], rt["validate"]
+    torch_npu = rt["torch_npu"]
+    rows, heads = case["batch"], case["heads"]
+    data, _, _ = validation.build_case(case)
+    nope_dim, kv_rank = data["wuk"].shape[1:]
+    head_cpu = torch.randn(
+        (heads, rows, nope_dim), generator=torch.Generator().manual_seed(case["seed"] + HEAD_ACTIVATION_SEED_OFFSET)
+    ).to(torch.bfloat16)
+    head, weight = head_cpu.npu(), data["wuk"].npu()
+    reference = torch.bmm(head_cpu.double(), data["wuk"].double()).permute(1, 0, 2).unsqueeze(1)
+
+    def control():
+        if rows == 1:
+            return torch.bmm(head, weight).view(rows, 1, heads, kv_rank)
+        return torch_npu.npu_transpose_batchmatmul(
+            head, weight, perm_x1=[0, 1, 2], perm_x2=[0, 1, 2], perm_y=[1, 0, 2], batch_split_factor=1
+        ).view(rows, 1, heads, kv_rank)
+
+    def candidate():
+        if rows == 1:
+            return torch.bmm(head, weight).view(rows, 1, heads, kv_rank)
+        return torch.bmm(head, weight).permute(1, 0, 2).contiguous().view(rows, 1, heads, kv_rank)
+
+    raw = torch.bmm(head, weight)
+    view = raw.permute(1, 0, 2).unsqueeze(1)
+    result.update(
+        status="PASS",
+        input_metadata={"head_q": tensor_metadata(head, rt), "weight_uk": tensor_metadata(weight, rt)},
+        raw_bmm_metadata=tensor_metadata(raw, rt),
+        permuted_view_metadata=tensor_metadata(view, rt),
+        view_alone_satisfies_contiguity=view.is_contiguous(),
+        explicit_contiguous_inside_graph=True,
+        extra_bmm_intermediate_logical_bytes_per_call=raw.numel() * raw.element_size()
+        if not view.is_contiguous()
+        else 0,
+        numerical_reference="seeded shared BF16 head Q and source weight, CPU FP64 bmm; frozen BF16 thresholds",
+        methods={},
+        timing=None,
+        kernel_version=None,
+        kernel_version_reason="Read actual OP Type and layout/copy tasks from full msprof.",
+    )
+    stream = torch.npu.Stream()
+    stream.wait_stream(torch.npu.current_stream())
+    graphs, outputs = {}, {}
+    for name, function in (("control", control), ("candidate", candidate)):
+        record = {"status": "NOT_RUN"}
+        result["methods"][name] = record
+        try:
+            with torch.npu.stream(stream):
+                for _ in range(EAGER_WARMUP):
+                    function()
+                stream.synchronize()
+                graph = torch.npu.NPUGraph()
+                with torch.npu.graph(graph, stream=stream):
+                    for _ in range(CALLS_PER_GRAPH):
+                        outputs[name] = function()
+                for _ in range(GRAPH_WARMUP):
+                    graph.replay()
+                stream.synchronize()
+            check = validation.compare(outputs[name], reference)
+            finite = bool(torch.isfinite(outputs[name].cpu().float()).all())
+            metadata = tensor_metadata(outputs[name], rt)
+            record.update(check=check, finite=finite, output_metadata=metadata)
+            if (
+                check["matched_ratio"] < 0.99
+                or check["max_abs_error"] > 1
+                or not finite
+                or not outputs[name].is_contiguous()
+                or outputs[name].dtype != torch.bfloat16
+                or tuple(outputs[name].shape) != (rows, 1, heads, kv_rank)
+            ):
+                record["status"] = "FAIL_PRECISION_OR_LAYOUT"
+            else:
+                record["status"] = "PASS"
+                graphs[name] = graph
+        except Exception as error:
+            record.update(
+                status="ERROR", error_type=type(error).__name__, error=str(error), traceback=traceback.format_exc()
+            )
+    if len(graphs) == 2:
+        result["timing"] = paired_timing(
+            graphs, stream, "control", "candidate", torch, unit="complete_head_matrix_and_output_layout"
+        )
+    else:
+        result["status"] = "PARTIAL_METHOD_FAILURE"
+    result["inputs_immutable"] = torch.equal(head.cpu(), head_cpu) and torch.equal(weight.cpu(), data["wuk"])
+    if not result["inputs_immutable"]:
+        result["status"] = "FAIL_INPUT_MUTATION"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--source-commit")
     parser.add_argument("--case-id", action="append")
-    parser.add_argument("--mode", choices=("verify", "paired", "micro", "profile"), default="verify")
-    parser.add_argument("--implementation", choices=("original", "matmul"), default="matmul")
+    parser.add_argument("--comparison", choices=("projection", "head-layout"), default="projection")
+    parser.add_argument("--mode", choices=("verify", "paired", "micro", "head-micro", "profile"), default="verify")
+    parser.add_argument("--implementation", choices=("original", "matmul", "control", "candidate"))
     parser.add_argument(
         "--plan",
         action="store_true",
@@ -393,20 +528,32 @@ def main():
     )
     args = parser.parse_args()
     try:
-        pinned = pinned_inputs()
+        definition = comparison_definition(args.comparison)
+        pinned = pinned_inputs(args.comparison)
         cases = select_cases(pinned["manifest"], args.case_id)
     except ValueError as error:
         parser.error(str(error))
     if args.mode == "profile" and len(cases) != 1:
         parser.error("profile requires exactly one frozen --case-id per process")
+    if (args.mode == "micro" and args.comparison != "projection") or (
+        args.mode == "head-micro" and args.comparison != "head-layout"
+    ):
+        parser.error("micro requires projection; head-micro requires head-layout comparison")
+    if args.implementation is None:
+        args.implementation = definition["labels"][1]
+    if args.implementation not in definition["labels"]:
+        parser.error("--implementation must belong to the selected comparison")
     protocol = {
         **pinned["manifest"]["protocol"],
-        "purpose": "round1 of the newly authorized ten-round decode budget; historical10/10 unchanged",
-        "new_budget_round": 1,
+        "purpose": "newly authorized ten-round decode budget; historical10/10 unchanged",
+        "comparison": args.comparison,
+        "new_budget_round": definition["round"],
         "new_budget_limit": 10,
-        "direct_comparison": "original complete Graph / matmul complete Graph",
-        "micro_scope": "two projection stages, identical activation and ND/NZ storage; no layout preparation timed",
-        "fusion_comparison": "unchanged validate.py --baseline-route aclnn, current matmul wrapper",
+        "direct_comparison": " / ".join(definition["labels"]) + " complete Graph",
+        "micro_scope": "identical BF16 inputs/weight storage; explicit output layout operations included",
+        "changed": definition["changed"],
+        "unchanged": definition["unchanged"],
+        "fusion_comparison": "unchanged validate.py --baseline-route aclnn, current candidate wrapper",
         "no_new_V3_domain": True,
         "kernel_versions": "observed from full msprof; no presumption of V2 or V3",
     }
@@ -426,10 +573,16 @@ def main():
     if args.out.exists():
         parser.error("refusing to overwrite existing output; choose a new attempt path")
     repo = Path(__file__).resolve().parents[3]
+    if (
+        args.comparison == "projection"
+        and args.mode != "micro"
+        and sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != HEAD_BASE_SHA256
+    ):
+        parser.error("projection full trials require the round1 wrapper; use --comparison head-layout for round2")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     if head != args.source_commit:
         parser.error(f"--source-commit does not match running checkout HEAD {head}")
-    rt = runtime()
+    rt = runtime(args.comparison)
     torch = rt["torch"]
     torch.npu.set_device(0)
     torch.npu.config.allow_internal_format = True
@@ -438,6 +591,8 @@ def main():
         try:
             if args.mode == "micro":
                 run_micro(case, rt, value)
+            elif args.mode == "head-micro":
+                run_head_micro(case, rt, value)
             else:
                 run_pair(case, args.mode, args.implementation, rt, value)
         except Exception as error:
