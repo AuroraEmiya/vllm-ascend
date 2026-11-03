@@ -1,5 +1,13 @@
 # Logical ND packed down weight trial
 
+Result: REJECT. All15 correctness/update checks passed, but full Graph at
+B32/64 was48.6%/26.3% slower. Down C46.957/36.917us, still MatMulV2, BF16
+boundaries and no standalone conversion task. The retained source removes
+the logical ND preparation and restores the exact round9 wrapper/harness.
+Use published trial commit0f477fd8e3dd56df84a9eaa318507cffbd9af5b4
+to reproduce this historical CLI. This rollback is final selection, not a
+new candidate or an optimization gain.
+
 Additional round10, the last candidate in the new budget, retains round9.
 Packed down C is20.761/21.422us at B32/64, compared with9.765us at B16.
 The single hypothesis changes the physical right-hand ND matrix from a
