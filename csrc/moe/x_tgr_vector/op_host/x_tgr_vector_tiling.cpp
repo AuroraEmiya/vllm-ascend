@@ -13,7 +13,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     XTgrVectorTilingData t;
     const auto& s = context->GetInputShape(0)->GetStorageShape();
     const auto* a = context->GetAttrs();
-    const int64_t mode = *a->GetInt(0), channels = *a->GetInt(1);
+    const int64_t requestedMode = *a->GetInt(0), channels = *a->GetInt(1);
+    // Internal benchmark reference: identical mix math with legacy tile.
+    const int64_t mode = requestedMode==6?2:requestedMode;
     const float eps = *a->GetFloat(2);
     if (s.GetDimNum()!=2 || s.GetDim(0)<1 || s.GetDim(0)>2048 ||
         channels!=4 || mode<0 || mode>5 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
@@ -30,7 +32,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     // batches, process a larger tile to amortize each DMA/vector fence.
     uint32_t tile=256;
     if (mode==2) {
-        if (n>=40) tile=2560;
+        if (n<=2 && requestedMode!=6) tile=128;
+        else if (n>=40) tile=2560;
         else if (n>=20) tile=1280;
         else if (n>=10) tile=640;
         else if (n>=5) tile=320;
@@ -46,8 +49,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     // Two BF16 and two FP32 four-branch tiles, one FP32 sum tile,
     // plus two 32-byte blocks: at most 133,184 bytes on this path.
     if (mode==2) {
-        while (tile>32 && 54ull*tile+64>ub) tile/=2;
-        if (54ull*tile+64>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
+        while (tile>32 && 52ull*tile+64>ub) tile/=2;
+        if (52ull*tile+64>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
     }
     t.set_tile(tile);
     t.set_units(mode==5 ? (n+tile-1)/tile : (mode==3 ? n : ((mode==0 || mode==4) ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile())))));
