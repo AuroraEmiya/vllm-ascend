@@ -6,7 +6,7 @@ source ND transpose. The candidate selects an explicitly prepared format29
 BF16 up-weight transpose for tokens<=64; larger token counts keep ND.
 The packed down/gate projection is unchanged. Both public calls are matmul.
 
-Round6 up tasks take12.5�C13.7us at B2�CB64. Historical single-projection NZ
+Round6 up tasks take12.5–13.7us at B2–B64. Historical single-projection NZ
 micro Graphs take10.1us at B2/B32 and11.4us at B64. These are hypothesis
 evidence; acceptance uses current full Graph AB/BA pairs, not old micro times.
 
