@@ -21,7 +21,7 @@ const aclTensor* BatchMatMulV3Nd(const aclTensor*, const aclTensor*, const aclTe
 }
 
 namespace vllm_ascend {
-inline aclnnStatus serial_v3_workspace(const aclTensor* a, const aclTensor* b,
+inline aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(const aclTensor* a, const aclTensor* b,
     bool transposeB, bool batched, aclTensor* out, uint64_t* workspaceSize,
     aclOpExecutor** executor)
 {
@@ -37,7 +37,7 @@ inline aclnnStatus serial_v3_workspace(const aclTensor* a, const aclTensor* b,
     return ACLNN_SUCCESS;
 }
 
-inline aclnnStatus serial_v3_run(void* workspace, uint64_t size, aclOpExecutor* executor, aclrtStream stream)
+inline aclnnStatus aclnnSerialMatmulV3(void* workspace, uint64_t size, aclOpExecutor* executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnSerialMatmulV3);
     return CommonOpExecutorRun(workspace, size, executor, stream);
@@ -76,14 +76,14 @@ inline void serial_matmul_v3_out(const at::Tensor& a, const at::Tensor& b,
     auto da = serial_nd_descriptor(a), db = serial_nd_descriptor(b), dy = serial_nd_descriptor(out);
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
-    const auto status = serial_v3_workspace(da.get(), db.get(), transposeB, batched,
+    const auto status = aclnnSerialMatmulV3GetWorkspaceSize(da.get(), db.get(), transposeB, batched,
         dy.get(), &workspaceSize, &executor);
     TORCH_CHECK(status == ACLNN_SUCCESS, "serial V3 setup failed: ", status, ": ", aclGetRecentErrMsg());
     auto workspace = at::empty({static_cast<int64_t>(workspaceSize)}, a.options().dtype(at::kByte));
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
     // Retain descriptors and workspace until the queued host handler submits work.
     auto call = [da, db, dy, workspace, workspaceSize, executor, stream]() -> int {
-        auto result = serial_v3_run(workspaceSize ? workspace.data_ptr() : nullptr,
+        auto result = aclnnSerialMatmulV3(workspaceSize ? workspace.data_ptr() : nullptr,
             workspaceSize, executor, stream);
         TORCH_CHECK(result == ACLNN_SUCCESS, "serial V3 execution failed: ", result,
             ": ", aclGetRecentErrMsg());
