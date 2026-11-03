@@ -189,14 +189,7 @@ class MlaPrologSerial:
         if rows == 1:
             query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
         else:
-            query = torch_npu.npu_transpose_batchmatmul(
-                head_q,
-                self.weight_uk,
-                perm_x1=[0, 1, 2],
-                perm_x2=[0, 1, 2],
-                perm_y=[1, 0, 2],
-                batch_split_factor=1,
-            )
+            query = torch.bmm(head_q, self.weight_uk).permute(1, 0, 2).contiguous()
         return (
             query.view(rows, 1, self.heads, KV_RANK),
             query_rope.view(rows, 1, self.heads, ROPE_DIM),
