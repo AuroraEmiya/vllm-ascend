@@ -113,6 +113,24 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertTrue(any("b3" in c[2] for c in model(cast_event=False)[0]))
         self.assertNotIn("kr-out", model(drain=False)[1]["return"])
 
+    def test_final_retained_plan_is_validation_only_and_spends_no_candidate(self):
+        result = subprocess.run(
+            [sys.executable, str(HARNESS), "--plan", "--comparison", "final-retained-r7", "--mode", "paired"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        protocol = plan["protocol"]
+        self.assertTrue(protocol["validation_only"])
+        self.assertIsNone(protocol["new_budget_round"])
+        self.assertEqual(protocol["optimization_candidates_consumed"], 10)
+        self.assertEqual(protocol["candidate_count_increment"], 0)
+        self.assertEqual(protocol["selected_candidate_round"], 7)
+        self.assertEqual(len(plan["selected_cases"]), 15)
+        self.assertEqual(plan["pinned_baseline"]["baseline_canonical_sha256"], TRIAL.NORM_OVERLAP_BASE_SHA256)
+        self.assertEqual(TRIAL.sha256(ROOT / "vllm_ascend/ops/mla_prolog_serial.py"), TRIAL.NORM_OVERLAP_BASE_SHA256)
+
     def test_subset_keeps_frozen_manifest_order(self):
         manifest = TRIAL.pinned_inputs()["manifest"]
         result = TRIAL.select_cases(manifest, ["decode-b128", "decode-b1", "decode-b1"])
