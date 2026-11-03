@@ -10,18 +10,20 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     const int64_t mode = *attrs->GetInt(0), rows = *attrs->GetInt(1);
     const int64_t heads = *attrs->GetInt(2), slots = *attrs->GetInt(3);
     const float epsQ = *attrs->GetFloat(4), epsKv = *attrs->GetFloat(5);
-    if (mode < 0 || mode > 5 || rows < 1 || rows > 128 || heads < 1 || heads > 128 ||
+    if (mode < 0 || mode > 6 || rows < 1 || rows > 128 || heads < 1 || heads > 128 ||
         (heads & (heads - 1)) || slots < rows || slots > 1048576 ||
         !std::isfinite(epsQ) || !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0) return ge::GRAPH_FAILED;
     const auto& shape = context->GetInputShape(0)->GetStorageShape();
+    const bool mergedNorm = mode >= 3 && mode <= 5;
+    const bool split = mode == 1 || mode == 6;
     const int64_t expectedRows = mode == 2 ? heads * rows : rows;
-    const int64_t expectedWidth = mode >= 3 ? 2112 : (mode == 0 ? 1536 : (mode == 1 ? heads * 192 : 512));
+    const int64_t expectedWidth = mergedNorm ? 2112 : (mode == 0 ? 1536 : (split ? heads * 192 : 512));
     if (shape.GetDimNum() != 2 || shape.GetDim(0) != expectedRows || shape.GetDim(1) != expectedWidth)
         return ge::GRAPH_FAILED;
     if (mode == 0 && (context->GetInputShape(1)->GetStorageShape().GetShapeSize() != rows * 576 ||
         context->GetInputShape(2)->GetStorageShape().GetShapeSize() != 1536 ||
         context->GetInputShape(3)->GetStorageShape().GetShapeSize() != 512)) return ge::GRAPH_FAILED;
-    if (mode >= 3 && (context->GetInputShape(2)->GetStorageShape().GetShapeSize() != 1536 ||
+    if (mergedNorm && (context->GetInputShape(2)->GetStorageShape().GetShapeSize() != 1536 ||
         context->GetInputShape(3)->GetStorageShape().GetShapeSize() != 512)) return ge::GRAPH_FAILED;
     if (mode != 2 && (context->GetInputShape(4)->GetStorageShape().GetShapeSize() != rows * 64 ||
         context->GetInputShape(5)->GetStorageShape().GetShapeSize() != rows * 64 ||
@@ -29,8 +31,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     XMlaVectorTilingData tiling;
     tiling.set_mode(mode); tiling.set_rows(rows); tiling.set_heads(heads); tiling.set_slots(slots);
     const uint32_t headTile = rows >= 32 ? 32 : 16;
-    tiling.set_units((mode == 0 || mode >= 3) ? rows * 2 :
-        (mode == 1 ? rows * ((heads + headTile - 1) / headTile) : rows));
+    tiling.set_units((mode == 0 || mergedNorm) ? rows * 2 :
+        (split ? rows * ((heads + headTile - 1) / headTile) : rows));
     tiling.set_epsQ(epsQ); tiling.set_epsKv(epsKv);
     platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     uint64_t ubBytes = 0;
