@@ -66,17 +66,12 @@ std::tuple<at::Tensor,at::Tensor> combine(
     auto i=injection ? injection->data_ptr() : nullptr;
     auto s=std::get<0>(result).data_ptr(),n=std::get<1>(result).data_ptr();
     p.row_batch=1;
-    if(p.hidden%64==0) {
-        uint32_t tasks=p.rows*p.groups;
-        uint32_t best_waves=tasks/A3_VECTOR_CORES+(tasks%A3_VECTOR_CORES!=0);
-        for(uint32_t batch : {2u,4u}) {
-            if(p.groups%batch!=0 || (14*batch+6)*p.hidden+2464>180*1024)continue;
-            tasks=p.rows*(p.groups/batch);
-            const uint32_t waves=tasks/A3_VECTOR_CORES+(tasks%A3_VECTOR_CORES!=0);
-            if(waves<best_waves) {
-                p.row_batch=batch;
-                best_waves=waves;
-            }
+    if(p.hidden%64==0 && p.groups==4 && p.rows>=16) {
+        const uint32_t preferred=p.rows<=16?2:4;
+        if((14*preferred+6)*p.hidden+2464<=180*1024) {
+            p.row_batch=preferred;
+        } else if((14*2+6)*p.hidden+2464<=180*1024) {
+            p.row_batch=2;
         }
     }
     const uint32_t cores=std::min(A3_VECTOR_CORES,p.rows*(p.groups/p.row_batch));

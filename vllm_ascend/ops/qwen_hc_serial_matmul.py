@@ -43,10 +43,18 @@ def combine_and_mix(
     combined, normalized = torch.ops._C_ascend.qwen_hc_combine_norm(
         residual, block_output, previous_injection, norm_weight, eps, hc_count
     )
-    down = torch.matmul(normalized, down_weight.transpose(0, 1))
+    down = (
+        torch.matmul(down_weight, normalized[0]).unsqueeze(0)
+        if normalized.shape[0] == 1
+        else torch.matmul(normalized, down_weight.transpose(0, 1))
+    )
     lowrank = torch.ops._C_ascend.qwen_hc_silu(down[:, :rank], hc_count)
     next_injection = down[:, rank : rank + hc_count] if use_combine else None
-    gate = torch.matmul(lowrank, up_weight.transpose(0, 1))
+    gate = (
+        torch.matmul(up_weight, lowrank[0]).unsqueeze(0)
+        if lowrank.shape[0] == 1
+        else torch.matmul(lowrank, up_weight.transpose(0, 1))
+    )
     block_input = torch.ops._C_ascend.qwen_hc_gate_mix(normalized, gate, hc_count)
     return combined, block_input, next_injection
 
