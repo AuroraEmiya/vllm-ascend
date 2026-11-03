@@ -78,14 +78,31 @@ A3 checks but was rejected: B32/64/128 complete-Graph ratios were
 split choice (mode6 only32..64, mode1 elsewhere); this rollback is not
 a round9 gain. Mode8 remains compiled but is never selected by default.
 
-Round9 changes only the prepared up-ND slot from physical `[N,K]` to an
+Round9 tested only the prepared up-ND slot from physical `[N,K]` to an
 owned, contiguous `[K,N]` format2 matrix, used directly by public matmul
 when B>=16 and16-aligned. Down still uses its transposed ND view; NZ up
 and all other stages are unchanged. The source up weight cannot alias
 the prepared ND copy. Construction/refresh timings and allocator peaks
 include clone/conversion temporaries; replacing a resident slot does not
 establish zero setup cost. See `benchmarks/kernels/mla_prolog/UP_ND_ROW_MAJOR_TRIAL.md`.
-The round8 V/native binaries are reused without a rebuild. Round9 awaits A3.
+Round9's15-case paired run passed correctness, but B16/32/64/128 Graph
+ratios were0.945248/0.954453/0.986482/0.964643. Round10 restores exact
+round7 transposed-up preparation, refresh and matmul in both classes;
+the shared rollback is not a round10 gain. Round9 peak/cost telemetry
+remains in the harness.
+
+Round10 lowers only `NORM_OUTPUT_OVERLAP_MIN_BATCH` from32 to16. Thus
+B16..31 selects existing norm7 rather than norm4; B1..15 and B>=32
+retain their exact previous routes. The KV-to-KR transition can overlap
+independent b0/b1/b2 input DMA with KV output from b3 even when a core
+has only one work unit. Existing MTE3_V protects b3 before KR output
+Cast, V_MTE2 protects input reuse, and final MTE3_S drains KR output.
+No event depends on an initially ready flag: each Sync sets and waits
+its own event. The existing mode7 gamma-width tag resets each launch.
+No V/host/native source or binary rebuild is needed. See
+`benchmarks/kernels/mla_prolog/NORM_OVERLAP_B16_TRIAL.md` for the
+single-unit lifetime proof, unchanged fixed15 and exact r7 control.
+Round10 is the final authorized candidate and awaits A3 measurement.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -119,8 +136,7 @@ repository's standard `vllm_ascend_C` target. The native adapter uses the existi
 implementation. Benchmark/Graph validation is in
 `benchmarks/kernels/mla_prolog/validate.py`; NPU ST and CPU guard UT accompany it.
 
-The wrapper explicitly prepares NZ copies, a transposed down-ND copy and a
-row-major up-ND copy at construction.
+The wrapper explicitly prepares NZ and transposed ND matrix-weight copies at construction.
 After changing source matrix data, call `refresh_weights()` on an ordered stream
 before replay. Refresh copies into the existing buffers, checks actual formats29 and2,
 and preserves captured data pointers. Gamma and the final head matrix remain
