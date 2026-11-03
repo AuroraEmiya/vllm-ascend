@@ -37,7 +37,7 @@ def main():
             return instance
         begin = time.perf_counter_ns()
         compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend)
-        preparations.append({"wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
+        preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
         return compiled
@@ -75,6 +75,8 @@ def main():
                                           profile="serial" if args.profile else None)
         except Exception:
             row = {"case": case, "status": "ERROR", "traceback": traceback.format_exc()}
+        row["active_matrix_backend"] = "torch" if args.mode == "serial" else args.matrix_backend
+        row["retained_serial_matrix_route"] = row.pop("serial_matrix_route", None)
         row["validation_host_wall_s_including_compile"] = (time.perf_counter_ns() - begin) / 1e9
         report["cases"].append(row)
         save()

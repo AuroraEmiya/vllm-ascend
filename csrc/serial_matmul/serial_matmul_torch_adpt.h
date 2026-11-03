@@ -6,43 +6,12 @@
 #include <memory>
 #include <torch/extension.h>
 #include <acl/acl.h>
-#include <opdev/make_op_executor.h>
-#include <opdev/op_dfx.h>
-#include <aclnn_kernels/contiguous.h>
+#include "serial_matmul_opdev.h"
 #include <torch_npu/csrc/framework/OpCommand.h>
 #include <torch_npu/csrc/core/npu/NPUStream.h>
 #include <torch_npu/csrc/core/npu/NPUGuard.h>
 
-namespace l0op {
-const aclTensor* MatMulV3Nd(const aclTensor*, const aclTensor*, const aclTensor*,
-    bool, bool, bool, int64_t, aclOpExecutor*);
-const aclTensor* BatchMatMulV3Nd(const aclTensor*, const aclTensor*, const aclTensor*,
-    const aclTensor*, bool, bool, bool, bool, aclOpExecutor*);
-}
-
 namespace vllm_ascend {
-inline aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(const aclTensor* a, const aclTensor* b,
-    bool transposeB, bool batched, aclTensor* out, uint64_t* workspaceSize,
-    aclOpExecutor** executor)
-{
-    L2_DFX_PHASE_1(aclnnSerialMatmulV3, DFX_IN(a, b, transposeB, batched), DFX_OUT(out));
-    auto owner = CREATE_EXECUTOR();
-    if (!owner.get()) return ACLNN_ERR_INNER_CREATE_EXECUTOR;
-    const aclTensor* value = batched
-        ? l0op::BatchMatMulV3Nd(a, b, nullptr, nullptr, false, transposeB, false, false, owner.get())
-        : l0op::MatMulV3Nd(a, b, nullptr, false, transposeB, false, int64_t{1}, owner.get());
-    if (!value || !l0op::ViewCopy(value, out, owner.get())) return ACLNN_ERR_INNER_NULLPTR;
-    *workspaceSize = owner->GetWorkspaceSize();
-    owner.ReleaseTo(executor);
-    return ACLNN_SUCCESS;
-}
-
-inline aclnnStatus aclnnSerialMatmulV3(void* workspace, uint64_t size, aclOpExecutor* executor, aclrtStream stream)
-{
-    L2_DFX_PHASE_2(aclnnSerialMatmulV3);
-    return CommonOpExecutorRun(workspace, size, executor, stream);
-}
-
 inline std::shared_ptr<aclTensor> serial_nd_descriptor(const at::Tensor& tensor)
 {
     const int64_t storageElements = tensor.storage().nbytes() / tensor.element_size();

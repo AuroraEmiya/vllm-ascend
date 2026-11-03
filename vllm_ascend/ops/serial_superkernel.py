@@ -9,6 +9,7 @@ on the original object outside replay; recapture after address/metadata changes.
 
 import copy
 import os
+import time
 
 import torch
 
@@ -35,23 +36,24 @@ class CompiledSerialPipeline:
         self.optimize = optimize
         self.pipeline = pipeline
         self.scope = scope
+        self.preparation = {"first_call_wall_us_compile_install_execute": None,
+                            "outer_graph_optimize_wall_us": []}
         self.options = {
             "force_eager": True,
             "inplace_pass": False,
             "clone_input": False,
             "clone_output": False,
             "static_kernel_compile": True,
-            "super_kernel_optimize": optimize,
+            "super_kernel_optimize": True,
         }
-        if optimize:
-            self.options["super_kernel_optimize_options"] = {"dcci_after_kernel_end": [".*"]}
+        # Both controls compile the same SK-ready children; only the outer
+        # Graph grouping is disabled for optimize=False.
+        self.options["super_kernel_optimize_options"] = {"dcci_after_kernel_end": [".*"]}
 
         def forward(*args, **kwargs):
-            if optimize:
-                torch.npu.super_kernel_scope_begin(scope)
+            torch.npu.super_kernel_scope_begin(scope)
             outputs = execution(*args, **kwargs)
-            if optimize:
-                torch.npu.super_kernel_scope_end(scope)
+            torch.npu.super_kernel_scope_end(scope)
             return outputs
 
         self.compiled = torch.compile(
@@ -59,6 +61,13 @@ class CompiledSerialPipeline:
         )
 
     def __call__(self, *args, **kwargs):
+        if self.preparation["first_call_wall_us_compile_install_execute"] is None:
+            torch.npu.synchronize()
+            start = time.perf_counter_ns()
+            result = self.compiled(*args, **kwargs)
+            torch.npu.synchronize()
+            self.preparation["first_call_wall_us_compile_install_execute"] = (time.perf_counter_ns() - start) / 1000
+            return result
         return self.compiled(*args, **kwargs)
 
     def optimize_graph(self, graph):
@@ -68,7 +77,11 @@ class CompiledSerialPipeline:
         As in vLLM-Ascend, this explicit step performs the binary grouping.
         """
         if self.optimize:
+            torch.npu.synchronize()
+            start = time.perf_counter_ns()
             graph.super_kernel_optimize(optimize_options={"dcci_after_kernel_end": [".*"]})
+            torch.npu.synchronize()
+            self.preparation["outer_graph_optimize_wall_us"].append((time.perf_counter_ns() - start) / 1000)
         return graph
 
     def __getattr__(self, name):
