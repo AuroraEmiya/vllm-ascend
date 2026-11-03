@@ -118,7 +118,8 @@ def main():
         matches, kernels = [], []
         for trace in traces:
             content = json.loads(trace.read_text(encoding="utf-8"))
-            for event in content.get("traceEvents", []):
+            events = content.get("traceEvents", []) if isinstance(content, dict) else content
+            for event in events:
                 name = event.get("name", "")
                 if name == OP or name.startswith(OP + "."):
                     matches.append(event)
