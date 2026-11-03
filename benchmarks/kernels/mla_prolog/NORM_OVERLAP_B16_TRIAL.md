@@ -91,3 +91,25 @@ forwards per Graph. Full profiles retain all execution tasks and actual matrix
 types/dtypes/formats. KEEP requires a useful consistent B16 full-Graph benefit,
 no material guard31 regression and all15 accuracy/state checks. Otherwise
 restore the exact r7 wrapper. The budget ends at this candidate; no round11.
+
+## A3 outcome and selection
+
+REJECT_INCONCLUSIVE_PERFORMANCE. All15 accuracy/state checks and35 CPU
+checks passed. B16 control/candidate was55.234/54.555us (1.012446) initially
+and53.073/52.814us (1.004904) on confirmation; guard31 ratios were1.008351
+and1.010448. Unchanged B8/32/128 anchors showed larger differences, with
+B128 reversing0.926790 to1.058892. Initial B16 AB/BA pair-ratio medians
+were0.954855/1.038808 and candidate was faster in11/20 pairs. These order
+effects exceed the pooled difference; no stable attributable benefit is kept.
+
+The original pooled-median metric and all20 pairs remain unmodified.
+Prepared and per-phase output metadata match across arms after removing
+only data_ptr/storage_ptr. No threshold algorithm regression is assigned
+to the unchanged B128 path. Runtime/Graph cause remains unassigned.
+Parent evidence lives in outputs/dev-mla-prolog/optimization2-20261103:
+rounds/10 includes initial and confirmation raw JSON; the independent
+round10-event-analysis.json/.md contains all subgroup diagnostics.
+
+Final selection restores the exact r7 wrapper. Use FINAL_RETAINED_R7.md
+and final-retained-r7 CLI for fresh final validation, not this historical
+candidate's CLI. All10 candidates are consumed; no round11 is introduced.
