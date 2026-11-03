@@ -116,7 +116,9 @@ class TextGatedResidualSerial:
             self._sk_packed_weight[:PACKED_WIDTH].copy_(self.packed_weight)
         return self
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, pad_down=640, batch_activation=True):
+    def compile_superkernel(
+        self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, pad_down=640, batch_activation=True
+    ):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -126,7 +128,13 @@ class TextGatedResidualSerial:
 
         self._sk_activation_mode = 11 if batch_activation else 10
         self.prepare_superkernel_packing(pad_down if matrix_backend == "v3_nz" else 0)
-        return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
+        return CompiledSerialPipeline(
+            self,
+            "text_gated_residual",
+            optimize=optimize,
+            matrix_backend=matrix_backend,
+            optimize_options=optimize_options,
+        )
 
     def __call__(self, x, gamma=None, need_backward=False):
         if (
@@ -197,8 +205,11 @@ class TextGatedResidualSerial:
             else self.w_up
         )
         up = (
-            serial_matmul_v3(activation, self.up_nz if self._matrix_backend == "v3_nz" else self.w_up.t(), transpose_b=True)
-            if self._matrix_backend in ("v3", "v3_nz") else torch.matmul(activation, up_weight)
+            serial_matmul_v3(
+                activation, self.up_nz if self._matrix_backend == "v3_nz" else self.w_up.t(), transpose_b=True
+            )
+            if self._matrix_backend in ("v3", "v3_nz")
+            else torch.matmul(activation, up_weight)
         )
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
