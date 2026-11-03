@@ -246,6 +246,15 @@ strides, missing injection, shared norm, K2/6/8/9, empty rows and saturation;
 the default boundary invocation covers six, and the additional four use
 qwen_hc_tiling_boundaries.json. No cross-model performance claim is made.
 
-Full format.sh ci attempts are preserved separately from focused checks and
-successful HC-only builds. A full extension build and model-serving activation
-are separate from this device-validated HC development target.
+Both the HC-only and regular `vllm_ascend_C` targets were built and imported on
+the recorded A3 stack. The frozen HC-only artifact passed 52 decode points and
+ten boundaries with 156 valid complete-path profiles. The regular extension
+passed the eight acceptance points and ten boundaries with 24 valid profiles.
+Its complete-Graph speedup against the original full Triton path was
+1.192-1.232x; the required 1.5x per-point goal was not met. These are separate
+artifact-specific collections, not one combined benchmark.
+
+Focused repository checks, Markdown lint and explicit C++ clang-format checks
+passed. The full `format.sh ci` attempt timed out while installing the actionlint
+environment; its completion remains unverified. Model-serving activation and
+concurrent eager/capture execution remain outside the validated integration.
