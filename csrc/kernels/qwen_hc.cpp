@@ -16,6 +16,28 @@ template<HardEvent E> __aicore__ inline void Sync() {
     WaitFlag<E>(EVENT_ID0);
 }
 
+// A3 count-mask reuse for the same-width FP32 activation chain. Casts retain
+// their own masks. Restore normal mode before any caller operation.
+__aicore__ inline void SiluMath(LocalTensor<float> x,LocalTensor<float> t,
+                                uint32_t count,uint32_t groups) {
+    SetMaskCount();
+    SetVectorMask<float,MaskMode::COUNTER>(0,count);
+    Muls<float,false>(x,x,1.0f/groups,uint64_t(0),1,{1,1,8,8});
+    PipeBarrier<PIPE_V>();
+    Muls<float,false>(t,x,-1.0f,uint64_t(0),1,{1,1,8,8});
+    PipeBarrier<PIPE_V>();
+    Exp<float,false>(t,t,uint64_t(0),1,{1,1,8,8});
+    PipeBarrier<PIPE_V>();
+    Adds<float,false>(t,t,1.0f,uint64_t(0),1,{1,1,8,8});
+    PipeBarrier<PIPE_V>();
+    Reciprocal<float,false>(t,t,uint64_t(0),1,{1,1,8,8});
+    PipeBarrier<PIPE_V>();
+    Mul<float,false>(x,x,t,uint64_t(0),1,{1,1,1,8,8,8});
+    PipeBarrier<PIPE_V>();
+    SetMaskNorm();
+    ResetMask();
+}
+
 template<typename T>
 __aicore__ inline void Load(LocalTensor<T> dst, GlobalTensor<T> src, uint32_t offset,
                             uint32_t count) {
@@ -131,12 +153,7 @@ public:
             Load(a, in, row * p.residual_stride, p.hidden);
             Sync<HardEvent::MTE2_V>();
             Cast(x, a, RoundMode::CAST_NONE, p.hidden); PipeBarrier<PIPE_V>();
-            Muls(x, x, 1.0f / p.groups, p.hidden); PipeBarrier<PIPE_V>();
-            Muls(t, x, -1.0f, p.hidden); PipeBarrier<PIPE_V>();
-            Exp(t, t, p.hidden); PipeBarrier<PIPE_V>();
-            Adds(t, t, 1.0f, p.hidden); PipeBarrier<PIPE_V>();
-            Reciprocal(t, t, p.hidden); PipeBarrier<PIPE_V>();
-            Mul(x, x, t, p.hidden); PipeBarrier<PIPE_V>();
+            SiluMath(x,t,p.hidden,p.groups);
             Cast(b, x, RoundMode::CAST_RINT, p.hidden);
             Sync<HardEvent::V_MTE3>();
             Store(out, row * p.hidden, b, p.hidden);
@@ -306,12 +323,7 @@ public:
             DataCopyPad(a,in[row*p.residual_stride],cp,pad);
             Sync<HardEvent::MTE2_V>();
             Cast(x,a,RoundMode::CAST_NONE,count); PipeBarrier<PIPE_V>();
-            Muls(x,x,1.0f/p.groups,count); PipeBarrier<PIPE_V>();
-            Muls(t,x,-1.0f,count); PipeBarrier<PIPE_V>();
-            Exp(t,t,count); PipeBarrier<PIPE_V>();
-            Adds(t,t,1.0f,count); PipeBarrier<PIPE_V>();
-            Reciprocal(t,t,count); PipeBarrier<PIPE_V>();
-            Mul(x,x,t,count); PipeBarrier<PIPE_V>();
+            SiluMath(x,t,count,p.groups);
             Cast(b,x,RoundMode::CAST_RINT,count);
             Sync<HardEvent::V_MTE3>();
             Store(out,row*p.hidden,b,count);
