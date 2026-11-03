@@ -28,8 +28,11 @@ class TextGatedResidualSerial:
 
     Down/gate weights are prepared together when gate is present. Call
     ``refresh_weights_`` after changing their contents and before Graph replay;
-    this updates the prepared buffer at its existing address. Up weights and
-    gate-free down weights remain views. Replace the object and recapture when
+    this updates the prepared buffers at their existing addresses. NPU up
+    weights also have an explicit BF16 NZ copy for tokens<=64; source views
+    remain available for the ND route. Gate-free down weights remain views.
+    Enable torch.npu.config.allow_internal_format during NPU setup.
+    Replace the object and recapture when
     replacing a source weight tensor. Preparation never depends on input x.
     """
 
@@ -61,6 +64,8 @@ class TextGatedResidualSerial:
         self.eps = eps
         self._mix_mode = 2
         self._norm_mode = 4
+        self._use_nz_up = True
+        self.up_nz = None
         self.dummy = torch.empty(1, device=self.device, dtype=torch.bfloat16)
         self.dummy_gamma = torch.empty(1, device=self.device, dtype=torch.float32)
         self.packed_weight = (
@@ -78,6 +83,19 @@ class TextGatedResidualSerial:
         if self.packed_weight is not None:
             self.packed_weight[:LOW_RANK].copy_(self.source_down)
             self.packed_weight[LOW_RANK : LOW_RANK + CHANNELS].copy_(self.source_gate)
+        if self.device.type == "npu":
+            import torch_npu
+
+            prepared = torch_npu.npu_format_cast(self.w_up.t(), 29)
+            if prepared.dtype != torch.bfloat16 or torch_npu.get_npu_format(prepared) != 29:
+                raise RuntimeError("up preparation requires actual BF16 FRACTAL_NZ format29")
+            if self.up_nz is None:
+                self.up_nz = prepared
+            else:
+                address = self.up_nz.data_ptr()
+                self.up_nz.copy_(prepared)
+                if self.up_nz.data_ptr() != address:
+                    raise RuntimeError("refresh changed the captured up weight address")
         return self
 
     def __call__(self, x, gamma=None, need_backward=False):
@@ -136,7 +154,8 @@ class TextGatedResidualSerial:
             empty_fp32,
             inject,
         )
-        up = torch.matmul(activation, self.w_up)
+        up_weight = self.up_nz.t() if self._use_nz_up and tokens <= 64 and self.up_nz is not None else self.w_up
+        up = torch.matmul(activation, up_weight)
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
             norm, self.dummy_gamma, up, self.dummy, self._mix_mode, CHANNELS, self.eps, mixed, empty_fp32, empty
