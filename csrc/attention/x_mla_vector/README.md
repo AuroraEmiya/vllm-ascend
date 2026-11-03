@@ -36,6 +36,18 @@ gamma updates are observed on the next replay. The additional round5 wrapper
 uses mode5 only for B>=32 and retains mode4 below32; its pinned round4 control
 always uses mode4. No extra UB allocation or GM tensor is introduced.
 
+Round5 passed all15 checks and is retained for B>=32. Round6 keeps that exact
+wrapper as its control and changes only the second V call to mode6 for B>=32.
+Mode6 produces the same split/RoPE outputs as mode1. It keeps Q in `b0` while
+loading RoPE into the existing `b3`, removing the shared-b0 reuse wait within
+one unit. Q output DMA can overlap the RoPE input DMA and FP32 UB computation.
+The RoPE input is consumed before the later vector barrier and BF16 output
+cast reuse `b3`. Both next-unit reuse events remain; mode6 additionally drains
+the last MTE3 output through `MTE3_S`. Mode1 keeps its original algorithm.
+The norm modes5/4, all public BF16 matrix calls, layouts, math order, UB size,
+prepared weights and cache contracts remain those of round5. This local
+round6 source has no new A3 result yet.
+
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
 PA_BSND caches with block16 or128. The caller must validate distinct in-range
@@ -47,7 +59,7 @@ The kernel uses complete per-row FP32 RMS reductions, `Rsqrt` for the reciprocal
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-Mode 0/1/3/4/5 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
+Mode 0/1/3/4/5/6 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
 1536-element BF16 buffers, one2048-element BF16 buffer, five2048-element FP32
 buffers, and32 index bytes.
 Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
