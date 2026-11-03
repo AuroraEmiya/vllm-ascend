@@ -1,0 +1,350 @@
+{
+ "comment": "cv60n per-T GEMM/V config; api configs seeded from frozen baseline_b route.json; auto entries replaced by the MDL128 family (N always builds its own GEMM)",
+ "routes": {
+  "1": {
+   "base_m": 16,
+   "base_n": 64,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 1,
+   "single_n": 64,
+   "template": "NORM"
+  },
+  "1024": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "11520": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "128": {
+   "base_m": 128,
+   "base_n": 64,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 64,
+   "template": "MDL"
+  },
+  "1280": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "131072": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL",
+   "proj": "linear"
+  },
+  "1440": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "NORM"
+  },
+  "1536": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "16": {
+   "base_m": 16,
+   "base_n": 32,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 128,
+   "single_n": 32,
+   "template": "MDL"
+  },
+  "16384": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "2": {
+   "base_m": 16,
+   "base_n": 32,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 2,
+   "single_n": 32,
+   "template": "MDL"
+  },
+  "2048": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "212992": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL",
+   "proj": "linear"
+  },
+  "24": {
+   "base_m": 16,
+   "base_n": 32,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 12,
+   "single_n": 32,
+   "template": "MDL"
+  },
+  "248": {
+   "base_m": 128,
+   "base_n": 64,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 64,
+   "template": "MDL"
+  },
+  "256": {
+   "base_m": 64,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "2560": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "27": {
+   "base_m": 32,
+   "base_n": 64,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 27,
+   "single_n": 64,
+   "template": "NORM"
+  },
+  "3": {
+   "base_m": 16,
+   "base_n": 64,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 3,
+   "single_n": 64,
+   "template": "NORM"
+  },
+  "31": {
+   "base_m": 32,
+   "base_n": 32,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 31,
+   "single_n": 32,
+   "template": "MDL"
+  },
+  "32": {
+   "base_m": 32,
+   "base_n": 32,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 32,
+   "single_n": 32,
+   "template": "NORM"
+  },
+  "3200": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "NORM"
+  },
+  "32768": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "33": {
+   "base_m": 32,
+   "base_n": 128,
+   "chunk": 16,
+   "layout": "ND",
+   "single_m": 32,
+   "single_n": 128,
+   "template": "NORM"
+  },
+  "3492": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "35": {
+   "base_m": 32,
+   "base_n": 128,
+   "chunk": 16,
+   "layout": "ND",
+   "single_m": 32,
+   "single_n": 128,
+   "template": "NORM"
+  },
+  "3968": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "4": {
+   "base_m": 16,
+   "base_n": 32,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 4,
+   "single_n": 32,
+   "template": "MDL"
+  },
+  "4096": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 1408,
+   "single_n": 128,
+   "template": "NORM"
+  },
+  "512": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "524288": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL",
+   "proj": "linear"
+  },
+  "64": {
+   "base_m": 64,
+   "base_n": 64,
+   "chunk": 16,
+   "layout": "ND",
+   "single_m": 64,
+   "single_n": 64,
+   "template": "MDL"
+  },
+  "640": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 128,
+   "single_n": 128,
+   "template": "NORM"
+  },
+  "65536": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "NZ",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL",
+   "proj": "linear"
+  },
+  "720": {
+   "base_m": 128,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 256,
+   "single_n": 128,
+   "template": "MDL"
+  },
+  "8": {
+   "base_m": 16,
+   "base_n": 16,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 8,
+   "single_n": 16,
+   "template": "NORM"
+  },
+  "90": {
+   "base_m": 64,
+   "base_n": 128,
+   "chunk": 0,
+   "layout": "ND",
+   "single_m": 64,
+   "single_n": 128,
+   "template": "MDL"
+  }
+ },
+ "tuning": {
+  "p_retry": 1,
+  "date_utc": "2026-09-17T19:05:00Z",
+  "note": "route keys are per-T; case7/12/51 (T=32) keep ND - majority preference",
+  "lib": "7da5e30635aeb1f671ccc7980c88f39be8913e55b81154288327a2f568cf513a",
+  "stage1_probe_utc": "2026-09-17T20:35:00Z",
+  "stage1": "proj=linear kept for T>=65536 (wins 0.02-0.84ms); reverted at 32768 (custom GEMM faster)"
+ }
+}
