@@ -13,6 +13,7 @@ ROPE_DIM = 64
 MAX_BATCH = 128
 GAMMA_CACHE_MIN_BATCH = 32
 NORM_OUTPUT_OVERLAP_MIN_BATCH = 32
+PACKED_ROPE_COEFFICIENT_MIN_BATCH = 32
 SPLIT_DMA_OVERLAP_MIN_BATCH = 32
 SPLIT_DMA_OVERLAP_MAX_BATCH = 64
 FRACTAL_NZ = 29
@@ -181,7 +182,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1,
+            8 if rows >= PACKED_ROPE_COEFFICIENT_MIN_BATCH else 1,
             rows,
             slots,
             head_q,
