@@ -63,6 +63,8 @@ class TextGatedResidualSerial:
         self.device = w_down.device
         self.eps = eps
         self._matrix_backend = "torch"
+        self._sk_packed_weight = None
+        self._sk_pad_down = False
         self._mix_mode = 2
         self._norm_mode = 4
         self._activation_mode = 5
@@ -86,6 +88,8 @@ class TextGatedResidualSerial:
         if self.packed_weight is not None:
             self.packed_weight[:LOW_RANK].copy_(self.source_down)
             self.packed_weight[LOW_RANK : LOW_RANK + CHANNELS].copy_(self.source_gate)
+        if self._sk_packed_weight is not None:
+            self._sk_packed_weight[:PACKED_WIDTH].copy_(self.packed_weight)
         if self.device.type == "npu":
             import torch_npu
 
@@ -101,7 +105,17 @@ class TextGatedResidualSerial:
                     raise RuntimeError("refresh changed the captured up weight address")
         return self
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None):
+    def prepare_superkernel_packing(self, width=640):
+        """Pad only constant down/gate columns, outside capture and replay."""
+        if width not in (0, 640):
+            raise ValueError("SuperKernel down padding must be 0 or 640")
+        self._sk_pad_down = width != 0 and self.packed_weight is not None
+        if self._sk_pad_down and self._sk_packed_weight is None:
+            self._sk_packed_weight = self.packed_weight.new_zeros((width, WIDTH))
+            self._sk_packed_weight[:PACKED_WIDTH].copy_(self.packed_weight)
+        return self
+
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, pad_down=640):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -109,6 +123,7 @@ class TextGatedResidualSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
+        self.prepare_superkernel_packing(pad_down if matrix_backend == "v3_nz" else 0)
         return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
 
     def __call__(self, x, gamma=None, need_backward=False):
@@ -151,11 +166,12 @@ class TextGatedResidualSerial:
             inv_rms,
             empty,
         )
+        padded_down = self._matrix_backend == "v3_nz" and self._sk_pad_down
         if self._matrix_backend in ("v3", "v3_nz"):
             from vllm_ascend.ops.serial_superkernel import serial_matmul_v3
 
             down_weight = self.source_down if self.packed_weight is None else self.packed_weight
-            projected = serial_matmul_v3(norm, down_weight, transpose_b=True)
+            projected = serial_matmul_v3(norm, self._sk_packed_weight if padded_down else down_weight, transpose_b=True)
         else:
             projected = torch.matmul(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
         down = projected if self.packed_weight is None else projected[:, :LOW_RANK]
@@ -166,7 +182,7 @@ class TextGatedResidualSerial:
             self.dummy_gamma,
             self.dummy,
             self.dummy,
-            1 if self.packed_weight is None else self._activation_mode,
+            1 if self.packed_weight is None else (10 if padded_down else self._activation_mode),
             CHANNELS,
             self.eps,
             activation,

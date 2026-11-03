@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--matrix-backend", choices=("torch", "v3", "v3_nz"), default="v3_nz")
+    parser.add_argument("--pad-down", type=int, choices=(0, 640), default=640)
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(4)
@@ -36,9 +37,10 @@ def main():
         if args.mode in ("serial", "native"):
             if args.mode == "native":
                 instance._matrix_backend = args.matrix_backend
+                instance.prepare_superkernel_packing(args.pad_down if args.matrix_backend == "v3_nz" else 0)
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend)
+        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, pad_down=args.pad_down)
         preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
@@ -52,7 +54,7 @@ def main():
         if unknown:
             parser.error(f"unknown cases: {unknown}")
         cases = [c for c in cases if c["id"] in args.case_id]
-    report = {"matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
+    report = {"pad_down": args.pad_down, "matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
               "protocol": "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
