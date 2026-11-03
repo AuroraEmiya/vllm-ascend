@@ -22,10 +22,14 @@ void checkPlan(const HcTilingPlan& plan, DeviceResources resources) {
     }
     for (auto count : visits) assert(count == 1);
   }
-  if (data.tilingKey == HcTilingKey::NormBatched) {
+  if (data.tilingKey == HcTilingKey::NormBatched || data.tilingKey == HcTilingKey::NormBatchedCached) {
     assert(data.groupCount % data.rowBatch == 0);
     assert(data.hiddenSize % kFloatVectorElements == 0);
     assert(data.rowBatch <= kMaxNormGroupBatch);
+  }
+  if (data.tilingKey == HcTilingKey::NormBatchedCached) {
+    assert(data.taskCount > data.blockDim);
+    assert(data.blockDim % (data.groupCount / data.rowBatch) == 0);
   }
   if (data.tilingKey == HcTilingKey::SiluBatched) {
     assert(data.hiddenSize % kBf16BlockElements == 0);

@@ -217,14 +217,15 @@ def validate_case(case, funcs):
         replay = {name: compare(a, b) for name, a, b in zip(NAMES, graph_outputs, expected)}
         mutated = any(not torch.equal(x.cpu(), old) for x, old in zip(inputs, before) if x is not None)
         fresh = None
-        if case["id"] == "tail-strided":
-            inputs[1].add_(0.125)
+        if case["id"] == "tail-strided" or case["m"] >= 64:
+            changed_index = 1 if case["id"] == "tail-strided" else 3
+            inputs[changed_index].add_(0.125)
             changed = [None if x is None else x.cpu() for x in inputs]
             changed_expected = reference(changed, kw)
             graph.replay()
             torch.npu.synchronize()
             fresh = {name: compare(a, b) for name, a, b in zip(NAMES, graph_outputs, changed_expected)}
-            inputs[1].copy_(before[1])
+            inputs[changed_index].copy_(before[changed_index])
         passed = (
             abi_ok
             and not mutated

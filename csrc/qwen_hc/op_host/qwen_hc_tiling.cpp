@@ -45,6 +45,11 @@ uint64_t requiredUbBytes(const HcTilingData& data) {
       return (3 * kBf16Bytes + 2 * kFloatBytes) * flatElements + (kBf16Bytes + kFloatBytes) * hiddenSize +
              kBf16BlockElements * kBf16Bytes + (kNormScalarElements + kNormBroadcastElements) * kFloatBytes +
              8 * kTransferGuardBytes;
+    case HcTilingKey::NormBatchedCached:
+      // Reuse BF16 normalized storage for the initial weight DMA; keep FP32 weights resident.
+      return (2 * kBf16Bytes + 3 * kFloatBytes) * flatElements + (kBf16Bytes + kFloatBytes) * hiddenSize +
+             kBf16BlockElements * kBf16Bytes + (kNormScalarElements + kNormBroadcastElements) * kFloatBytes +
+             8 * kTransferGuardBytes;
     case HcTilingKey::SiluSingle:
       return (2 * kBf16Bytes + 2 * kFloatBytes) * alignUp(hiddenSize, kBf16BlockElements);
     case HcTilingKey::SiluBatched:
@@ -77,7 +82,14 @@ HcTilingPlan makeCombineNormTiling(HcTilingData data, DeviceResources resources)
       data.tilingKey = HcTilingKey::NormSingle;
     }
   }
-  return finishPlan(data, resources, groupTasks / data.rowBatch);
+  const uint64_t tasks = groupTasks / data.rowBatch;
+  const uint32_t groupsPerRow = data.groupCount / data.rowBatch;
+  if (data.tilingKey == HcTilingKey::NormBatched && tasks > resources.vectorCoreCount &&
+      resources.vectorCoreCount % groupsPerRow == 0) {
+    data.tilingKey = HcTilingKey::NormBatchedCached;
+    if (requiredUbBytes(data) > resources.ubSizeBytes) data.tilingKey = HcTilingKey::NormBatched;
+  }
+  return finishPlan(data, resources, tasks);
 }
 
 HcTilingPlan makeSiluTiling(HcTilingData data, DeviceResources resources) {
