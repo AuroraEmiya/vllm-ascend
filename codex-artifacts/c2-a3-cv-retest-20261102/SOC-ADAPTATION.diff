@@ -1,0 +1,29 @@
+--- original/model.py
++++ adapted/model.py
+@@ -29,7 +29,7 @@
+ 
+ class Prepared:
+     def __init__(self, x, wkv, wgate, state_cache, metadata, norm_weight,
+-                 epsilon, max_query_len):
++                 epsilon, max_query_len, *, soc):
+         load_libraries()
+         if any(t.dtype != torch.bfloat16 for t in (x, wkv, wgate)):
+             raise TypeError("x, wkv and wgate must be BF16")
+@@ -48,7 +48,7 @@
+         self.latent = torch.empty((x.shape[0], 512), dtype=torch.bfloat16, device=x.device)
+         self.tiling, self.ws, self.blocks, info = torch.ops.c2_a3_bf16_c_only.prepare(
+             x, self.w, cfg["single_m"], cfg["single_n"], cfg["base_m"], cfg["base_n"],
+-            self.mode, 0, "Ascend910_9382")
++            self.mode, 0, soc)
+         self.info = json.loads(info)
+         self.chunk = int(cfg.get("chunk", 0))
+         if self.chunk == 0:
+@@ -67,6 +67,6 @@
+         return self.latent
+ 
+ 
+-def prepare(x, wkv, wgate, state_cache, metadata, norm_weight, epsilon, max_query_len):
++def prepare(x, wkv, wgate, state_cache, metadata, norm_weight, epsilon, max_query_len, *, soc):
+     return Prepared(x, wkv, wgate, state_cache, metadata, norm_weight, epsilon,
+-                    max_query_len)
++                    max_query_len, soc=soc)
