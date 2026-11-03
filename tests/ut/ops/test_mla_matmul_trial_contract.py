@@ -26,6 +26,23 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertEqual(sum(c["role"] == "acceptance" for c in cases), 8)
         self.assertEqual(sum(c["role"] != "acceptance" for c in cases), 7)
 
+    def test_up_nd_plan_uses_exact_retained_round7_control(self):
+        result = subprocess.run(
+            [sys.executable, str(HARNESS), "--plan", "--comparison", "up-nd-row-major", "--mode", "paired"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 9)
+        self.assertEqual(plan["pinned_baseline"]["baseline_commit"], TRIAL.NORM_OVERLAP_BASE_COMMIT)
+        self.assertEqual(plan["pinned_baseline"]["baseline_canonical_sha256"], TRIAL.NORM_OVERLAP_BASE_SHA256)
+        self.assertEqual(len(plan["selected_cases"]), 15)
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+        self.assertIn("mode8 is never selected", plan["protocol"]["native_comparison"])
+        self.assertIn("no native rebuild", plan["protocol"]["native_comparison"])
+
     def test_subset_keeps_frozen_manifest_order(self):
         manifest = TRIAL.pinned_inputs()["manifest"]
         result = TRIAL.select_cases(manifest, ["decode-b128", "decode-b1", "decode-b1"])
