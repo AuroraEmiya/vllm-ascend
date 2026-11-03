@@ -1,8 +1,9 @@
 # Independent MLA Prolog V stages
 
 This operator implements the V stages for BF16 decode MLA Prolog. Its companion
-Python wrapper uses public `torch.mm` or `torch.nn.functional.linear` for the
-down/up projections, selected by the fixed candidate10 batch rule below. The
+Python wrapper currently uses public `torch.matmul` for down/up projections,
+selected by the fixed candidate10 ND/NZ batch rule below. The additional round1
+matmul spelling trial did not establish a speedup. The
 head projection uses public `torch.bmm` for B=1 and
 `torch_npu.npu_transpose_batchmatmul` for B>1.
 The implementation was authored from the public mathematical and API contract;
@@ -19,6 +20,13 @@ RoPE first places even positions before odd positions, then uses rotate-half;
 this convention was confirmed by a structured black-box probe.
 Mode 3 performs the same normalization and cache work as mode0 while reading
 the query and KV/KR projections from one contiguous `[B,2112]` input.
+Mode 4 has mode3's same shape, units, UB allocation, reduction, Rsqrt, gamma and
+cache semantics. It broadcasts the FP32 inverse in UB with `Brcb` and strided
+`Mul`, replacing only mode3's `V_S` event, scalar read and `Muls`. Mode3 keeps
+the original scalar-read algorithm as a same-binary control. The additional
+round4 candidate calls mode4; this requires rebuilding the own custom package,
+without changing the Torch adapter ABI. Device correctness and speed remain
+unverified until its recorded A3 run.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -31,7 +39,7 @@ The kernel uses complete per-row FP32 RMS reductions, `Rsqrt` for the reciprocal
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-Mode 0/1/3 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
+Mode 0/1/3/4 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
 1536-element BF16 buffers, one2048-element BF16 buffer, five2048-element FP32
 buffers, and32 index bytes.
 Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
