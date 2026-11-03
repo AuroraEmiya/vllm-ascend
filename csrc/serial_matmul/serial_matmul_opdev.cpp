@@ -8,7 +8,6 @@
 #include <aclnn_kernels/contiguous.h>
 
 namespace l0op {
-const aclTensor* ReFormat(const aclTensor*, const ge::Format&, aclOpExecutor*);
 const aclTensor* MatMulV3Nd(const aclTensor*, const aclTensor*, const aclTensor*,
     bool, bool, bool, int64_t, aclOpExecutor*);
 const aclTensor* BatchMatMulV3Nd(const aclTensor*, const aclTensor*, const aclTensor*,
@@ -32,7 +31,7 @@ void PrintMetadata(const char* name, const aclTensor* tensor)
 }
 }
 
-extern "C" aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(const aclTensor* a, const aclTensor* b,
+extern "C" aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(const aclTensor* a, aclTensor* b,
     bool transposeB, bool batched, aclTensor* out, uint64_t* workspaceSize,
     aclOpExecutor** executor)
 {
@@ -40,11 +39,13 @@ extern "C" aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(const aclTensor* a, c
     auto owner = CREATE_EXECUTOR();
     if (!owner.get()) return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     const aclTensor* inputB = b;
-    // The public matmul front-end reinterprets NZ as an NZ view before L0.
-    // Keep its physical layout and dtype; ReFormat is descriptor-only.
+    // aclCreateTensor(NZ) initializes original shape from the physical NZ
+    // storage. Our descriptor is private to this adapter: specify its logical
+    // ND origin/view without changing the physical storage shape or data.
     if (!batched && b->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
-        b = l0op::ReFormat(b, op::Format::FORMAT_FRACTAL_NZ, owner.get());
-        if (!b) return ACLNN_ERR_INNER_NULLPTR;
+        b->SetOriginalShape(b->GetViewShape());
+        b->SetOriginalFormat(op::Format::FORMAT_ND);
+        b->SetViewFormat(op::Format::FORMAT_ND);
     }
     const aclTensor* value = batched
         ? l0op::BatchMatMulV3Nd(a, b, nullptr, nullptr, false, transposeB, false, false, owner.get())
@@ -52,7 +53,7 @@ extern "C" aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(const aclTensor* a, c
     if (!value) {
         PrintMetadata("A", a);
         PrintMetadata("B-input", inputB);
-        PrintMetadata("B-reformatted", b);
+        PrintMetadata("B-logical-ND-physical-NZ", b);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!l0op::ViewCopy(value, out, owner.get())) return ACLNN_ERR_INNER_NULLPTR;

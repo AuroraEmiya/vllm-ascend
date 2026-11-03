@@ -4,6 +4,6 @@
 #include <aclnn/aclnn_base.h>
 
 extern "C" aclnnStatus aclnnSerialMatmulV3GetWorkspaceSize(
-    const aclTensor*, const aclTensor*, bool, bool, aclTensor*, uint64_t*, aclOpExecutor**);
+    const aclTensor*, aclTensor*, bool, bool, aclTensor*, uint64_t*, aclOpExecutor**);
 extern "C" aclnnStatus aclnnSerialMatmulV3(
     void*, uint64_t, aclOpExecutor*, aclrtStream);
