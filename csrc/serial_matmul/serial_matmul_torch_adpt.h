@@ -15,10 +15,9 @@
 namespace vllm_ascend {
 inline std::shared_ptr<aclTensor> serial_nd_descriptor(const at::Tensor& tensor)
 {
-    const int64_t storageElements = tensor.storage().nbytes() / tensor.element_size();
     auto* descriptor = aclCreateTensor(tensor.sizes().data(), tensor.dim(), ACL_BF16,
         tensor.strides().data(), tensor.storage_offset(), ACL_FORMAT_ND,
-        &storageElements, 1, const_cast<void*>(tensor.storage().data()));
+        tensor.sizes().data(), tensor.dim(), const_cast<void*>(tensor.storage().data()));
     TORCH_CHECK(descriptor, "cannot create serial V3 ND descriptor");
     return std::shared_ptr<aclTensor>(descriptor, [](aclTensor* p) { aclDestroyTensor(p); });
 }
