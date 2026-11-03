@@ -218,6 +218,8 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
             with torch.npu.graph(graph, stream=stream):
                 for _ in range(CALLS_PER_GRAPH):
                     outputs = function()
+            if name == "serial" and hasattr(candidate, "optimize_graph"):
+                candidate.optimize_graph(graph)
             graphs[name], captured[name] = graph, outputs
             for _ in range(GRAPH_WARMUP):
                 graph.replay()
