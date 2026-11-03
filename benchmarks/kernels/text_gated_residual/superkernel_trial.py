@@ -22,8 +22,19 @@ def main():
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--matrix-backend", choices=("torch", "v3", "v3_nz"), default="v3_nz")
     parser.add_argument("--pad-down", type=int, choices=(0, 640), default=640)
+    parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=1)
+    parser.add_argument("--single-call-graph", action="store_true")
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
+    if args.single_call_graph and not args.no_timing:
+        parser.error("single-call Graph is a correctness guard; use --no-timing")
+    if args.single_call_graph:
+        if hasattr(validation, "CALLS"):
+            validation.CALLS = 1
+            capture_original = validation.capture
+            validation.capture = lambda call, stream, calls=1: capture_original(call, stream, calls=1)
+        else:
+            validation.CALLS_PER_GRAPH = 1
     torch.set_num_threads(4)
     torch.npu.set_device(0)
     torch.npu.config.allow_internal_format = True
@@ -40,12 +51,28 @@ def main():
                 instance.prepare_superkernel_packing(args.pad_down if args.matrix_backend == "v3_nz" else 0)
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, pad_down=args.pad_down)
+        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, pad_down=args.pad_down)
         preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
         return compiled
 
+    make_calls_original = validation.make_calls
+
+    def make_calls_with_storage(*a, **kw):
+        tensors, calls, prep, serial = make_calls_original(*a, **kw)
+        owner = getattr(serial, "pipeline", serial)
+        storage = {}
+        for field in ("dummy", "dummy_gamma", "packed_weight", "up_nz", "_sk_packed_weight"):
+            value = getattr(owner, field, None)
+            if value is not None:
+                storage[field] = {"bytes": value.untyped_storage().nbytes(), "data_ptr": value.data_ptr()}
+        prep["persistent_owned_storage"] = storage
+        prep["persistent_tensor_bytes"] = sum(v["bytes"] for v in storage.values())
+        prep["storage_scope"] = "owned prepared weights and dummy tensors, excluding caller source weights and per-call intermediates"
+        return tensors, calls, prep, serial
+
+    validation.make_calls = make_calls_with_storage
     setattr(validation, name, factory)
     manifest = json.loads(Path(__file__).with_name("cases.json").read_text())
     cases = manifest if is_tgr else manifest["cases"]
@@ -56,7 +83,9 @@ def main():
         cases = [c for c in cases if c["id"] in args.case_id]
     report = {"pad_down": args.pad_down, "matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
-              "protocol": "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
+              "calls_per_graph": 1 if args.single_call_graph else 10,
+              "split_mode": args.split_mode,
+              "protocol": "frozen validation thresholds; single-call Graph correctness guard" if args.single_call_graph else "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
@@ -72,6 +101,15 @@ def main():
         try:
             if is_tgr:
                 row = validation.check_case(case, not args.no_timing)
+                row["candidate_correctness"] = (
+                    row["eager"]["serial"]["status"] == "PASS"
+                    and all(v["status"] == "PASS" for v in row["graph"]["serial"].values())
+                    and row["input_immutability_eager"] and row["input_immutability_graph"]
+                )
+                row["baseline_correctness"] = (
+                    row["eager"]["fused"]["status"] == "PASS"
+                    and all(v["status"] == "PASS" for v in row["graph"]["fused"].values())
+                )
                 if args.profile:
                     validation.profile(case, str(args.out.with_suffix(".profile.json")))
             else:
@@ -93,7 +131,7 @@ def main():
         "allow_hf32_matmul": bool(torch.npu.matmul.allow_hf32),
         "files": {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded if Path(p).is_file()}}
     save()
-    success = all(r.get("comparison_admitted", r.get("status") == "PASS") for r in report["cases"])
+    success = all(r.get("candidate_correctness", r.get("status") == "PASS") for r in report["cases"])
     raise SystemExit(0 if success else 1)
 
 
