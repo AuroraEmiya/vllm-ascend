@@ -17,6 +17,8 @@ BASE_SHA256 = "654bb8fe5761e19edfdaf2e8a595c9d599cf10a7e40f1f410d44008b2107af51"
 HEAD_BASE_COMMIT = "592d3963e3ef59fc147ef88ab0f114f35b731776"
 HEAD_BASE_SHA256 = "0ee2fe6008ea62b83d1b815249d2517b3d39550e587850858a60ad1f07e7ba8c"
 GMM_DOWN_SHA256 = "6ab63adaad223b69eda5e02f2690b8fe052c4c357b13bc19eeafecdf5b2f2cfe"
+BROADCAST_BASE_COMMIT = "8b0d4da8d4897b3099736689c63ae7baea1dff3e"
+BROADCAST_BASE_SHA256 = "cc2cacc7d07beb06138643d1aa868f0ef0865b5166a574b94be7d95df7e734fc"
 HEAD_LAYOUT_SHA256 = "7f6e2de290735bce07a27fe7d7f2523352eb7a8a763065048d525566d7a177df"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
@@ -92,6 +94,20 @@ def comparison_definition(comparison):
             "native_comparison": (
                 "one rebuilt package retains original mode3 scalar-read control; "
                 "candidate mode4 broadcasts the same FP32 inverse in UB"
+            ),
+        }
+    if comparison == "norm-gamma-cache":
+        return {
+            "baseline_commit": BROADCAST_BASE_COMMIT,
+            "baseline_file": "baseline_serial_8b0d4da8.py",
+            "baseline_sha256": BROADCAST_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 5,
+            "changed": "B>=32 RMS gamma DMA/Cast reuse within one core/launch; B<32 keeps mode4",
+            "unchanged": "public BF16 matrices, all layouts, FP32 math, UB size, cache and precision versus round4",
+            "native_comparison": (
+                "mode4 retains round4 load/cast per unit; candidate mode5 caches gamma in f1[64:] "
+                "with per-launch width tag, RoPE uses only f1[:64]"
             ),
         }
     raise ValueError(f"unknown comparison {comparison}")
@@ -575,7 +591,9 @@ def main():
     parser.add_argument("--source-commit")
     parser.add_argument("--case-id", action="append")
     parser.add_argument(
-        "--comparison", choices=("projection", "head-layout", "gmm-down", "norm-broadcast"), default="projection"
+        "--comparison",
+        choices=("projection", "head-layout", "gmm-down", "norm-broadcast", "norm-gamma-cache"),
+        default="projection",
     )
     parser.add_argument("--mode", choices=("verify", "paired", "micro", "head-micro", "profile"), default="verify")
     parser.add_argument("--implementation", choices=("original", "matmul", "control", "candidate"))
@@ -636,6 +654,7 @@ def main():
         "projection": HEAD_BASE_SHA256,
         "head-layout": HEAD_LAYOUT_SHA256,
         "gmm-down": GMM_DOWN_SHA256,
+        "norm-broadcast": BROADCAST_BASE_SHA256,
     }.get(args.comparison)
     if historical_hash and args.mode in {"verify", "paired", "profile"}:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
