@@ -46,6 +46,7 @@ public:
         for (uint32_t unit=GetBlockIdx(); unit<t.units; unit+=GetBlockNum()) {
             if(t.mode==0 || t.mode==4) Norm(unit);
             else if(t.mode==1) Activation(unit);
+            else if(t.mode==5 && t.tile>1) BatchedPackedActivation(unit);
             else if(t.mode==3 || t.mode==5) PackedActivation(unit);
             else Mix(unit);
         }
@@ -150,6 +151,28 @@ private:
         // A padded internal row keeps independent cores' small gate stores
         // in separate 32-byte blocks. The Python API returns the live view.
         Fence<HardEvent::V_MTE3>(); DataCopyPad(injectG[row*(t.mode==5?16:4)],xb,cp);
+        Fence<HardEvent::MTE3_MTE2>();
+    }
+    __aicore__ inline void BatchedPackedActivation(uint32_t unit) {
+        const uint32_t row=unit*t.tile;
+        const uint32_t rows=(t.rows-row)<t.tile?(t.rows-row):t.tile;
+        const uint32_t all=rows*336;
+        auto xb=b0.Get<bfloat16_t>(),yb=b1.Get<bfloat16_t>();
+        auto z=f0.Get<float>(),q=f1.Get<float>();
+        // Include the16 padding/gate columns in the one vector sequence,
+        // then store only the live320 down columns and padded gate16.
+        DataCopy(xb,xG[row*336],all); Fence<HardEvent::MTE2_V>();
+        Cast(z,xb,RoundMode::CAST_NONE,all); Barrier();
+        Muls(z,z,1.0f/t.channels,all); Barrier();
+        Muls(q,z,1.0f,all); Barrier(); Sigmoid(q,all);
+        Mul(z,z,q,all); Barrier();
+        Cast(yb,z,RoundMode::CAST_RINT,all); Fence<HardEvent::V_MTE3>();
+        const DataCopyParams down{static_cast<uint16_t>(rows),20,1,0};
+        DataCopy(yG[row*320],yb,down);
+        Muls(q,q,2.0f,all); Barrier();
+        Cast(xb,q,RoundMode::CAST_RINT,all); Fence<HardEvent::V_MTE3>();
+        const DataCopyParams gate{static_cast<uint16_t>(rows),1,20,0};
+        DataCopy(injectG[row*16],xb[320],gate);
         Fence<HardEvent::MTE3_MTE2>();
     }
     __aicore__ inline void Mix(uint32_t unit) {
