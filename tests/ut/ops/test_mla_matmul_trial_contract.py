@@ -238,6 +238,107 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertIn("mode1", plan["protocol"]["native_comparison"])
         self.assertIn("mode6", plan["protocol"]["native_comparison"])
 
+    def test_norm_output_overlap_pins_the_retained_round6_control(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HARNESS),
+                "--plan",
+                "--comparison",
+                "norm-output-overlap",
+                "--mode",
+                "paired",
+                "--case-id",
+                "decode-b128",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        pinned = plan["pinned_baseline"]
+        self.assertEqual(plan["protocol"]["new_budget_round"], 7)
+        self.assertEqual(pinned["baseline_commit"], "f1f0dba2d1202579b8bea9b2d03f480d7fb003ed")
+        self.assertEqual(
+            pinned["baseline_canonical_sha256"],
+            "a2c2e333f94e9e62f3f13bdaa644fc1658cc9fffbf3777a71061d27f23d1fc44",
+        )
+        derivation = pinned["baseline_derivation"]
+        self.assertEqual(
+            derivation["source_wrapper_sha256"],
+            "21279de14dfd20af8078b15c680982104de9b29aaee67fbee2cd9cabe8dd6508",
+        )
+        self.assertIn("32<=B<=64", derivation["change"])
+        self.assertTrue(derivation["same_change_in_candidate"])
+        self.assertTrue(derivation["rollback_is_not_new_gain"])
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+
+    def test_norm_overlap_orders_real_buffer_reuse_without_blocking_disjoint_input(self):
+        # Model a core's norm / KV-to-KR / next-unit phases. Each FIFO engine
+        # has its own order; only explicit events create cross-engine edges.
+        # Removing either reuse event must expose the corresponding hazard.
+        def hazards(input_reuse=True, output_reuse=True):
+            operations, before = {}, {}
+
+            def add(name, accesses, dependencies):
+                operations[name] = accesses
+                before[name] = set(dependencies)
+
+            previous_input = previous_vector = previous_output = None
+            for phase in range(4):
+                prefix = str(phase)
+                dependencies = [previous_input] if previous_input else []
+                if input_reuse and previous_vector:
+                    dependencies.append(previous_vector)
+                add(prefix + "-in", {"b0": "W"}, dependencies)
+                add(
+                    prefix + "-cast",
+                    {"b0": "R", "f0": "W"},
+                    [prefix + "-in"] + ([previous_vector] if previous_vector else []),
+                )
+                add(prefix + "-math", {"f0": "W"}, [prefix + "-cast"])
+                dependencies = [prefix + "-math"]
+                if output_reuse and previous_output:
+                    dependencies.append(previous_output)
+                add(prefix + "-out-cast", {"f0": "R", "b3": "W"}, dependencies)
+                add(
+                    prefix + "-out",
+                    {"b3": "R"},
+                    [prefix + "-out-cast"] + ([previous_output] if previous_output else []),
+                )
+                previous_input, previous_vector, previous_output = (
+                    prefix + "-in",
+                    prefix + "-out-cast",
+                    prefix + "-out",
+                )
+            add("final-drain", {}, [previous_output])
+            for name in before:
+                pending = list(before[name])
+                while pending:
+                    predecessor = pending.pop()
+                    for ancestor in before[predecessor] - before[name]:
+                        before[name].add(ancestor)
+                        pending.append(ancestor)
+            conflicts = []
+            names = list(operations)
+            for index, left in enumerate(names):
+                for right in names[index + 1 :]:
+                    shared = operations[left].keys() & operations[right].keys()
+                    writes = [b for b in shared if "W" in (operations[left][b], operations[right][b])]
+                    if writes and left not in before[right] and right not in before[left]:
+                        conflicts.append((left, right, writes))
+            return conflicts, before
+
+        conflicts, before = hazards()
+        self.assertEqual(conflicts, [])
+        self.assertNotIn("0-out", before["1-in"])
+        self.assertIn("0-out-cast", before["1-in"])
+        self.assertIn("0-out", before["1-out-cast"])
+        self.assertIn("3-out", before["final-drain"])
+        self.assertTrue(any("b0" in item[2] for item in hazards(input_reuse=False)[0]))
+        self.assertTrue(any("b3" in item[2] for item in hazards(output_reuse=False)[0]))
+
     def test_split_pipeline_buffer_dependencies_include_reuse_and_last_output(self):
         # Abstract completed operations on two consecutive units of one core.
         # Every conflicting access must be ordered, even when DMA latency is
