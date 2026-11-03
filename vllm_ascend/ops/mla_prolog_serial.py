@@ -143,7 +143,13 @@ class MlaPrologSerial:
         x = token_x.view(rows, self.hidden)
 
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
-        down_q_kv = torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
+        down_q_kv = (
+            torch_npu.npu_grouped_matmul(
+                [x], [self._matrix_nd[0].t()], split_item=0, group_type=-1, output_dtype=torch.bfloat16
+            )[0]
+            if use_linear
+            else torch.matmul(x, self._matrix_nz[0])
+        )
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q_kv,
@@ -189,7 +195,14 @@ class MlaPrologSerial:
         if rows == 1:
             query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
         else:
-            query = torch.bmm(head_q, self.weight_uk).permute(1, 0, 2).contiguous()
+            query = torch_npu.npu_transpose_batchmatmul(
+                head_q,
+                self.weight_uk,
+                perm_x1=[0, 1, 2],
+                perm_x2=[0, 1, 2],
+                perm_y=[1, 0, 2],
+                batch_split_factor=1,
+            )
         return (
             query.view(rows, 1, self.heads, KV_RANK),
             query_rope.view(rows, 1, self.heads, ROPE_DIM),
