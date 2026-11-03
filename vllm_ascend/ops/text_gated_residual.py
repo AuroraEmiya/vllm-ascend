@@ -66,10 +66,8 @@ class TextGatedResidualSerial:
         self._norm_mode = 4
         self._activation_mode = 5
         self._use_nz_up = True
-        self._use_logical_down = True
         self._nz_up_max_tokens = MAX_TOKENS
         self.up_nz = None
-        self.packed_down_nd = None
         self.dummy = torch.empty(1, device=self.device, dtype=torch.bfloat16)
         self.dummy_gamma = torch.empty(1, device=self.device, dtype=torch.float32)
         self.packed_weight = (
@@ -90,17 +88,6 @@ class TextGatedResidualSerial:
         if self.device.type == "npu":
             import torch_npu
 
-            if self.packed_weight is not None:
-                logical_down = torch_npu.npu_format_cast(self.packed_weight.t().contiguous(), 2)
-                if logical_down.dtype != torch.bfloat16 or torch_npu.get_npu_format(logical_down) != 2:
-                    raise RuntimeError("logical down preparation requires actual BF16 ND format2")
-                if self.packed_down_nd is None:
-                    self.packed_down_nd = logical_down
-                else:
-                    address = self.packed_down_nd.data_ptr()
-                    self.packed_down_nd.copy_(logical_down)
-                    if self.packed_down_nd.data_ptr() != address:
-                        raise RuntimeError("refresh changed the captured down weight address")
             prepared = torch_npu.npu_format_cast(self.w_up.t(), 29)
             if prepared.dtype != torch.bfloat16 or torch_npu.get_npu_format(prepared) != 29:
                 raise RuntimeError("up preparation requires actual BF16 FRACTAL_NZ format29")
@@ -153,10 +140,7 @@ class TextGatedResidualSerial:
             inv_rms,
             empty,
         )
-        down_weight = self.w_down if self.packed_weight is None else self.packed_weight.t()
-        if self._use_logical_down and 32 <= tokens <= 64 and self.packed_down_nd is not None:
-            down_weight = self.packed_down_nd
-        projected = torch.matmul(norm, down_weight)
+        projected = torch.matmul(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
         down = projected if self.packed_weight is None else projected[:, :LOW_RANK]
         activation = x.new_empty((tokens, LOW_RANK))
         inject = empty if self.w_gate is None else x.new_empty((tokens, 16))
