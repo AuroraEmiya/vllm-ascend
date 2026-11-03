@@ -13,6 +13,8 @@ constexpr uint32_t UP_HEAD_WIDTH = NOPE_DIM + ROPE_DIM;
 constexpr uint32_t HEAD_TILE = 32;
 constexpr uint32_t SMALL_HEAD_TILE = 16;
 constexpr uint32_t WORK_WIDTH = HEAD_TILE * ROPE_DIM;
+constexpr uint32_t GAMMA_OFFSET = ROPE_DIM;
+static_assert(GAMMA_OFFSET + QUERY_RANK <= WORK_WIDTH, "cached gamma exceeds f1 buffer");
 
 template <HardEvent EVENT>
 __aicore__ inline void Sync()
@@ -28,6 +30,7 @@ public:
         GM_ADDR cacheKv, GM_ADDR cacheKr, const XMlaVectorTilingData& tiling)
     {
         t = tiling;
+        cachedGammaWidth = 0;
         xGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(x));
         auxGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(aux));
         gammaQGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(gammaQ));
@@ -79,10 +82,22 @@ private:
         GlobalTensor<bfloat16_t> output, uint64_t outputOffset)
     {
         DataCopy(b0, input[offset], width);
-        DataCopy(b1, gamma, width);
-        Sync<HardEvent::MTE2_V>();
-        Cast(f0, b0, RoundMode::CAST_NONE, width);
-        Cast(f1, b1, RoundMode::CAST_NONE, width);
+        if (t.mode == 5) {
+            // The width tag also handles a platform with odd blockDim where
+            // a core alternates query/KV units. Init invalidates it per launch.
+            const bool loadGamma = cachedGammaWidth != width;
+            if (loadGamma) DataCopy(b1, gamma, width);
+            Sync<HardEvent::MTE2_V>();
+            Cast(f0, b0, RoundMode::CAST_NONE, width);
+            if (loadGamma) Cast(f1[GAMMA_OFFSET], b1, RoundMode::CAST_NONE, width);
+            cachedGammaWidth = width;
+        } else {
+            // Preserve the mode4 control's load/cast algorithm.
+            DataCopy(b1, gamma, width);
+            Sync<HardEvent::MTE2_V>();
+            Cast(f0, b0, RoundMode::CAST_NONE, width);
+            Cast(f1, b1, RoundMode::CAST_NONE, width);
+        }
         PipeBarrier<PIPE_V>();
         Mul(f4, f0, f0, width);
         Duplicate(f2, 0.0f, 8);
@@ -95,7 +110,7 @@ private:
         Adds(f2, f2, eps, 8);
         PipeBarrier<PIPE_V>();
         Rsqrt(f3, f2, 8);
-        if (t.mode == 4) {
+        if (t.mode >= 4) {
             // Broadcast only the exact FP32 inverse in lane0. The first Brcb
             // output block repeats it eight times; Mul reuses this 32-byte
             // block for every block/repeat without a vector-to-scalar read.
@@ -112,7 +127,8 @@ private:
             Muls(f0, f0, inverse, width);
         }
         PipeBarrier<PIPE_V>();
-        Mul(f0, f0, f1, width);
+        if (t.mode == 5) Mul(f0, f0, f1[GAMMA_OFFSET], width);
+        else Mul(f0, f0, f1, width);
         PipeBarrier<PIPE_V>();
         Cast(b3, f0, RoundMode::CAST_RINT, width);
         Sync<HardEvent::V_MTE3>();
@@ -129,6 +145,7 @@ private:
         DataCopy(b2, cosGm[row * ROPE_DIM], ROPE_DIM);
         Sync<HardEvent::MTE2_V>();
         Cast(f0, b0, RoundMode::CAST_NONE, ROPE_DIM);
+        // Mode5 gamma starts at GAMMA_OFFSET; RoPE only overwrites [0,64).
         Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
         Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
         PipeBarrier<PIPE_V>();
@@ -272,6 +289,7 @@ private:
     }
 
     XMlaVectorTilingData t;
+    uint32_t cachedGammaWidth;
     TPipe pipe;
     TBuf<TPosition::VECCALC> b0Buf, b1Buf, b2Buf, b3Buf;
     TBuf<TPosition::VECCALC> f0Buf, f1Buf, f2Buf, f3Buf, f4Buf, indexBuf;
