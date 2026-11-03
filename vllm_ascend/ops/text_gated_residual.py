@@ -29,7 +29,7 @@ class TextGatedResidualSerial:
     Down/gate weights are prepared together when gate is present. Call
     ``refresh_weights_`` after changing their contents and before Graph replay;
     this updates the prepared buffers at their existing addresses. NPU up
-    weights also have an explicit BF16 NZ copy for tokens<=64; source views
+    weights also have an explicit BF16 NZ copy for the up projection; source views
     remain available for the ND route. Gate-free down weights remain views.
     Enable torch.npu.config.allow_internal_format during NPU setup.
     Replace the object and recapture when
@@ -65,6 +65,7 @@ class TextGatedResidualSerial:
         self._mix_mode = 2
         self._norm_mode = 4
         self._use_nz_up = True
+        self._nz_up_max_tokens = MAX_TOKENS
         self.up_nz = None
         self.dummy = torch.empty(1, device=self.device, dtype=torch.bfloat16)
         self.dummy_gamma = torch.empty(1, device=self.device, dtype=torch.float32)
@@ -154,7 +155,11 @@ class TextGatedResidualSerial:
             empty_fp32,
             inject,
         )
-        up_weight = self.up_nz.t() if self._use_nz_up and tokens <= 64 and self.up_nz is not None else self.w_up
+        up_weight = (
+            self.up_nz.t()
+            if self._use_nz_up and tokens <= self._nz_up_max_tokens and self.up_nz is not None
+            else self.w_up
+        )
         up = torch.matmul(activation, up_weight)
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
