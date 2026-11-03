@@ -114,8 +114,9 @@ HcTilingPlan makeGateMixTiling(HcTilingData data, DeviceResources resources) {
           ? (resources.ubSizeBytes - guardBytes) / bytesPerColumn / kBf16BlockElements * kBf16BlockElements
           : 0;
   if (!ubColumns) throw std::invalid_argument("HC device UB cannot hold one aligned gate column tile");
+  // Prefer one complete wave when rows fit the device; extra tiles can add a second wave.
   const uint64_t tilesPerRow =
-      std::max(uint64_t(1), ceilDivide(resources.vectorCoreCount, std::max(uint64_t(1), uint64_t(data.rows))));
+      std::max(uint64_t(1), resources.vectorCoreCount / std::max(uint64_t(1), uint64_t(data.rows)));
   const uint64_t balancedColumns = alignUp(ceilDivide(data.hiddenSize, tilesPerRow), kBf16BlockElements);
   const uint64_t minimumColumns =
       std::min(alignUp(data.hiddenSize, kBf16BlockElements), uint64_t(kMinGateTileElements));
