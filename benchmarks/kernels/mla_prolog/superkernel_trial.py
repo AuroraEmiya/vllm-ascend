@@ -22,9 +22,20 @@ def main():
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--matrix-backend", choices=("torch", "v3", "v3_nz"), default="v3_nz")
     parser.add_argument("--head-layout", choices=("transpose", "row", "tile8"), default="tile8")
+    parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=1)
+    parser.add_argument("--single-call-graph", action="store_true")
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
     args = parser.parse_args()
+    if args.single_call_graph and not args.no_timing:
+        parser.error("single-call Graph is a correctness guard; use --no-timing")
+    if args.single_call_graph:
+        if hasattr(validation, "CALLS"):
+            validation.CALLS = 1
+            capture_original = validation.capture
+            validation.capture = lambda call, stream, calls=1: capture_original(call, stream, calls=1)
+        else:
+            validation.CALLS_PER_GRAPH = 1
     torch.set_num_threads(4)
     torch.npu.set_device(0)
     torch.npu.config.allow_internal_format = True
@@ -41,7 +52,7 @@ def main():
                 instance._head_layout = args.head_layout
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, head_layout=args.head_layout)
+        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, head_layout=args.head_layout)
         preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
@@ -57,7 +68,9 @@ def main():
         cases = [c for c in cases if c["id"] in args.case_id]
     report = {"head_layout": args.head_layout, "matrix_backend": args.matrix_backend, "mode": args.mode, "baseline_route": args.baseline_route, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
-              "protocol": "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
+              "calls_per_graph": 1 if args.single_call_graph else 10,
+              "split_mode": args.split_mode,
+              "protocol": "frozen validation thresholds; single-call Graph correctness guard" if args.single_call_graph else "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
