@@ -51,6 +51,39 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("exactly one frozen --case-id", result.stderr)
 
+    def test_head_comparison_has_its_own_pinned_control(self):
+        pinned = TRIAL.pinned_inputs("head-layout")
+        self.assertEqual(pinned["baseline_commit"], "592d3963e3ef59fc147ef88ab0f114f35b731776")
+        self.assertEqual(pinned["manifest_canonical_sha256"], TRIAL.pinned_inputs()["manifest_canonical_sha256"])
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HARNESS),
+                "--plan",
+                "--comparison",
+                "head-layout",
+                "--mode",
+                "head-micro",
+                "--case-id",
+                "decode-b128",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 2)
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+        self.assertEqual([c["id"] for c in plan["selected_cases"]], ["decode-b128"])
+
+    def test_micro_modes_cannot_silently_select_the_other_comparison(self):
+        result = subprocess.run(
+            [sys.executable, str(HARNESS), "--plan", "--mode", "head-micro"], capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("head-micro requires head-layout", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
