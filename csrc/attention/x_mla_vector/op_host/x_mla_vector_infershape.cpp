@@ -7,8 +7,8 @@ static ge::graphStatus InferShape(gert::InferShapeContext* context)
     const auto* attrs = context->GetAttrs();
     const int64_t mode = *attrs->GetInt(0), rows = *attrs->GetInt(1);
     const int64_t heads = *attrs->GetInt(2), slots = *attrs->GetInt(3);
-    if (mode < 0 || mode > 6 || rows < 1 || heads < 1 || slots < rows) return ge::GRAPH_FAILED;
-    const bool mergedNorm = mode >= 3 && mode <= 5;
+    if (mode < 0 || mode > 7 || rows < 1 || heads < 1 || slots < rows) return ge::GRAPH_FAILED;
+    const bool mergedNorm = (mode >= 3 && mode <= 5) || mode == 7;
     const bool split = mode == 1 || mode == 6;
     *context->GetOutputShape(0) = (mode == 0 || mergedNorm) ? gert::Shape({rows, 1536}) :
         (split ? gert::Shape({heads, rows, 128}) : gert::Shape({rows, heads, 512}));
