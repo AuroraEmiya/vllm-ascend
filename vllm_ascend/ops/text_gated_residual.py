@@ -59,6 +59,7 @@ class TextGatedResidualSerial:
         self.source_gate = w_gate
         self.device = w_down.device
         self.eps = eps
+        self._mix_mode = 2
         self.dummy = torch.empty(1, device=self.device, dtype=torch.bfloat16)
         self.dummy_gamma = torch.empty(1, device=self.device, dtype=torch.float32)
         self.packed_weight = (
@@ -137,7 +138,7 @@ class TextGatedResidualSerial:
         up = torch.matmul(activation, self.w_up)
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
-            norm, self.dummy_gamma, up, self.dummy, 2, CHANNELS, self.eps, mixed, empty_fp32, empty
+            norm, self.dummy_gamma, up, self.dummy, self._mix_mode, CHANNELS, self.eps, mixed, empty_fp32, empty
         )
         return (
             mixed.view(batch, sequence, BRANCH_HIDDEN),
