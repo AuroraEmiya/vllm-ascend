@@ -84,6 +84,30 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("head-micro requires head-layout", result.stderr)
 
+    def test_gmm_plan_pins_round1_instead_of_the_rejected_round2(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HARNESS),
+                "--plan",
+                "--comparison",
+                "gmm-down",
+                "--mode",
+                "micro",
+                "--case-id",
+                "decode-b16",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["pinned_baseline"]["baseline_commit"], "592d3963e3ef59fc147ef88ab0f114f35b731776")
+        self.assertEqual(plan["protocol"]["new_budget_round"], 3)
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+        self.assertTrue(plan["protocol"]["no_new_V3_domain"])
+
 
 if __name__ == "__main__":
     unittest.main()
