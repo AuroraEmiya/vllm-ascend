@@ -97,8 +97,7 @@ public:
             ReduceSum(sc, t, ws, static_cast<int32_t>(p.hidden)); PipeBarrier<PIPE_V>();
             Muls(sc, sc, 1.0f / p.hidden, 8); PipeBarrier<PIPE_V>();
             Adds(sc, sc, p.eps, 8); PipeBarrier<PIPE_V>();
-            Sqrt(sc, sc, 8); PipeBarrier<PIPE_V>();
-            Reciprocal(sc, sc, 8);
+            Rsqrt(sc, sc, 8);
             PipeBarrier<PIPE_V>();
             Brcb(bc, sc, 1, {1, 8}); PipeBarrier<PIPE_V>();
             Mul(x, x, bc, uint64_t(64), (p.hidden + 63) / 64,
@@ -252,8 +251,7 @@ public:
             const uint32_t scalars=p.row_batch*8;
             Muls(sc,sc,1.0f/p.hidden,scalars);PipeBarrier<PIPE_V>();
             Adds(sc,sc,p.eps,scalars);PipeBarrier<PIPE_V>();
-            Sqrt(sc,sc,scalars);PipeBarrier<PIPE_V>();
-            Reciprocal(sc,sc,scalars);PipeBarrier<PIPE_V>();
+            Rsqrt(sc,sc,scalars);PipeBarrier<PIPE_V>();
             for(uint32_t j=0;j<p.row_batch;j++) {
                 Brcb(bc,sc[j*8],1,{1,8});PipeBarrier<PIPE_V>();
                 Mul(x[j*p.hidden],x[j*p.hidden],bc,uint64_t(64),p.hidden/64,
