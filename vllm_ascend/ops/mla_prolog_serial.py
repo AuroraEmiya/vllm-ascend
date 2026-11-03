@@ -12,7 +12,9 @@ NOPE_DIM = 128
 ROPE_DIM = 64
 MAX_BATCH = 128
 GAMMA_CACHE_MIN_BATCH = 32
+NORM_OUTPUT_OVERLAP_MIN_BATCH = 32
 SPLIT_DMA_OVERLAP_MIN_BATCH = 32
+SPLIT_DMA_OVERLAP_MAX_BATCH = 64
 FRACTAL_NZ = 29
 ND_FORMAT = 2
 ALLOWED_HIDDEN = (1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192)
@@ -155,7 +157,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            5 if rows >= GAMMA_CACHE_MIN_BATCH else 4,
+            7 if rows >= NORM_OUTPUT_OVERLAP_MIN_BATCH else 4,
             rows,
             slots,
             normalized_q,
@@ -179,7 +181,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            6 if rows >= SPLIT_DMA_OVERLAP_MIN_BATCH else 1,
+            6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1,
             rows,
             slots,
             head_q,
