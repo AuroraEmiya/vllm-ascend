@@ -25,8 +25,16 @@ cache semantics. It broadcasts the FP32 inverse in UB with `Brcb` and strided
 `Mul`, replacing only mode3's `V_S` event, scalar read and `Muls`. Mode3 keeps
 the original scalar-read algorithm as a same-binary control. The additional
 round4 candidate calls mode4; this requires rebuilding the own custom package,
-without changing the Torch adapter ABI. Device correctness and speed remain
-unverified until its recorded A3 run.
+without changing the Torch adapter ABI. The round4 A3 run passed all15 checks,
+and all eight acceptance Graph points improved modestly. Mode4 is retained.
+
+Mode5 keeps mode4's broadcast/math and caches gamma in existing `f1[64:]`
+within one core's work-unit loop. Query gamma ends at element1599 of2048;
+RoPE only overwrites `f1[:64]`. A width tag reloads gamma when query/KV type
+changes, and Init clears the tag for every kernel invocation so same-address
+gamma updates are observed on the next replay. The additional round5 wrapper
+uses mode5 only for B>=32 and retains mode4 below32; its pinned round4 control
+always uses mode4. No extra UB allocation or GM tensor is introduced.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -39,7 +47,7 @@ The kernel uses complete per-row FP32 RMS reductions, `Rsqrt` for the reciprocal
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-Mode 0/1/3/4 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
+Mode 0/1/3/4/5 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
 1536-element BF16 buffers, one2048-element BF16 buffer, five2048-element FP32
 buffers, and32 index bytes.
 Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
