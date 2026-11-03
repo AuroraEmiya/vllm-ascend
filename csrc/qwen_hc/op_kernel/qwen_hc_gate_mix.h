@@ -48,9 +48,8 @@ class GateMix {
         PipeBarrier<PIPE_V>();
         Adds(activation, activation, 1.0f, count);
         PipeBarrier<PIPE_V>();
-        Reciprocal(activation, activation, count);
-        PipeBarrier<PIPE_V>();
-        Mul(valuesLocal, valuesLocal, activation, count);
+        // Equivalent FP32 gate weighting with one Div instead of Reciprocal plus Mul.
+        Div(valuesLocal, valuesLocal, activation, count);
         PipeBarrier<PIPE_V>();
         Add(accumulator, accumulator, valuesLocal, count);
         PipeBarrier<PIPE_V>();
@@ -109,9 +108,8 @@ class BatchedGateMix {
       PipeBarrier<PIPE_V>();
       Adds(activation, activation, 1.0f, flatElements);
       PipeBarrier<PIPE_V>();
-      Reciprocal(activation, activation, flatElements);
-      PipeBarrier<PIPE_V>();
-      Mul(valuesLocal, valuesLocal, activation, flatElements);
+      // Equivalent FP32 gate weighting with one Div instead of Reciprocal plus Mul.
+      Div(valuesLocal, valuesLocal, activation, flatElements);
       PipeBarrier<PIPE_V>();
       Duplicate(accumulator, 0.0f, count);
       PipeBarrier<PIPE_V>();
