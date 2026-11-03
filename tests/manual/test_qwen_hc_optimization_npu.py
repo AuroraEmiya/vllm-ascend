@@ -10,10 +10,18 @@ from pathlib import Path
 import torch
 import torch_npu
 from test_qwen4_exp_hc_serial_npu import (
-    BOUNDARIES, NAMES, ROOT, benchmark, capture, compare, load_file, make_inputs, reference, validate_case,
+    BOUNDARIES,
+    NAMES,
+    ROOT,
+    benchmark,
+    capture,
+    compare,
+    load_file,
+    make_inputs,
+    reference,
+    validate_case,
 )
 from test_qwen_hc_matmul_ab_npu import four_implementations, profile_four
-
 
 
 class PreparedMatmul:
@@ -39,8 +47,12 @@ class PreparedMatmul:
             "input_formats": [torch_npu.get_npu_format(x) for x in (down, up)],
             "prepared_formats": [torch_npu.get_npu_format(x) for x in (prepared.down_weight, prepared.up_weight)],
             "logical_shapes": [list(x.shape) for x in (down, up)],
-            "prepared_storage_bytes": [x.untyped_storage().nbytes() for x in (prepared.down_weight, prepared.up_weight)],
-            "values_equal": [torch.equal(a.cpu(), b.cpu()) for a, b in zip((down, up), (prepared.down_weight, prepared.up_weight))],
+            "prepared_storage_bytes": [
+                x.untyped_storage().nbytes() for x in (prepared.down_weight, prepared.up_weight)
+            ],
+            "values_equal": [
+                torch.equal(a.cpu(), b.cpu()) for a, b in zip((down, up), (prepared.down_weight, prepared.up_weight))
+            ],
         }
         if not all(prep["values_equal"]):
             raise AssertionError("prepared projection weights changed values")
@@ -74,6 +86,7 @@ def validate_preparation_rebuild(adapter):
     }
     checks["pass"] = all(check["pass"] for group in checks.values() for check in group.values())
     return checks
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -128,7 +141,9 @@ def main():
     result["weight_preparations"] = funcs["ascendc_serial"].preparations
     result["completed"] = time.time()
     args.out.write_text(json.dumps(result, indent=2))
-    if not result.get("prepared_weight_rebuild", {"pass": True})["pass"] or any(not x.get("pass", True) for x in result["cases"]):
+    if not result.get("prepared_weight_rebuild", {"pass": True})["pass"] or any(
+        not x.get("pass", True) for x in result["cases"]
+    ):
         raise SystemExit(1)
 
 
