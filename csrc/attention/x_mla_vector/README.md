@@ -1,5 +1,13 @@
 # Independent MLA Prolog V stages
 
+The additional ten-candidate budget is exhausted. The final selected Python
+wrapper is byte-for-byte retained round7: norm7 for B>=32, split6 only for
+32<=B<=64, and the original transposed-ND/NZ matrix rule. Round8 and round9
+were rejected; round10 was rejected for inconclusive attributable performance.
+The1.5x fused/serial target remains unmet. `--comparison final-retained-r7`
+is a final-source validation/negative-control entry, not candidate11. See
+`benchmarks/kernels/mla_prolog/FINAL_RETAINED_R7.md`.
+
 This operator implements the V stages for BF16 decode MLA Prolog. Its companion
 Python wrapper currently uses public `torch.matmul` for down/up projections,
 selected by the fixed candidate10 ND/NZ batch rule below. The additional round1
@@ -102,7 +110,13 @@ its own event. The existing mode7 gamma-width tag resets each launch.
 No V/host/native source or binary rebuild is needed. See
 `benchmarks/kernels/mla_prolog/NORM_OVERLAP_B16_TRIAL.md` for the
 single-unit lifetime proof, unchanged fixed15 and exact r7 control.
-Round10 is the final authorized candidate and awaits A3 measurement.
+Round10 passed all15 A3 correctness/state checks and35 remote CPU checks.
+Its B16 complete-Graph ratio was1.012446 initially and1.004904 on a fixed-source
+confirmation; guard31 was1.008351 and1.010448. Larger differences also appeared
+on unchanged paths, including B128 reversing0.926790 to1.058892. Round10 is
+rejected as inconclusive performance. The final wrapper restores exact r7
+threshold32, keeping all raw samples and metadata. Final-source validation
+is separate from the ten candidates and does not count any rollback gain.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
