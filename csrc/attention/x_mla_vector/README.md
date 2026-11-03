@@ -60,7 +60,19 @@ This applies to both norm outputs and the KV-to-KR transition. Existing
 return. The mode5 control keeps its original input-blocking waits. Mode6
 remains a split mode, and the host explicitly treats mode7 as merged norm.
 See `benchmarks/kernels/mla_prolog/NORM_OUTPUT_OVERLAP_TRIAL.md` for the
-control derivation and buffer dependencies. Round7 awaits A3 validation.
+control derivation and buffer dependencies. Round7 passed all15 A3 checks;
+its complete-Graph control/candidate ratios at B32/64/128 were
+1.011370/1.029969/1.020738. Mode7 is retained for B>=32.
+
+Round8 keeps that exact wrapper as its control and tests split mode8 for
+B>=32. After GatherMask consumes the original input, four sin/cos coefficient
+pairs occupy disjoint existing `f0[0:256]` windows. Independent cos products,
+sine products and final Sub/Add share their respective barriers, retaining
+all true dependencies and the original per-element arithmetic. This reduces
+dynamic PIPE_V barriers per split tile from12 to6 without extra UB. Mode8
+keeps the retained32..64 DMA overlap route and the mode1 route above64; norm7
+is unchanged. See `benchmarks/kernels/mla_prolog/SPLIT_COEFFICIENT_PACK_TRIAL.md`
+for addressing, synchronization and the pinned control. Round8 awaits A3.
 
 The supported subdomain is `[B,1,He]`, B1..128, public A3 hidden sizes,
 Hcq1536/Hckv512/D128/Dr64, head counts1,2,4,8,16,32,64,128; BF16 nonquantized
@@ -73,7 +85,7 @@ The kernel uses complete per-row FP32 RMS reductions, `Rsqrt` for the reciprocal
 RINT writes. One V unit owns an entire 512-element KV or64-element KR row, each
 at least128 bytes, so distinct valid slots have no shared output cache line.
 All GM accesses use DMA; the int64 slot is read through a32-byte UB buffer.
-Mode 0/1/3/4/5/6/7 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
+Mode 0/1/3/4/5/6/7/8 UB allocation is59,424 bytes: one4096-element BF16 buffer, two
 1536-element BF16 buffers, one2048-element BF16 buffer, five2048-element FP32
 buffers, and32 index bytes.
 Mode 2 allocates only one heads*512-element BF16 DMA buffer. V barriers order dependent vector operations; balanced hard events
