@@ -62,6 +62,7 @@ class TextGatedResidualSerial:
         self.source_gate = w_gate
         self.device = w_down.device
         self.eps = eps
+        self._matrix_backend = "torch"
         self._mix_mode = 2
         self._norm_mode = 4
         self._activation_mode = 5
@@ -100,7 +101,7 @@ class TextGatedResidualSerial:
                     raise RuntimeError("refresh changed the captured up weight address")
         return self
 
-    def compile_superkernel(self, *, optimize=True):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3"):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -108,7 +109,7 @@ class TextGatedResidualSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
-        return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize)
+        return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize, matrix_backend=matrix_backend)
 
     def __call__(self, x, gamma=None, need_backward=False):
         if (
@@ -150,7 +151,13 @@ class TextGatedResidualSerial:
             inv_rms,
             empty,
         )
-        projected = torch.matmul(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
+        if self._matrix_backend == "v3":
+            from vllm_ascend.ops.serial_superkernel import serial_matmul_v3
+
+            down_weight = self.source_down if self.packed_weight is None else self.packed_weight
+            projected = serial_matmul_v3(norm, down_weight, transpose_b=True)
+        else:
+            projected = torch.matmul(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
         down = projected if self.packed_weight is None else projected[:, :LOW_RANK]
         activation = x.new_empty((tokens, LOW_RANK))
         inject = empty if self.w_gate is None else x.new_empty((tokens, 16))
@@ -171,7 +178,10 @@ class TextGatedResidualSerial:
             if self._use_nz_up and tokens <= self._nz_up_max_tokens and self.up_nz is not None
             else self.w_up
         )
-        up = torch.matmul(activation, up_weight)
+        up = (
+            serial_matmul_v3(activation, self.w_up.t(), transpose_b=True)
+            if self._matrix_backend == "v3" else torch.matmul(activation, up_weight)
+        )
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
             norm, self.dummy_gamma, up, self.dummy, self._mix_mode, CHANNELS, self.eps, mixed, empty_fp32, empty

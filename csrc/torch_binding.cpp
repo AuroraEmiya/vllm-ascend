@@ -29,6 +29,9 @@
 #include <torch_npu/csrc/npu/Module.h>
 #include "ops.h"
 #include "utils.h"
+#ifdef VLLM_ASCEND_SERIAL_V3
+#include "serial_matmul/serial_matmul_torch_adpt.h"
+#endif
 #include "aclnn_torch_adapter/op_api_common.h"
 #include "moe/add_rms_norm_bias/add_rms_norm_bias_torch_adpt.h"
 #include "moe/rms_norm_cast/rms_norm_cast_torch_adpt.h"
@@ -3222,6 +3225,10 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         " -> (Tensor y, Tensor y_fp32)"
     );
     ops.impl("npu_rms_norm_cast", torch::kPrivateUse1, &vllm_ascend::npu_rms_norm_cast);
+#ifdef VLLM_ASCEND_SERIAL_V3
+    ops.def("serial_matmul_v3_out(Tensor a, Tensor b, bool transpose_b, bool batched, Tensor(a!) out) -> ()");
+    ops.impl("serial_matmul_v3_out", torch::kPrivateUse1, &vllm_ascend::serial_matmul_v3_out);
+#endif
     ops.def("npu_tgr_vector_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
             "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
     ops.impl("npu_tgr_vector_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_vector_out);

@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--no-timing", action="store_true")
+    parser.add_argument("--matrix-backend", choices=("torch", "v3"), default="v3")
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(4)
@@ -35,7 +36,7 @@ def main():
         if args.mode == "serial":
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel")
+        compiled = instance.compile_superkernel(optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend)
         preparations.append({"wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
@@ -49,7 +50,7 @@ def main():
         if unknown:
             parser.error(f"unknown cases: {unknown}")
         cases = [c for c in cases if c["id"] in args.case_id]
-    report = {"mode": args.mode, "source_commit": args.source_commit, "cases": [],
+    report = {"matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
               "protocol": "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
