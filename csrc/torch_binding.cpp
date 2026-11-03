@@ -3223,7 +3223,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     );
     ops.impl("npu_rms_norm_cast", torch::kPrivateUse1, &vllm_ascend::npu_rms_norm_cast);
     ops.def("npu_tgr_vector_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
-            "int mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
+            "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
     ops.impl("npu_tgr_vector_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_vector_out);
 
 
