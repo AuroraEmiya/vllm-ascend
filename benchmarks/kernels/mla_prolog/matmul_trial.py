@@ -167,6 +167,23 @@ def comparison_definition(comparison):
                 "then barriers separate coefficient, cos, sine and final sum phases; same DMA route and drain"
             ),
         }
+    if comparison == "up-nd-row-major":
+        return {
+            "baseline_commit": NORM_OVERLAP_BASE_COMMIT,
+            "baseline_file": "baseline_serial_7ada452c.py",
+            "baseline_sha256": NORM_OVERLAP_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 9,
+            "changed": "ND-selected up only: owned row-major [K,N] weight instead of transposed [N,K]",
+            "unchanged": (
+                "down stride and ND/NZ threshold, NZ up, head, norm7>=32, split6 only32..64, "
+                "BF16 boundaries, outputs/cache and precision; rejected round8 split is absent in both"
+            ),
+            "native_comparison": (
+                "same round8 native/V binary; both use exact retained round7 norm/split modes, "
+                "mode8 is never selected; no native rebuild"
+            ),
+        }
     raise ValueError(f"unknown comparison {comparison}")
 
 
@@ -246,12 +263,22 @@ def prepare(case, rt):
     for name, cls in rt["classes"].items():
         torch.npu.synchronize()
         before = torch.npu.memory_allocated()
+        torch.npu.reset_peak_memory_stats()
         start = time.perf_counter_ns()
         candidates[name] = cls(*(device[k] for k in ("wdq", "wuq", "wuk", "wdkv", "gq", "gkv")))
         torch.npu.synchronize()
+        elapsed_us = (time.perf_counter_ns() - start) / 1000
+        after = torch.npu.memory_allocated()
+        peak = torch.npu.max_memory_allocated()
         metadata[name] = {
-            "prepare_host_synchronized_us": (time.perf_counter_ns() - start) / 1000,
-            "allocated_bytes_delta": torch.npu.memory_allocated() - before,
+            "prepare_host_synchronized_us": elapsed_us,
+            "allocated_bytes_before": before,
+            "allocated_bytes_after": after,
+            "allocated_bytes_delta": after - before,
+            "peak_allocated_bytes": peak,
+            "peak_extra_bytes": peak - before,
+            "transient_peak_above_resident_bytes": peak - after,
+            "allocation_scope": "Torch NPU allocated bytes; includes construction temporaries, excludes reserved cache",
             "prepared": prepared_metadata(candidates[name], rt),
         }
     return data, device, initial_kv, initial_kr, candidates, metadata
@@ -387,9 +414,14 @@ def run_pair(case, mode, implementation, rt, result):
                 value.copy_(host_data[name])
             stream.synchronize()
             for name, candidate in candidates.items():
+                before = torch.npu.memory_allocated()
+                torch.npu.reset_peak_memory_stats()
                 start = time.perf_counter_ns()
                 candidate.refresh_weights()
                 stream.synchronize()
+                elapsed_us = (time.perf_counter_ns() - start) / 1000
+                after = torch.npu.memory_allocated()
+                peak = torch.npu.max_memory_allocated()
                 actual = prepared_metadata(candidate, rt)
                 if actual != preparation[name]["prepared"]:
                     raise AssertionError(f"{name}: refresh changed prepared layouts, storage, addresses or formats")
@@ -397,7 +429,14 @@ def run_pair(case, mode, implementation, rt, result):
                     {
                         "implementation": name,
                         "phase": phase,
-                        "host_synchronized_us": (time.perf_counter_ns() - start) / 1000,
+                        "host_synchronized_us": elapsed_us,
+                        "allocated_bytes_before": before,
+                        "allocated_bytes_after": after,
+                        "allocated_bytes_delta": after - before,
+                        "peak_allocated_bytes": peak,
+                        "peak_extra_bytes": peak - before,
+                        "transient_peak_above_resident_bytes": peak - after,
+                        "allocation_scope": "Torch NPU allocated bytes; includes refresh temporaries",
                         "same_layout_storage_addresses_formats": True,
                     }
                 )
@@ -661,6 +700,7 @@ def main():
             "split-dma-overlap",
             "norm-output-overlap",
             "split-coefficient-pack",
+            "up-nd-row-major",
         ),
         default="projection",
     )
@@ -727,10 +767,11 @@ def main():
         "norm-gamma-cache": GAMMA_CACHE_BASE_SHA256,
         "split-dma-overlap": SPLIT_OVERLAP_BASE_SHA256,
         "norm-output-overlap": NORM_OVERLAP_BASE_SHA256,
+        "split-coefficient-pack": "b57151fe11b1266b7cb1cebc33c8f807279943f17e3bc8a6077641b1761a6b40",
     }.get(args.comparison)
-    if historical_hash and args.mode in {"verify", "paired", "profile"}:
+    if historical_hash:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
-            parser.error("historical full trials require their exact candidate wrapper; select the current comparison")
+            parser.error("historical trials require their exact candidate wrapper; select the current comparison")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     if head != args.source_commit:
         parser.error(f"--source-commit does not match running checkout HEAD {head}")
