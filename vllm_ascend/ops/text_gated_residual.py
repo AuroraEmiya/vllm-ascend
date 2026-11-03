@@ -118,7 +118,7 @@ class TextGatedResidualSerial:
             inv_rms,
             empty,
         )
-        projected = torch.mm(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
+        projected = torch.matmul(norm, self.w_down if self.packed_weight is None else self.packed_weight.t())
         down = projected if self.packed_weight is None else projected[:, :LOW_RANK]
         activation = x.new_empty((tokens, LOW_RANK))
         inject = empty if self.w_gate is None else x.new_empty((tokens, 16))
@@ -134,7 +134,7 @@ class TextGatedResidualSerial:
             empty_fp32,
             inject,
         )
-        up = torch.mm(activation, self.w_up)
+        up = torch.matmul(activation, self.w_up)
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
             norm, self.dummy_gamma, up, self.dummy, 2, CHANNELS, self.eps, mixed, empty_fp32, empty
