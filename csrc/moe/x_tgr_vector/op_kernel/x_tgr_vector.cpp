@@ -30,6 +30,7 @@ public:
         pipe.InitBuffer(f0,count*4); pipe.InitBuffer(f1,count*4);
         pipe.InitBuffer(f2,sumCount*4); pipe.InitBuffer(f3,(t.mode==0 || t.mode==4)?2560*4:32);
         pipe.InitBuffer(scalar,32);
+        if(t.mode==2) pipe.InitBuffer(mixOutput,t.tile*2);
     }
     __aicore__ inline void Process() {
         // With40 AIVs, striding by the block count preserves the channel.
@@ -52,6 +53,7 @@ public:
         }
         // Drain the last output DMA after the inference normalization loop.
         if(t.mode==4 && t.units>GetBlockNum()) Fence<HardEvent::MTE3_MTE2>();
+        if(t.mode==2 && !t.hasGate && t.units>GetBlockNum()) Fence<HardEvent::MTE3_MTE2>();
     }
 private:
     __aicore__ inline void Barrier() { PipeBarrier<PIPE_V>(); }
@@ -192,8 +194,14 @@ private:
         Add(sum,z,z[n],n); Barrier();
         Add(sum,sum,z[2*n],n); Barrier(); Add(sum,sum,z[3*n],n); Barrier();
         Muls(sum,sum,1.0f/t.channels,n); Barrier();
-        Cast(xb,sum,RoundMode::CAST_RINT,n); Fence<HardEvent::V_MTE3>();
-        DataCopy(yG[row*h+col],xb,n);
+        // Output has independent storage, so next-row MTE2 writes can run
+        // while MTE3 still reads the previous result. Protect this output
+        // buffer at its next V overwrite and drain it at kernel exit.
+        const bool overlap=!t.hasGate && t.units>GetBlockNum();
+        auto output=mixOutput.Get<bfloat16_t>();
+        if(overlap) Fence<HardEvent::MTE3_V>();
+        Cast(output,sum,RoundMode::CAST_RINT,n); Fence<HardEvent::V_MTE3>();
+        DataCopy(yG[row*h+col],output,n);
         if(t.hasGate && col==0) {
             Fence<HardEvent::MTE3_MTE2>();
             DataCopyExtParams cp{1,t.channels*2,0,0,0};
@@ -205,10 +213,11 @@ private:
             Cast(xb,q,RoundMode::CAST_RINT,t.channels); Fence<HardEvent::V_MTE3>();
             DataCopyPad(injectG[row*t.channels],xb,cp);
         }
-        Fence<HardEvent::MTE3_MTE2>();
+        if(overlap) Fence<HardEvent::V_MTE2>();
+        else Fence<HardEvent::MTE3_MTE2>();
     }
     TPipe pipe;
-    TBuf<TPosition::VECCALC> b0,b1,f0,f1,f2,f3,scalar;
+    TBuf<TPosition::VECCALC> b0,b1,f0,f1,f2,f3,scalar,mixOutput;
     GlobalTensor<bfloat16_t> xG,uG,gateG,yG,injectG;
     GlobalTensor<float> gG,invG;
     XTgrVectorTilingData t;
