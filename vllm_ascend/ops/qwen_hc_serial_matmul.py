@@ -70,3 +70,29 @@ def combine_and_mix_module(
         hc_count=module.hc_count,
         use_combine=module.use_combine,
     )
+
+
+class PreparedHCWeights:
+    """Explicit immutable projection snapshot for repeated HC calls.
+
+    Construct after loading unquantized BF16 weights. Construct a new object and
+    capture a new Graph after a weight update. Preparation is outside forward;
+    this object never consults or updates a process-wide cache.
+    """
+
+    def __init__(self, down_weight: torch.Tensor, up_weight: torch.Tensor):
+        import torch_npu
+
+        self.down_weight = torch_npu.npu_format_cast(down_weight, 29)
+        self.up_weight = torch_npu.npu_format_cast(up_weight, 29)
+
+    def __call__(self, residual, block_output, previous_injection, norm_weight, **kwargs):
+        return combine_and_mix(
+            residual,
+            block_output,
+            previous_injection,
+            norm_weight,
+            self.down_weight,
+            self.up_weight,
+            **kwargs,
+        )
