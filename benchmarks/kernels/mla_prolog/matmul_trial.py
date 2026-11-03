@@ -16,6 +16,7 @@ BASE_COMMIT = "af0d582472abb826d3ea6cbe37c75e7f49f9481c"
 BASE_SHA256 = "654bb8fe5761e19edfdaf2e8a595c9d599cf10a7e40f1f410d44008b2107af51"
 HEAD_BASE_COMMIT = "592d3963e3ef59fc147ef88ab0f114f35b731776"
 HEAD_BASE_SHA256 = "0ee2fe6008ea62b83d1b815249d2517b3d39550e587850858a60ad1f07e7ba8c"
+HEAD_LAYOUT_SHA256 = "7f6e2de290735bce07a27fe7d7f2523352eb7a8a763065048d525566d7a177df"
 MANIFEST_SHA256 = "824f1b88598244182516c164dc9a369307ce89a2d1bf20b4887a8092a9528858"
 CALLS_PER_GRAPH = 10
 EAGER_WARMUP = 10
@@ -64,6 +65,16 @@ def comparison_definition(comparison):
             "round": 2,
             "changed": "B>1 head: transpose_batchmatmul to bmm + permute + explicit contiguous",
             "unchanged": "BF16 boundaries, down/up matmul, prepared weights, row route, B1 head, V, thresholds",
+        }
+    if comparison == "gmm-down":
+        return {
+            "baseline_commit": HEAD_BASE_COMMIT,
+            "baseline_file": "baseline_serial_592d3963.py",
+            "baseline_sha256": HEAD_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 3,
+            "changed": "ND-route merged-down only: matmul to single-group npu_grouped_matmul",
+            "unchanged": "BF16, prepared weights, static ND/NZ row route, NZ down, all up/head and V versus round1",
         }
     raise ValueError(f"unknown comparison {comparison}")
 
@@ -330,7 +341,9 @@ def run_pair(case, mode, implementation, rt, result):
 def run_micro(case, rt, result):
     torch, functional, validation = rt["torch"], rt["functional"], rt["validate"]
     data, device, _, _, candidates, preparation = prepare(case, rt)
-    candidate = candidates["original"]
+    control_label = rt["comparison"]["labels"][0]
+    candidate = candidates[control_label]
+    grouped_down = rt["comparison"]["round"] == 3
     result.update(
         stages=[],
         preparation=preparation,
@@ -346,9 +359,12 @@ def run_micro(case, rt, result):
     stream = torch.npu.Stream()
     stream.wait_stream(torch.npu.current_stream())
     for stage_index, stage_name in enumerate(("down", "up")):
+        if grouped_down and stage_name != "down":
+            continue
         activation = activations[stage_index]
         reference = activation.cpu().double() @ weights_cpu[stage_index].double()
-        for layout in ("nd", "nz"):
+        actual_layout = "nd" if candidate.matrix_route(case["batch"]) == "nd_transposed_linear" else "nz"
+        for layout in (actual_layout,) if grouped_down else ("nd", "nz"):
             # Both argument conventions are views of the exact same storage.
             rhs = candidate._matrix_nd[stage_index].t() if layout == "nd" else candidate._matrix_nz[stage_index]
             linear_weight = rhs.t()
@@ -358,6 +374,14 @@ def run_micro(case, rt, result):
                 "mm": partial(torch.mm, activation, rhs),
                 "matmul": partial(torch.matmul, activation, rhs),
             }
+            comparisons = (("linear", "mm"), ("linear", "matmul"), ("mm", "matmul"))
+            if grouped_down:
+                methods = {"control": partial(torch.matmul, activation, rhs)}
+                if layout == "nd":
+                    methods["candidate"] = partial(grouped_matmul_down, activation, rhs, rt)
+                else:
+                    methods["candidate"] = partial(torch.matmul, activation, rhs)
+                comparisons = (("control", "candidate"),)
             stage = {
                 "stage": stage_name,
                 "layout": layout,
@@ -371,6 +395,7 @@ def run_micro(case, rt, result):
                 "paired": [],
                 "kernel_version": None,
                 "kernel_version_reason": "Read actual OP Type from full msprof; API names do not fix kernel versions.",
+                "candidate_is_unchanged_control_route": grouped_down and layout == "nz",
             }
             result["stages"].append(stage)
             graphs, outputs = {}, {}
@@ -391,9 +416,16 @@ def run_micro(case, rt, result):
                         stream.synchronize()
                     check = validation.compare(outputs[name], reference)
                     finite = bool(torch.isfinite(outputs[name].cpu().float()).all())
-                    record.update(check=check, finite=finite)
-                    if check["matched_ratio"] < 0.99 or check["max_abs_error"] > 1 or not finite:
-                        record["status"] = "FAIL_PRECISION"
+                    metadata = tensor_metadata(outputs[name], rt)
+                    record.update(check=check, finite=finite, output_metadata=metadata)
+                    if (
+                        check["matched_ratio"] < 0.99
+                        or check["max_abs_error"] > 1
+                        or not finite
+                        or outputs[name].dtype != torch.bfloat16
+                        or not outputs[name].is_contiguous()
+                    ):
+                        record["status"] = "FAIL_PRECISION_OR_LAYOUT"
                     else:
                         record["status"] = "PASS"
                         graphs[name] = graph
@@ -404,7 +436,7 @@ def run_micro(case, rt, result):
                         error=str(error),
                         traceback=traceback.format_exc(),
                     )
-            for first, second in (("linear", "mm"), ("linear", "matmul"), ("mm", "matmul")):
+            for first, second in comparisons:
                 if first in graphs and second in graphs:
                     stage["paired"].append(
                         paired_timing(graphs, stream, first, second, torch, unit="one_projection_matrix_call")
@@ -415,11 +447,17 @@ def run_micro(case, rt, result):
                     )
             if any(method["status"] != "PASS" for method in stage["methods"].values()):
                 result["status"] = "PARTIAL_METHOD_FAILURE"
-    result["prepared_layout_storage_addresses_unchanged"] = preparation["original"]["prepared"] == prepared_metadata(
+    result["prepared_layout_storage_addresses_unchanged"] = preparation[control_label]["prepared"] == prepared_metadata(
         candidate, rt
     )
     if not result["prepared_layout_storage_addresses_unchanged"]:
         result["status"] = "FAIL_PREPARED_MUTATION"
+
+
+def grouped_matmul_down(activation, rhs, rt):
+    return rt["torch_npu"].npu_grouped_matmul(
+        [activation], [rhs], split_item=0, group_type=-1, output_dtype=rt["torch"].bfloat16
+    )[0]
 
 
 def run_head_micro(case, rt, result):
@@ -518,7 +556,7 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--source-commit")
     parser.add_argument("--case-id", action="append")
-    parser.add_argument("--comparison", choices=("projection", "head-layout"), default="projection")
+    parser.add_argument("--comparison", choices=("projection", "head-layout", "gmm-down"), default="projection")
     parser.add_argument("--mode", choices=("verify", "paired", "micro", "head-micro", "profile"), default="verify")
     parser.add_argument("--implementation", choices=("original", "matmul", "control", "candidate"))
     parser.add_argument(
@@ -535,10 +573,10 @@ def main():
         parser.error(str(error))
     if args.mode == "profile" and len(cases) != 1:
         parser.error("profile requires exactly one frozen --case-id per process")
-    if (args.mode == "micro" and args.comparison != "projection") or (
+    if (args.mode == "micro" and args.comparison not in {"projection", "gmm-down"}) or (
         args.mode == "head-micro" and args.comparison != "head-layout"
     ):
-        parser.error("micro requires projection; head-micro requires head-layout comparison")
+        parser.error("micro requires projection or gmm-down; head-micro requires head-layout comparison")
     if args.implementation is None:
         args.implementation = definition["labels"][1]
     if args.implementation not in definition["labels"]:
@@ -573,12 +611,10 @@ def main():
     if args.out.exists():
         parser.error("refusing to overwrite existing output; choose a new attempt path")
     repo = Path(__file__).resolve().parents[3]
-    if (
-        args.comparison == "projection"
-        and args.mode != "micro"
-        and sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != HEAD_BASE_SHA256
-    ):
-        parser.error("projection full trials require the round1 wrapper; use --comparison head-layout for round2")
+    historical_hash = {"projection": HEAD_BASE_SHA256, "head-layout": HEAD_LAYOUT_SHA256}.get(args.comparison)
+    if historical_hash and args.mode in {"verify", "paired", "profile"}:
+        if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
+            parser.error("historical full trials require their exact candidate wrapper; select the current comparison")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     if head != args.source_commit:
         parser.error(f"--source-commit does not match running checkout HEAD {head}")
