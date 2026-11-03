@@ -149,6 +149,66 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
             self.assertEqual(destinations, list(range(width)))
             self.assertEqual(coefficients, [source[0]] * width)
 
+    def test_gamma_cache_plan_pins_round4_control(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(HARNESS),
+                "--plan",
+                "--comparison",
+                "norm-gamma-cache",
+                "--mode",
+                "paired",
+                "--case-id",
+                "decode-b128",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 5)
+        self.assertEqual(plan["pinned_baseline"]["baseline_commit"], "8b0d4da8d4897b3099736689c63ae7baea1dff3e")
+        self.assertEqual(
+            plan["pinned_baseline"]["baseline_canonical_sha256"],
+            "cc2cacc7d07beb06138643d1aa868f0ef0865b5166a574b94be7d95df7e734fc",
+        )
+        self.assertIn("B>=32", plan["protocol"]["changed"])
+        self.assertIn("mode4", plan["protocol"]["native_comparison"])
+        self.assertIn("mode5", plan["protocol"]["native_comparison"])
+
+    def test_cached_gamma_region_survives_rope_and_width_changes(self):
+        # f1 has2048 FP32 elements. The first64 are transient RoPE sine;
+        # cached gamma starts at64 and is tagged by width. Include odd core
+        # counts, where a core can change query/KV type, and a second launch
+        # with updated gamma values. No tag may persist across launches.
+        def launch(rows, cores, generation):
+            loads = 0
+            blocks = min(2 * rows, cores)
+            for core in range(blocks):
+                cached_width = 0
+                buffer = [None] * 2048
+                for unit in range(core, 2 * rows, blocks):
+                    width = 1536 if unit % 2 == 0 else 512
+                    gamma = [generation * 10000 + width + lane for lane in range(width)]
+                    if cached_width != width:
+                        buffer[64 : 64 + width] = gamma
+                        cached_width = width
+                        loads += width * 2
+                    self.assertEqual(buffer[64 : 64 + width], gamma)
+                    self.assertEqual(len(buffer), 2048)
+                    if unit % 2:
+                        buffer[:64] = [-unit] * 64
+                        self.assertEqual(buffer[64 : 64 + width], gamma)
+            return loads
+
+        for rows in (32, 33, 64, 128):
+            for generation in (0, 1):
+                self.assertEqual(launch(rows, 40, generation), 81920)
+                self.assertLess(launch(rows, 40, generation), rows * 4096)
+                for cores in (1, 39):
+                    self.assertEqual(launch(rows, cores, generation), rows * 4096)
+
 
 if __name__ == "__main__":
     unittest.main()
