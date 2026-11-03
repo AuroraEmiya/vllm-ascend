@@ -4,7 +4,6 @@
 import math
 
 import torch
-import torch.nn.functional as F
 import torch_npu
 
 QUERY_RANK = 1536
@@ -144,7 +143,7 @@ class MlaPrologSerial:
         x = token_x.view(rows, self.hidden)
 
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
-        down_q_kv = F.linear(x, self._matrix_nd[0]) if use_linear else torch.mm(x, self._matrix_nz[0])
+        down_q_kv = torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q_kv,
@@ -163,7 +162,11 @@ class MlaPrologSerial:
             cache_kr_flat,
         )
 
-        up = F.linear(normalized_q, self._matrix_nd[1]) if use_linear else torch.mm(normalized_q, self._matrix_nz[1])
+        up = (
+            torch.matmul(normalized_q, self._matrix_nd[1].t())
+            if use_linear
+            else torch.matmul(normalized_q, self._matrix_nz[1])
+        )
         head_q = torch.empty((self.heads, rows, NOPE_DIM), device=self.device, dtype=torch.bfloat16)
         query_rope = torch.empty((rows, self.heads, ROPE_DIM), device=self.device, dtype=torch.bfloat16)
         self._vector(
