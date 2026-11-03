@@ -70,10 +70,13 @@ public:
             // The same UB buffers are reused after both previous consumers complete.
             Sync<HardEvent::V_MTE2>();
             Sync<HardEvent::MTE3_MTE2>();
-            if (t.mode == 0 || t.mode >= 3) NormAndCache(unit);
-            else if (t.mode == 1) SplitAndRope(unit);
+            if (t.mode == 0 || (t.mode >= 3 && t.mode <= 5)) NormAndCache(unit);
+            else if (t.mode == 1 || t.mode == 6) SplitAndRope(unit);
             else RestoreLayout(unit);
         }
+        // The last unit has no following reuse fence. Explicitly drain its
+        // mode6 output transfers before leaving the pipelined split stage.
+        if (t.mode == 6) Sync<HardEvent::MTE3_S>();
     }
 
 private:
@@ -227,17 +230,21 @@ private:
         DataCopyExtParams writeQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
             0, static_cast<uint32_t>((t.rows - 1) * NOPE_DIM * sizeof(bfloat16_t)), 0};
         DataCopyPad(yGm[(head * t.rows + row) * NOPE_DIM], b0, writeQ);
-        Sync<HardEvent::MTE3_MTE2>();
+        // Mode1 retains the original shared-b0 wait. Mode6 never overwrites
+        // b0 here: Q can keep reading it while RoPE is loaded into b3.
+        if (t.mode != 6) Sync<HardEvent::MTE3_MTE2>();
 
         DataCopyExtParams copyRope{static_cast<uint16_t>(headCount), ROPE_DIM * sizeof(bfloat16_t),
             NOPE_DIM * sizeof(bfloat16_t), 0, 0};
-        DataCopyPad(b0, xGm[source + NOPE_DIM], copyRope, noPad);
+        if (t.mode == 6) DataCopyPad(b3, xGm[source + NOPE_DIM], copyRope, noPad);
+        else DataCopyPad(b0, xGm[source + NOPE_DIM], copyRope, noPad);
         DataCopy(b1, sinGm[row * ROPE_DIM], ROPE_DIM);
         DataCopy(b2, cosGm[row * ROPE_DIM], ROPE_DIM);
         Sync<HardEvent::MTE2_V>();
         const uint32_t count = headCount * ROPE_DIM;
         const uint32_t halfCount = count / 2;
-        Cast(f0, b0, RoundMode::CAST_NONE, count);
+        if (t.mode == 6) Cast(f0, b3, RoundMode::CAST_NONE, count);
+        else Cast(f0, b0, RoundMode::CAST_NONE, count);
         Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
         Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
         PipeBarrier<PIPE_V>();
