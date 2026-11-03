@@ -184,6 +184,23 @@ def comparison_definition(comparison):
                 "mode8 is never selected; no native rebuild"
             ),
         }
+    if comparison == "norm-overlap-b16":
+        return {
+            "baseline_commit": NORM_OVERLAP_BASE_COMMIT,
+            "baseline_file": "baseline_serial_7ada452c.py",
+            "baseline_sha256": NORM_OVERLAP_BASE_SHA256,
+            "labels": ("control", "candidate"),
+            "round": 10,
+            "changed": "B16..31 norm only: retained mode7 instead of mode4, lowering its batch threshold32 to16",
+            "unchanged": (
+                "exact round7 transposed ND preparation/refresh/matmul, NZ and head; split6 only32..64; "
+                "B1..15 and B>=32 norm routes, all BF16 boundaries, V math, cache and thresholds"
+            ),
+            "native_comparison": (
+                "same round8 native/V binary; exact r7 mode4 control and existing mode7 candidate for16<=B<32; "
+                "KV output b3 is protected by MTE3_V before KR Cast and final MTE3_S; no build or mode8"
+            ),
+        }
     raise ValueError(f"unknown comparison {comparison}")
 
 
@@ -701,6 +718,7 @@ def main():
             "norm-output-overlap",
             "split-coefficient-pack",
             "up-nd-row-major",
+            "norm-overlap-b16",
         ),
         default="projection",
     )
@@ -768,6 +786,8 @@ def main():
         "split-dma-overlap": SPLIT_OVERLAP_BASE_SHA256,
         "norm-output-overlap": NORM_OVERLAP_BASE_SHA256,
         "split-coefficient-pack": "b57151fe11b1266b7cb1cebc33c8f807279943f17e3bc8a6077641b1761a6b40",
+        "up-nd-row-major": "f8da1aeb32f884e18fa115c45cb5904af266f2889143dda4d770a10efab443b6",
+        "norm-overlap-b16": "757711c6d4ad0284f6d1da0558b8116dd542ad6e3e8ef6f02b3f970e2fca214e",
     }.get(args.comparison)
     if historical_hash:
         if sha256(repo / "vllm_ascend/ops/mla_prolog_serial.py") != historical_hash:
