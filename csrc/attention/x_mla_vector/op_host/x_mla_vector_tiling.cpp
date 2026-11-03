@@ -10,7 +10,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     const int64_t mode = *attrs->GetInt(0), rows = *attrs->GetInt(1);
     const int64_t heads = *attrs->GetInt(2), slots = *attrs->GetInt(3);
     const float epsQ = *attrs->GetFloat(4), epsKv = *attrs->GetFloat(5);
-    if (mode < 0 || mode > 4 || rows < 1 || rows > 128 || heads < 1 || heads > 128 ||
+    if (mode < 0 || mode > 5 || rows < 1 || rows > 128 || heads < 1 || heads > 128 ||
         (heads & (heads - 1)) || slots < rows || slots > 1048576 ||
         !std::isfinite(epsQ) || !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0) return ge::GRAPH_FAILED;
     const auto& shape = context->GetInputShape(0)->GetStorageShape();
