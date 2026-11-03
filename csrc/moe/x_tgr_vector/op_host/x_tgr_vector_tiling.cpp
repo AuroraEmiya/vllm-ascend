@@ -34,6 +34,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         else if (n>=20) tile=1280;
         else if (n>=10) tile=640;
         else if (n>=5) tile=320;
+    } else if (mode==5) {
+        // Group only when at least40 independent packed-row groups remain.
+        tile=n>=160?4:(n>=80?2:1);
     } else if (mode==1) {
         tile=std::min(2560u,std::max(256u,((n*d+40*32-1)/(40*32))*32));
     }
@@ -47,7 +50,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         if (52ull*tile+64>ub || 2560%tile!=0) return ge::GRAPH_FAILED;
     }
     t.set_tile(tile);
-    t.set_units((mode==3 || mode==5) ? n : ((mode==0 || mode==4) ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile()))));
+    t.set_units(mode==5 ? (n+tile-1)/tile : (mode==3 ? n : ((mode==0 || mode==4) ? n*channels : (mode==1 ? (n*d+t.get_tile()-1)/t.get_tile() : n*((d/channels+t.get_tile()-1)/t.get_tile())))));
     t.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(t.GetDataSize());
     context->SetBlockDim(std::min(t.get_units(),p.GetCoreNumAiv()));
