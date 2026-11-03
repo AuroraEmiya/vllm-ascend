@@ -31,13 +31,26 @@ def metadata(value):
     }
 
 
-def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_control=False):
+def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_control=False, up_format_control=False):
     cpu = validation.make_inputs(case)
     refs = validation.oracle(cpu, case)
     inputs = [v.npu() if v is not None else None for v in cpu]
     x, wd, wu, wg, gamma = inputs
+    torch.npu.synchronize()
+    prepare_start = time.perf_counter()
+    memory_before = torch.npu.memory_allocated()
     objects = {"candidate": Candidate(wd, wu, wg)}
-    if norm_buffer_control:
+    torch.npu.synchronize()
+    preparation = {
+        "candidate_wall_us": (time.perf_counter() - prepare_start) * 1e6,
+        "candidate_extra_device_bytes": torch.npu.memory_allocated() - memory_before,
+        "scope": "outside capture, includes packed down/gate and explicit NZ up",
+    }
+    if up_format_control:
+        control = Candidate(wd, wu, wg)
+        control._use_nz_up = False
+        objects = {"original": control, **objects}
+    elif norm_buffer_control:
         control = Candidate(wd, wu, wg)
         control._norm_mode = 8
         objects = {"original": control, **objects}
@@ -53,7 +66,10 @@ def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_con
         "checks": {},
         "input_metadata": [metadata(v) if v is not None else None for v in inputs],
         "timing": None,
-        "comparison": "same-binary legacy-norm / candidate"
+        "preparation": preparation,
+        "comparison": "same-binary ND-up / candidate"
+        if up_format_control
+        else "same-binary legacy-norm / candidate"
         if norm_buffer_control
         else "same-binary legacy-mix-tile / candidate"
         if mix_tile_control
@@ -63,6 +79,7 @@ def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_con
         name: {
             "down": metadata(obj.w_down),
             "up": metadata(obj.w_up),
+            "up_nz": None if getattr(obj, "up_nz", None) is None else metadata(obj.up_nz),
             "packed": None if obj.packed_weight is None else metadata(obj.packed_weight),
         }
         for name, obj in objects.items()
@@ -102,10 +119,15 @@ def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_con
                 graph.replay()
                 stream.synchronize()
                 result["checks"][name + "_" + phase] = validation.check_outputs(outputs[name], expected)
+        result["prepared_addresses_stable"] = all(
+            getattr(obj, "up_nz", None) is None or result["prepared"][name]["up_nz"]["data_ptr"] == obj.up_nz.data_ptr()
+            for name, obj in objects.items()
+        )
         result["same_addresses"] = addresses == [v.data_ptr() if v is not None else None for v in inputs]
         passed = (
             result["immutable_inputs"]
             and result["same_addresses"]
+            and result["prepared_addresses_stable"]
             and all(v["status"] == "PASS" for v in result["checks"].values())
         )
         result["status"] = "PASS" if passed else "FAIL_ACCURACY"
@@ -142,8 +164,9 @@ def main():
     parser.add_argument("--candidate-only", action="store_true")
     parser.add_argument("--mix-tile-control", action="store_true")
     parser.add_argument("--norm-buffer-control", action="store_true")
+    parser.add_argument("--up-format-control", action="store_true")
     args = parser.parse_args()
-    if sum((args.mix_tile_control, args.norm_buffer_control, args.candidate_only)) > 1:
+    if sum((args.mix_tile_control, args.norm_buffer_control, args.up_format_control, args.candidate_only)) > 1:
         parser.error("select one control or candidate-only option")
     root = Path(__file__).resolve().parents[3]
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
@@ -154,6 +177,7 @@ def main():
         raise ValueError("pinned original wrapper mismatch")
     torch.set_num_threads(4)
     torch.npu.set_device(0)
+    torch.npu.config.allow_internal_format = True
     cases = json.loads(Path(__file__).with_name("cases.json").read_text())
     if args.case_id:
         cases = [c for c in cases if c["id"] in args.case_id]
@@ -162,7 +186,9 @@ def main():
     result = {
         "source_commit": actual,
         "baseline_wrapper": (
-            "current Candidate with legacy-norm mode8; only buffering differs"
+            "current Candidate with ND up; only selected up weight format differs"
+            if args.up_format_control
+            else "current Candidate with legacy-norm mode8; only buffering differs"
             if args.norm_buffer_control
             else "current Candidate with internal legacy-mix-tile mode6; only tile differs"
             if args.mix_tile_control
@@ -183,7 +209,9 @@ def main():
     for case in cases:
         start = time.time_ns()
         try:
-            row = run_case(case, args.candidate_only, args.mix_tile_control, args.norm_buffer_control)
+            row = run_case(
+                case, args.candidate_only, args.mix_tile_control, args.norm_buffer_control, args.up_format_control
+            )
         except Exception:
             row = {"case": case, "status": "INVALID", "timing": None, "error": traceback.format_exc()}
         row["host_begin_ns"] = start
