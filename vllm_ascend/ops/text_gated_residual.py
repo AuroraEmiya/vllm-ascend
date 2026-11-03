@@ -101,7 +101,7 @@ class TextGatedResidualSerial:
                     raise RuntimeError("refresh changed the captured up weight address")
         return self
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3"):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3", optimize_options=None):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -109,7 +109,7 @@ class TextGatedResidualSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
-        return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize, matrix_backend=matrix_backend)
+        return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
 
     def __call__(self, x, gamma=None, need_backward=False):
         if (
