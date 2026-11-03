@@ -24,12 +24,15 @@ def main():
     parser.add_argument("--pad-down", type=int, choices=(0, 640), default=640)
     parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=4)
     parser.add_argument("--single-call-graph", action="store_true")
+    parser.add_argument("--candidate-only", action="store_true")
     parser.add_argument("--batch-activation", type=int, choices=(0, 1), default=1)
     parser.add_argument("--preload-code", type=int, choices=(1, 5), default=5)
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     if args.single_call_graph and not args.no_timing:
         parser.error("single-call Graph is a correctness guard; use --no-timing")
+    if args.candidate_only and not args.no_timing:
+        parser.error("candidate-only checks cannot produce paired performance; use --no-timing")
     if args.single_call_graph:
         if hasattr(validation, "CALLS"):
             validation.CALLS = 1
@@ -79,6 +82,8 @@ def main():
 
     def make_calls_with_storage(*a, **kw):
         tensors, calls, prep, serial = make_calls_original(*a, **kw)
+        if args.candidate_only:
+            calls = {"serial": calls["serial"]}
         owner = getattr(serial, "pipeline", serial)
         storage = {}
         for field in ("dummy", "dummy_gamma", "packed_weight", "up_nz", "_sk_packed_weight"):
@@ -114,6 +119,7 @@ def main():
         "split_mode": args.split_mode,
         "preload_code": args.preload_code,
         "compiler_workers": 4,
+        "candidate_only": args.candidate_only,
         "protocol": "frozen validation thresholds; single-call Graph correctness guard"
         if args.single_call_graph
         else "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples",
@@ -144,9 +150,14 @@ def main():
                     and row["input_immutability_eager"]
                     and row["input_immutability_graph"]
                 )
-                row["baseline_correctness"] = row["eager"]["fused"]["status"] == "PASS" and all(
-                    v["status"] == "PASS" for v in row["graph"]["fused"].values()
-                )
+                if args.candidate_only:
+                    row["baseline_correctness"] = None
+                    row["baseline_status"] = "NOT_RUN_CANDIDATE_ONLY"
+                    row["comparison_admitted"] = False
+                else:
+                    row["baseline_correctness"] = row["eager"]["fused"]["status"] == "PASS" and all(
+                        v["status"] == "PASS" for v in row["graph"]["fused"].values()
+                    )
                 if args.profile:
                     profile_path = args.out.with_name(args.out.stem + "." + case["id"] + ".profile.json")
                     validation.profile(case, str(profile_path))
