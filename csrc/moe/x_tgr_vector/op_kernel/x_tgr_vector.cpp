@@ -24,7 +24,8 @@ public:
         injectG.SetGlobalBuffer((__gm__ bfloat16_t*)inject);
         // Mix stages all four branches together. Normalization retains the
         // 51,232-byte layout. Tiling validates the mode-specific UB demand.
-        const uint32_t count=t.mode==2?t.channels*t.tile:2560;
+        const uint32_t count=t.mode==2?t.channels*t.tile:
+            (t.mode==5 && t.tile==8?8*336:2560);
         const uint32_t sumCount=t.mode==2?t.tile:2560;
         pipe.InitBuffer(b0,count*2); pipe.InitBuffer(b1,count*2);
         pipe.InitBuffer(f0,count*4); pipe.InitBuffer(f1,count*4);
