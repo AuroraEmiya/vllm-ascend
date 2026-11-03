@@ -89,8 +89,16 @@ at::Tensor silu(const at::Tensor& x,int64_t groups) {
     auto result=silu_meta(x,groups);if(!x.size(0))return result;
     HcParams p{};p.rows=x.size(0);p.hidden=x.size(1);p.groups=groups;p.residual_stride=x.stride(0);
     c10_npu::NPUGuard guard(x.device());auto stream=c10_npu::getCurrentNPUStream().stream();
-    p.row_batch=(p.rows>40 && p.hidden<=4096 && p.hidden%16==0 &&
-                 p.residual_stride>=p.hidden)?2:1;
+    // Batch only when several rows would otherwise revisit the same core.
+    // Four buffers use 12 bytes per value plus 1024 bytes of padding.
+    constexpr uint32_t SILU_UB_DATA_BUDGET=128*1024;
+    constexpr uint32_t SILU_MAX_ROW_BATCH=32;
+    p.row_batch=1;
+    if(p.hidden%16==0 && p.residual_stride>=p.hidden) {
+        const uint32_t waves=(p.rows+A3_VECTOR_CORES-1)/A3_VECTOR_CORES;
+        const uint32_t ub_rows=SILU_UB_DATA_BUDGET/(12*p.hidden);
+        p.row_batch=std::max(1u,std::min({waves,ub_rows,SILU_MAX_ROW_BATCH}));
+    }
     auto a=x.data_ptr(),b=result.data_ptr();
     const uint32_t cores=std::min(A3_VECTOR_CORES,(p.rows+p.row_batch-1)/p.row_batch);
     at_npu::native::OpCommand cmd;cmd.Name("qwen_hc_silu");
