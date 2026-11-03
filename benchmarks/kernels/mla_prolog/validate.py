@@ -152,6 +152,18 @@ def run_case(case, timing=True, profile=None, baseline_route="aclnn", internal_f
         return candidate(device["x"], device["sin"], device["cos"], device["index"], *caches["serial"])
 
     def fused():
+        if baseline_route == "v3":
+            outputs = torch_npu.npu_mla_prolog_v3(
+                device["x"], fused_weights["wdq"], fused_weights["wuq"], device["wuk"],
+                fused_weights["wdkv"], device["gq"], device["gkv"], device["sin"], device["cos"],
+                *caches["fused"], cache_index=device["index"],
+                cache_mode="PA_BSND", query_norm_flag=False,
+                weight_quant_mode=0, kv_cache_quant_mode=0, query_quant_mode=0,
+                qc_qr_scale=1.0, kc_scale=1.0,
+            )
+            # Public V3 returns query/rope plus optional quantization/norm outputs;
+            # KV/KR are mutated arguments. This BF16 comparison requests neither.
+            return outputs[0], outputs[1], *caches["fused"]
         baseline = (
             torch.ops._C_ascend.mla_prolog_fused_public if baseline_route == "aclnn" else torch_npu.npu_mla_prolog
         )
@@ -347,7 +359,7 @@ if __name__ == "__main__":
     parser.add_argument("--case-id", action="append")
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--profile", choices=("serial", "fused"))
-    parser.add_argument("--baseline-route", choices=("aclnn", "torch"), default="aclnn")
+    parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
     parser.add_argument("--internal-format", choices=("true", "false"), default="true")
     args = parser.parse_args()
     torch.npu.set_device(0)

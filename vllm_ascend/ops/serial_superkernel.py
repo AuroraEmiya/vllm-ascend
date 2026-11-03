@@ -34,7 +34,9 @@ class CompiledSerialPipeline:
         if "LOCAL_WORLD_SIZE" not in os.environ:
             os.environ["LOCAL_WORLD_SIZE"] = "1"
         self.optimize = optimize
-        self.optimize_options = copy.deepcopy(optimize_options or {})
+        self.optimize_options = copy.deepcopy(
+            {"constant_codegen": 1} if optimize_options is None else optimize_options
+        )
         self.pipeline = pipeline
         self.scope = scope
         self.preparation = {"first_call_wall_us_compile_install_execute": None,

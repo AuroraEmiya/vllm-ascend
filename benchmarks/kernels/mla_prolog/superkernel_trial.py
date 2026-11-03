@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--matrix-backend", choices=("torch", "v3"), default="v3")
     parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
     args = parser.parse_args()
     torch.set_num_threads(4)
     torch.npu.set_device(0)
@@ -50,7 +51,7 @@ def main():
         if unknown:
             parser.error(f"unknown cases: {unknown}")
         cases = [c for c in cases if c["id"] in args.case_id]
-    report = {"matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
+    report = {"matrix_backend": args.matrix_backend, "mode": args.mode, "baseline_route": args.baseline_route, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
               "protocol": "frozen validate.py; 10 complete calls/Graph; 20 alternating paired samples"}
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -72,7 +73,7 @@ def main():
                     validation.profile(case, str(args.out.with_suffix(".profile.json")))
             else:
                 row = validation.run_case(case, timing=not args.no_timing,
-                                          profile="serial" if args.profile else None)
+                                          profile="serial" if args.profile else None, baseline_route=args.baseline_route)
         except Exception:
             row = {"case": case, "status": "ERROR", "traceback": traceback.format_exc()}
         row["active_matrix_backend"] = "torch" if args.mode == "serial" else args.matrix_backend
