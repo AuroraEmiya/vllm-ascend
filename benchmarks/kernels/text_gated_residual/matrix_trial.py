@@ -31,7 +31,14 @@ def metadata(value):
     }
 
 
-def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_control=False, up_format_control=False):
+def run_case(
+    case,
+    candidate_only=False,
+    mix_tile_control=False,
+    norm_buffer_control=False,
+    up_format_control=False,
+    up_large_control=False,
+):
     cpu = validation.make_inputs(case)
     refs = validation.oracle(cpu, case)
     inputs = [v.npu() if v is not None else None for v in cpu]
@@ -46,7 +53,11 @@ def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_con
         "candidate_extra_device_bytes": torch.npu.memory_allocated() - memory_before,
         "scope": "outside capture, includes packed down/gate and explicit NZ up",
     }
-    if up_format_control:
+    if up_large_control:
+        control = Candidate(wd, wu, wg)
+        control._nz_up_max_tokens = 64
+        objects = {"original": control, **objects}
+    elif up_format_control:
         control = Candidate(wd, wu, wg)
         control._use_nz_up = False
         objects = {"original": control, **objects}
@@ -67,7 +78,9 @@ def run_case(case, candidate_only=False, mix_tile_control=False, norm_buffer_con
         "input_metadata": [metadata(v) if v is not None else None for v in inputs],
         "timing": None,
         "preparation": preparation,
-        "comparison": "same-binary ND-up / candidate"
+        "comparison": "same-binary NZ-up cutoff64 / candidate"
+        if up_large_control
+        else "same-binary ND-up / candidate"
         if up_format_control
         else "same-binary legacy-norm / candidate"
         if norm_buffer_control
@@ -165,8 +178,20 @@ def main():
     parser.add_argument("--mix-tile-control", action="store_true")
     parser.add_argument("--norm-buffer-control", action="store_true")
     parser.add_argument("--up-format-control", action="store_true")
+    parser.add_argument("--up-large-control", action="store_true")
     args = parser.parse_args()
-    if sum((args.mix_tile_control, args.norm_buffer_control, args.up_format_control, args.candidate_only)) > 1:
+    if (
+        sum(
+            (
+                args.mix_tile_control,
+                args.norm_buffer_control,
+                args.up_format_control,
+                args.up_large_control,
+                args.candidate_only,
+            )
+        )
+        > 1
+    ):
         parser.error("select one control or candidate-only option")
     root = Path(__file__).resolve().parents[3]
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
@@ -186,7 +211,9 @@ def main():
     result = {
         "source_commit": actual,
         "baseline_wrapper": (
-            "current Candidate with ND up; only selected up weight format differs"
+            "current Candidate with NZ cutoff64; only B>64 up format differs"
+            if args.up_large_control
+            else "current Candidate with ND up; only selected up weight format differs"
             if args.up_format_control
             else "current Candidate with legacy-norm mode8; only buffering differs"
             if args.norm_buffer_control
@@ -210,7 +237,12 @@ def main():
         start = time.time_ns()
         try:
             row = run_case(
-                case, args.candidate_only, args.mix_tile_control, args.norm_buffer_control, args.up_format_control
+                case,
+                args.candidate_only,
+                args.mix_tile_control,
+                args.norm_buffer_control,
+                args.up_format_control,
+                args.up_large_control,
             )
         except Exception:
             row = {"case": case, "status": "INVALID", "timing": None, "error": traceback.format_exc()}
