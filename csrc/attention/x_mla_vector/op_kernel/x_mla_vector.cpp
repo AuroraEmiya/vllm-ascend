@@ -73,12 +73,13 @@ public:
             // Its b3 reuse fence is delayed until the next output Cast.
             if (t.mode != 7) Sync<HardEvent::MTE3_MTE2>();
             if (t.mode == 0 || (t.mode >= 3 && t.mode <= 5) || t.mode == 7) NormAndCache(unit);
-            else if (t.mode == 1 || t.mode == 6) SplitAndRope(unit);
+            else if (t.mode == 1 || t.mode == 6 || t.mode == 8) SplitAndRope(unit);
             else RestoreLayout(unit);
         }
         // The last unit has no following reuse fence. Explicitly drain its
         // pipelined mode's output transfers before leaving the V stage.
-        if (t.mode == 6 || t.mode == 7) Sync<HardEvent::MTE3_S>();
+        if (t.mode == 6 || t.mode == 7 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64))
+            Sync<HardEvent::MTE3_S>();
     }
 
 private:
@@ -221,6 +222,37 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
+    __aicore__ inline void PackHalf(uint32_t offset, const LocalTensor<float>& source)
+    {
+        // The four coefficient pairs occupy disjoint f0 windows. Their
+        // producer/consumer barrier is issued once after all eight Adds.
+        Adds(f0[offset], source, 0.0f, ROPE_DIM / 2);
+        Adds(f0[offset + ROPE_DIM / 2], source, 0.0f, ROPE_DIM / 2);
+    }
+
+    __aicore__ inline void RopePackedCoefficients(uint32_t halfCount, uint64_t mask,
+        uint8_t repeats, const BinaryRepeatParams& broadcast)
+    {
+        // GatherMask has consumed the old f0 before this helper is called.
+        // [0,64)/[64,128) hold cos halves; [128,192)/[192,256) sine halves.
+        PackHalf(0, f2);
+        PackHalf(ROPE_DIM, f2[ROPE_DIM / 2]);
+        PackHalf(2 * ROPE_DIM, f1);
+        PackHalf(3 * ROPE_DIM, f1[ROPE_DIM / 2]);
+        PipeBarrier<PIPE_V>();
+        Mul(f4, f3, f0, mask, repeats, broadcast);
+        Mul(f4[halfCount], f3[halfCount], f0[ROPE_DIM], mask, repeats, broadcast);
+        // Both cos operations must finish reading f3 before sine products
+        // overwrite its two halves. Those writes have disjoint destinations.
+        PipeBarrier<PIPE_V>();
+        Mul(f3[halfCount], f3[halfCount], f0[2 * ROPE_DIM], mask, repeats, broadcast);
+        Mul(f3, f3, f0[3 * ROPE_DIM], mask, repeats, broadcast);
+        PipeBarrier<PIPE_V>();
+        Sub(f4, f4, f3[halfCount], halfCount);
+        Add(f4[halfCount], f4[halfCount], f3, halfCount);
+        PipeBarrier<PIPE_V>();
+    }
+
     __aicore__ inline void SplitAndRope(uint32_t unit)
     {
         const uint32_t tileSize = t.rows >= 32 ? HEAD_TILE : SMALL_HEAD_TILE;
@@ -228,6 +260,8 @@ private:
         const uint32_t row = unit / tiles;
         const uint32_t head = (unit % tiles) * tileSize;
         const uint32_t headCount = t.heads - head < tileSize ? t.heads - head : tileSize;
+        // Preserve round6's retained DMA selection in the mode8 path.
+        const bool overlapInput = t.mode == 6 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64);
         const uint64_t source = static_cast<uint64_t>(row * t.heads + head) * UP_HEAD_WIDTH;
         DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
         DataCopyExtParams copyQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
@@ -239,18 +273,18 @@ private:
         DataCopyPad(yGm[(head * t.rows + row) * NOPE_DIM], b0, writeQ);
         // Mode1 retains the original shared-b0 wait. Mode6 never overwrites
         // b0 here: Q can keep reading it while RoPE is loaded into b3.
-        if (t.mode != 6) Sync<HardEvent::MTE3_MTE2>();
+        if (!overlapInput) Sync<HardEvent::MTE3_MTE2>();
 
         DataCopyExtParams copyRope{static_cast<uint16_t>(headCount), ROPE_DIM * sizeof(bfloat16_t),
             NOPE_DIM * sizeof(bfloat16_t), 0, 0};
-        if (t.mode == 6) DataCopyPad(b3, xGm[source + NOPE_DIM], copyRope, noPad);
+        if (overlapInput) DataCopyPad(b3, xGm[source + NOPE_DIM], copyRope, noPad);
         else DataCopyPad(b0, xGm[source + NOPE_DIM], copyRope, noPad);
         DataCopy(b1, sinGm[row * ROPE_DIM], ROPE_DIM);
         DataCopy(b2, cosGm[row * ROPE_DIM], ROPE_DIM);
         Sync<HardEvent::MTE2_V>();
         const uint32_t count = headCount * ROPE_DIM;
         const uint32_t halfCount = count / 2;
-        if (t.mode == 6) Cast(f0, b3, RoundMode::CAST_NONE, count);
+        if (overlapInput) Cast(f0, b3, RoundMode::CAST_NONE, count);
         else Cast(f0, b0, RoundMode::CAST_NONE, count);
         Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
         Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
@@ -265,22 +299,26 @@ private:
         const uint64_t mask = headCount == 1 ? ROPE_DIM / 2 : ROPE_DIM;
         const uint8_t repeats = headCount <= 2 ? 1 : headCount / 2;
         BinaryRepeatParams broadcast(1, 1, 1, 8, 8, 0);
-        BroadcastHalf(f2);
-        Mul(f4, f3, f0, mask, repeats, broadcast);
-        PipeBarrier<PIPE_V>();
-        BroadcastHalf(f2[ROPE_DIM / 2]);
-        Mul(f4[halfCount], f3[halfCount], f0, mask, repeats, broadcast);
-        PipeBarrier<PIPE_V>();
-        BroadcastHalf(f1);
-        Mul(f3[halfCount], f3[halfCount], f0, mask, repeats, broadcast);
-        PipeBarrier<PIPE_V>();
-        Sub(f4, f4, f3[halfCount], halfCount);
-        PipeBarrier<PIPE_V>();
-        BroadcastHalf(f1[ROPE_DIM / 2]);
-        Mul(f3, f3, f0, mask, repeats, broadcast);
-        PipeBarrier<PIPE_V>();
-        Add(f4[halfCount], f4[halfCount], f3, halfCount);
-        PipeBarrier<PIPE_V>();
+        if (t.mode == 8) {
+            RopePackedCoefficients(halfCount, mask, repeats, broadcast);
+        } else {
+            BroadcastHalf(f2);
+            Mul(f4, f3, f0, mask, repeats, broadcast);
+            PipeBarrier<PIPE_V>();
+            BroadcastHalf(f2[ROPE_DIM / 2]);
+            Mul(f4[halfCount], f3[halfCount], f0, mask, repeats, broadcast);
+            PipeBarrier<PIPE_V>();
+            BroadcastHalf(f1);
+            Mul(f3[halfCount], f3[halfCount], f0, mask, repeats, broadcast);
+            PipeBarrier<PIPE_V>();
+            Sub(f4, f4, f3[halfCount], halfCount);
+            PipeBarrier<PIPE_V>();
+            BroadcastHalf(f1[ROPE_DIM / 2]);
+            Mul(f3, f3, f0, mask, repeats, broadcast);
+            PipeBarrier<PIPE_V>();
+            Add(f4[halfCount], f4[halfCount], f3, halfCount);
+            PipeBarrier<PIPE_V>();
+        }
         Cast(b3, f4, RoundMode::CAST_RINT, count);
         Sync<HardEvent::V_MTE3>();
         DataCopyExtParams writeRope{static_cast<uint16_t>(headCount),
