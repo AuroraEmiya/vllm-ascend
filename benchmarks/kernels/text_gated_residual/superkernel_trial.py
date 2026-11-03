@@ -22,8 +22,9 @@ def main():
     parser.add_argument("--no-timing", action="store_true")
     parser.add_argument("--matrix-backend", choices=("torch", "v3", "v3_nz"), default="v3_nz")
     parser.add_argument("--pad-down", type=int, choices=(0, 640), default=640)
-    parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=1)
+    parser.add_argument("--split-mode", type=int, choices=(1, 2, 3, 4), default=4)
     parser.add_argument("--single-call-graph", action="store_true")
+    parser.add_argument("--batch-activation", type=int, choices=(0,1), default=1)
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     if args.single_call_graph and not args.no_timing:
@@ -51,7 +52,7 @@ def main():
                 instance.prepare_superkernel_packing(args.pad_down if args.matrix_backend == "v3_nz" else 0)
             return instance
         begin = time.perf_counter_ns()
-        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, pad_down=args.pad_down)
+        compiled = instance.compile_superkernel(optimize_options={"constant_codegen": 1, "split_mode": args.split_mode}, optimize=args.mode == "superkernel", matrix_backend=args.matrix_backend, pad_down=args.pad_down, batch_activation=bool(args.batch_activation))
         preparations.append({"runtime_preparation": compiled.preparation, "wrapper_creation_us": (time.perf_counter_ns() - begin) / 1000,
                              "options": compiled.options,
                              "note": "lazy compile/installation occurs on first warmup, outside timing"})
@@ -81,7 +82,7 @@ def main():
         if unknown:
             parser.error(f"unknown cases: {unknown}")
         cases = [c for c in cases if c["id"] in args.case_id]
-    report = {"pad_down": args.pad_down, "matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
+    report = {"batch_activation": args.batch_activation, "pad_down": args.pad_down, "matrix_backend": args.matrix_backend, "mode": args.mode, "source_commit": args.source_commit, "cases": [],
               "compile_preparations": preparations, "grouping_status": "REQUIRES_DEVICE_TRACE",
               "calls_per_graph": 1 if args.single_call_graph else 10,
               "split_mode": args.split_mode,

@@ -15,12 +15,12 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     const auto* a = context->GetAttrs();
     const int64_t requestedMode = *a->GetInt(0), channels = *a->GetInt(1);
     // Internal benchmark reference: identical mix math with legacy tile.
-    const int64_t mode = requestedMode==10?5:(requestedMode==6?2:(requestedMode==8?4:(requestedMode==9?5:requestedMode)));
+    const int64_t mode = requestedMode>=10 && requestedMode<=11?5:(requestedMode==6?2:(requestedMode==8?4:(requestedMode==9?5:requestedMode)));
     const float eps = *a->GetFloat(2);
     if (s.GetDimNum()!=2 || s.GetDim(0)<1 || s.GetDim(0)>2048 ||
         channels!=4 || mode<0 || mode>5 || !std::isfinite(eps) || eps<=0) return ge::GRAPH_FAILED;
     const uint32_t n=s.GetDim(0), d=s.GetDim(1);
-    if ((mode==1 && d!=320) || ((mode==3 || mode==5) && d!=(requestedMode==10?640:336)) || ((mode==0 || mode==2 || mode==4) && d!=10240)) return ge::GRAPH_FAILED;
+    if ((mode==1 && d!=320) || ((mode==3 || mode==5) && d!=(requestedMode>=10?640:336)) || ((mode==0 || mode==2 || mode==4) && d!=10240)) return ge::GRAPH_FAILED;
     const auto gammaSize=context->GetInputShape(1)->GetStorageShape().GetShapeSize();
     const auto gateSize=context->GetInputShape(3)->GetStorageShape().GetShapeSize();
     if ((mode==0 || mode==4) && gammaSize!=1 && gammaSize!=d) return ge::GRAPH_FAILED;

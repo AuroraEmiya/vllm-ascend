@@ -195,7 +195,8 @@ private:
         auto z=f0.Get<float>(),q=f1.Get<float>();
         // Include the16 padding/gate columns in the one vector sequence,
         // then store only the live320 down columns and padded gate16.
-        DataCopy(xb,xG[row*336],all); Fence<HardEvent::MTE2_V>();
+        const DataCopyParams input{static_cast<uint16_t>(rows),21,static_cast<uint16_t>((t.width-336)/16),0};
+        DataCopy(xb,xG[row*t.width],input); Fence<HardEvent::MTE2_V>();
         Cast(z,xb,RoundMode::CAST_NONE,all); Barrier();
         Muls(z,z,1.0f/t.channels,all); Barrier();
         Muls(q,z,1.0f,all); Barrier(); Sigmoid(q,all);

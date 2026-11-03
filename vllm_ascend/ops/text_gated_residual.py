@@ -65,6 +65,7 @@ class TextGatedResidualSerial:
         self._matrix_backend = "torch"
         self._sk_packed_weight = None
         self._sk_pad_down = False
+        self._sk_activation_mode = 10
         self._mix_mode = 2
         self._norm_mode = 4
         self._activation_mode = 5
@@ -115,7 +116,7 @@ class TextGatedResidualSerial:
             self._sk_packed_weight[:PACKED_WIDTH].copy_(self.packed_weight)
         return self
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, pad_down=640):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, pad_down=640, batch_activation=True):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -123,6 +124,7 @@ class TextGatedResidualSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
+        self._sk_activation_mode = 11 if batch_activation else 10
         self.prepare_superkernel_packing(pad_down if matrix_backend == "v3_nz" else 0)
         return CompiledSerialPipeline(self, "text_gated_residual", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
 
@@ -182,7 +184,7 @@ class TextGatedResidualSerial:
             self.dummy_gamma,
             self.dummy,
             self.dummy,
-            1 if self.packed_weight is None else (10 if padded_down else self._activation_mode),
+            1 if self.packed_weight is None else (self._sk_activation_mode if padded_down else self._activation_mode),
             CHANNELS,
             self.eps,
             activation,
