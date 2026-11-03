@@ -65,7 +65,9 @@ HcTilingPlan makeCombineNormTiling(HcTilingData data, DeviceResources resources)
   data.tilingKey = HcTilingKey::NormSingle;
   const uint64_t groupTasks = uint64_t(data.rows) * data.groupCount;
   // Batch only work that would revisit a core. Each norm owns a full H row.
-  const uint64_t groupsPerCore = std::max(uint64_t(1), ceilDivide(groupTasks, resources.vectorCoreCount));
+  const uint64_t targetCores =
+      std::max(uint64_t(1), ceilDivide(resources.vectorCoreCount, kNormTargetOccupancyDivisor));
+  const uint64_t groupsPerCore = std::max(uint64_t(1), ceilDivide(groupTasks, targetCores));
   if (data.hiddenSize % kFloatVectorElements == 0) {
     const auto maxBatch = std::min(uint64_t(kMaxNormGroupBatch), groupsPerCore);
     for (uint32_t batch = static_cast<uint32_t>(maxBatch); batch > 1; --batch) {

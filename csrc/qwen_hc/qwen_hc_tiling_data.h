@@ -15,6 +15,8 @@ constexpr uint32_t kFloatBlockElements = kDmaBlockBytes / kFloatBytes;
 constexpr uint32_t kFloatVectorElements = kVectorRepeatBytes / kFloatBytes;
 constexpr uint32_t kTransferGuardBytes = kVectorRepeatBytes;
 constexpr uint32_t kMaxNormGroupBatch = 4;
+// Experimental work density policy; this is not a hardware core limit.
+constexpr uint32_t kNormTargetOccupancyDivisor = 2;
 constexpr uint32_t kNormScalarElements = kMaxNormGroupBatch * kFloatBlockElements;
 constexpr uint32_t kNormBroadcastElements = kFloatVectorElements;
 constexpr uint32_t kMaxBatchedGateGroups = 8;
