@@ -38,6 +38,7 @@ def run_case(
     norm_buffer_control=False,
     up_format_control=False,
     up_large_control=False,
+    activation_group_control=False,
 ):
     cpu = validation.make_inputs(case)
     refs = validation.oracle(cpu, case)
@@ -53,7 +54,11 @@ def run_case(
         "candidate_extra_device_bytes": torch.npu.memory_allocated() - memory_before,
         "scope": "outside capture, includes packed down/gate and explicit NZ up",
     }
-    if up_large_control:
+    if activation_group_control:
+        control = Candidate(wd, wu, wg)
+        control._activation_mode = 9
+        objects = {"original": control, **objects}
+    elif up_large_control:
         control = Candidate(wd, wu, wg)
         control._nz_up_max_tokens = 64
         objects = {"original": control, **objects}
@@ -78,7 +83,9 @@ def run_case(
         "input_metadata": [metadata(v) if v is not None else None for v in inputs],
         "timing": None,
         "preparation": preparation,
-        "comparison": "same-binary NZ-up cutoff64 / candidate"
+        "comparison": "same-binary activation group4 / candidate group8"
+        if activation_group_control
+        else "same-binary NZ-up cutoff64 / candidate"
         if up_large_control
         else "same-binary ND-up / candidate"
         if up_format_control
@@ -179,6 +186,8 @@ def main():
     parser.add_argument("--norm-buffer-control", action="store_true")
     parser.add_argument("--up-format-control", action="store_true")
     parser.add_argument("--up-large-control", action="store_true")
+    parser.add_argument("--activation-group-control", action="store_true")
+    parser.add_argument("--activation-boundaries", action="store_true")
     args = parser.parse_args()
     if (
         sum(
@@ -187,6 +196,7 @@ def main():
                 args.norm_buffer_control,
                 args.up_format_control,
                 args.up_large_control,
+                args.activation_group_control,
                 args.candidate_only,
             )
         )
@@ -204,6 +214,13 @@ def main():
     torch.npu.set_device(0)
     torch.npu.config.allow_internal_format = True
     cases = json.loads(Path(__file__).with_name("cases.json").read_text())
+    if args.activation_boundaries:
+        if args.case_id:
+            parser.error("boundary guards use their separate fixed three cases")
+        cases = [
+            dict(cases[0], id=f"guard-packed-b{b}", B=b, role="additional_protection", seed=20261200 + b)
+            for b in (255, 256, 257)
+        ]
     if args.case_id:
         cases = [c for c in cases if c["id"] in args.case_id]
         if len(cases) != len(set(args.case_id)):
@@ -211,7 +228,9 @@ def main():
     result = {
         "source_commit": actual,
         "baseline_wrapper": (
-            "current Candidate with NZ cutoff64; only B>64 up format differs"
+            "current Candidate with packed mode9; only large-batch group size differs"
+            if args.activation_group_control
+            else "current Candidate with NZ cutoff64; only B>64 up format differs"
             if args.up_large_control
             else "current Candidate with ND up; only selected up weight format differs"
             if args.up_format_control
@@ -243,6 +262,7 @@ def main():
                 args.norm_buffer_control,
                 args.up_format_control,
                 args.up_large_control,
+                args.activation_group_control,
             )
         except Exception:
             row = {"case": case, "status": "INVALID", "timing": None, "error": traceback.format_exc()}
