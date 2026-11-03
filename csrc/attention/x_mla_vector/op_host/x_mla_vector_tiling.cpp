@@ -46,5 +46,13 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     context->GetWorkspaceSizes(1)[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
-IMPL_OP_OPTILING(XMlaVector).Tiling(TilingFunc);
+// Static op_compiler invokes TilingParse before Tiling. This operator has no
+// compile-time state; bypass the generic auto-tiling parser, which expects a
+// TBE _pattern that an independent Ascend C operator does not provide.
+struct XMlaVectorCompileInfo {};
+static ge::graphStatus TilingParse(gert::TilingParseContext*)
+{
+    return ge::GRAPH_SUCCESS;
+}
+IMPL_OP_OPTILING(XMlaVector).Tiling(TilingFunc).TilingParse<XMlaVectorCompileInfo>(TilingParse);
 }  // namespace optiling
