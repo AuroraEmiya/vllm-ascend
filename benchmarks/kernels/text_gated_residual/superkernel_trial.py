@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--no-timing", action="store_true")
-    parser.add_argument("--matrix-backend", choices=("torch", "v3"), default="v3")
+    parser.add_argument("--matrix-backend", choices=("torch", "v3", "v3_nz"), default="v3_nz")
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(4)

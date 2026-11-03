@@ -101,7 +101,7 @@ class TextGatedResidualSerial:
                     raise RuntimeError("refresh changed the captured up weight address")
         return self
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3", optimize_options=None):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -151,7 +151,7 @@ class TextGatedResidualSerial:
             inv_rms,
             empty,
         )
-        if self._matrix_backend == "v3":
+        if self._matrix_backend in ("v3", "v3_nz"):
             from vllm_ascend.ops.serial_superkernel import serial_matmul_v3
 
             down_weight = self.source_down if self.packed_weight is None else self.packed_weight
@@ -179,8 +179,8 @@ class TextGatedResidualSerial:
             else self.w_up
         )
         up = (
-            serial_matmul_v3(activation, self.w_up.t(), transpose_b=True)
-            if self._matrix_backend == "v3" else torch.matmul(activation, up_weight)
+            serial_matmul_v3(activation, self.up_nz if self._matrix_backend == "v3_nz" else self.w_up.t(), transpose_b=True)
+            if self._matrix_backend in ("v3", "v3_nz") else torch.matmul(activation, up_weight)
         )
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
         torch.ops._C_ascend.npu_tgr_vector_out(
