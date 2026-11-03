@@ -64,6 +64,7 @@ class TextGatedResidualSerial:
         self.eps = eps
         self._mix_mode = 2
         self._norm_mode = 4
+        self._activation_mode = 5
         self._use_nz_up = True
         self._nz_up_max_tokens = MAX_TOKENS
         self.up_nz = None
@@ -148,7 +149,7 @@ class TextGatedResidualSerial:
             self.dummy_gamma,
             self.dummy,
             self.dummy,
-            1 if self.packed_weight is None else 5,
+            1 if self.packed_weight is None else self._activation_mode,
             CHANNELS,
             self.eps,
             activation,
