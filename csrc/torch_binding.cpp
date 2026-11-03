@@ -3217,7 +3217,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         );
     ops.impl("npu_add_rms_norm_bias", torch::kPrivateUse1, &vllm_ascend::npu_add_rms_norm_bias);
     ops.def("mla_prolog_vector_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
-            "Tensor sine, Tensor cosine, Tensor index, int mode, int rows, int heads, int cache_slots, "
+            "Tensor sine, Tensor cosine, Tensor index, int stage_mode, int rows, int heads, int cache_slots, "
             "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "
             "Tensor(c!) kv_cache, Tensor(d!) kr_cache) -> ()");
     ops.impl("mla_prolog_vector_out", torch::kPrivateUse1, &vllm_ascend::mla_prolog_vector_out);
