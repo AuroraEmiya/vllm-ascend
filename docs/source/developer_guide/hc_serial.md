@@ -1,7 +1,7 @@
 # Qwen3.8 Flash Next HC serial Ascend C path
 
 The implementation provides three Ascend C Vector kernels and two independent
-public PyTorch linear calls on A3. It implements the Qwen4Exp-named HC path used
+public torch.matmul calls on A3. It implements the Qwen4Exp-named HC path used
 by Qwen3.8 Flash Next. Down and Up stay separate, with a BF16 SiLU stage between
 them. This development implementation does not claim the 1.5x performance goal.
 
@@ -79,22 +79,49 @@ cmake -S . -B build-hc \
 cmake --build build-hc --target vllm_ascend_hc_C -j4
 ```
 
-Load vllm_ascend_C or vllm_ascend_hc_C before calling
-vllm_ascend.ops.qwen_hc_serial.combine_and_mix. The explicit
-combine_and_mix_module adapter accepts an unquantized replicated GatedResidual.
-The default model path is still Triton; automatic model activation and a full
-model-serving run are not part of this validation.
+Load vllm_ascend_C or vllm_ascend_hc_C before using the selected development
+entry in vllm_ascend.ops.qwen_hc_serial_matmul:
 
-The final path uses two F.linear calls and has no weight packing, hidden cache,
-forward compilation, or prepared-weight mode. Slower transposed and singleton
-matmul experiments remain available through historical commits and local
-iteration records.
+```python
+from vllm_ascend.ops.qwen_hc_serial_matmul import PreparedHCWeights
+
+# Explicit loading stage, before warmup and Graph capture.
+projection = PreparedHCWeights(down_weight, up_weight)
+combined, block_input, next_injection = projection(
+    residual, block_output, previous_injection, norm_weight,
+    eps=1e-6, hc_count=hc_count, use_combine=use_combine,
+)
+```
+
+The object prepares ND and NZ snapshots of Down and an NZ snapshot of Up using
+public Torch-NPU APIs. Down selects NZ for M divisible by16 and ND otherwise;
+Up uses NZ. This policy follows separate measurements for the two matrix
+geometries on the tested A3 software stack. There is no projection merge,
+per-replay packing, hidden cache, or forward compilation. Rebuild the object
+and recapture after replacing projection weights. Original weights remain
+read-only and baseline implementations always use them directly.
+
+Preparation time and physical storage are separate reported costs. Retaining
+both Down layouts adds one Down-weight copy to the prepared storage. The
+original model weights, if retained, consume additional storage.
+
+This development adapter requires the process default internal-format policy
+False and serialized eager/capture calls. It enables the format policy within
+candidate preparation/forward and restores False before baseline calls. It
+materializes ND projection outputs before the owned Vector kernels when
+needed; all device conversion tasks belong to full-path profiling. Captured
+Graph replay executes the prepared tasks without repeating Python policy
+changes. Concurrent model-serving integration has not been validated.
+
+The original qwen_hc_serial F.linear entry and the unprepared matmul entry remain
+available as controls. The default model path is still Triton; this change does
+not activate the prepared path automatically in a running model.
 
 CombineNorm batches two HC branches for M16 and four for M32/64 when the H/K/UB
 conditions allow it; other inputs use the per-branch path. BF16 combine is
 preserved before RMS. A3 memory-vector MulAddDst shortens combine/affine work.
-Gate batches HC branches and uses a two-level FP32 reduction for K4. M64 SiLU
-batches two aligned rows. Generic tail, stride, shared-weight, and larger-K
+Gate batches HC branches and uses a two-level FP32 reduction for K4. SiLU uses a UB-bounded batch derived from row waves and rank; M64
+batches two aligned rows and larger M can batch more rows. Generic tail, stride, shared-weight, and larger-K
 fallbacks remain available. No C calls or V stages are reordered across C.
 
 ## Device correctness and Graph timing
@@ -104,16 +131,16 @@ Torch2.10.0, and torch_npu2.10.0.post7. Use fresh build directories after source
 changes. Inspect the actual binary identity before measuring.
 
 ```bash
-python3 tests/manual/test_qwen4_exp_hc_serial_npu.py \
+python3 tests/manual/test_qwen_hc_optimization_npu.py \
   --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
   --mode validate --out boundary-results.json
-python3 tests/manual/test_qwen4_exp_hc_serial_npu.py \
+python3 tests/manual/test_qwen_hc_optimization_npu.py \
   --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
-  --cases tests/manual/qwen_hc_serial_cases.json \
+  --cases tests/manual/qwen_hc_decode_generalization_cases.json \
   --mode validate --out decode-correctness.json
-python3 tests/manual/test_qwen4_exp_hc_serial_npu.py \
+python3 tests/manual/test_qwen_hc_optimization_npu.py \
   --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
-  --cases tests/manual/qwen_hc_serial_cases.json \
+  --cases tests/manual/qwen_hc_decode_generalization_cases.json \
   --mode bench --out decode-performance.json
 ```
 
@@ -127,7 +154,10 @@ BF16 accuracy gates were fixed before device tests: atol=rtol=2^-6, matched
 ratio>=0.99, maximum absolute error<=1.0, and matching special values.
 
 The original pinned Triton file supplies the full serial baseline; its SHA256
-is checked before loading. Both paths use the same original projection weights.
+is checked before loading. Candidate snapshots preserve the original BF16
+weight values; the original Triton and Triton-matmul control use original
+weights and the default format policy. The test records preparation, physical
+formats/storage, value equality, and rebuilding after a weight change.
 Timing uses 25 alternating-order samples, eight complete calls per Graph, and
 four replays per sample, normalized to one full call. Preserve all raw samples.
 The goal is baseline latency / candidate latency >=1.5 for every case.
@@ -138,15 +168,16 @@ Capture full Graph executions with msprof separately from event timing:
 
 ```bash
 msprof --output=profiles --runtime-api=on --task-time=on --aicpu=on \
-  --application="python3 tests/manual/profile_hc_batch.py \
+  --application="python3 tests/manual/test_qwen_hc_optimization_npu.py \
   --extension build-hc/vllm_ascend_hc_C.cpython-311-aarch64-linux-gnu.so \
-  --cases tests/manual/qwen_hc_serial_cases.json --out profile-manifest.json"
+  --cases batch-cases.json --mode profile --out profile-manifest.json"
 python3 tests/manual/summarize_hc_batch.py profiles \
   --manifest profile-manifest.json --out cv-share.json
 ```
 
-The application keeps all sixteen sequential case/implementation Graphs alive
-to prevent model-ID reuse. Each has five warm and sixteen retained replays.
+Split the 52-point manifest into batches of at most eight cases. Profile one
+batch per process; the application keeps all three implementations' Graphs alive
+to prevent model-ID reuse. Preserve each batch manifest and raw CSV. Each has five warm and sixteen retained replays.
 The classifier maps actual model IDs, ordered windows and complete V-C-V-C-V
 sequences to the manifest. It includes every execution task in each call,
 including layout/copy tasks. Unknown or incomplete sequences invalidate the
@@ -157,3 +188,28 @@ the mean of all other execution task sums in the same calls.
 C/(C+V)=100*C_total_us/(C_total_us+V_total_us). This is a task-duration share,
 not Cube hardware utilization or C/Graph latency. Profiler task sums and complete
 Graph event time remain separate metrics.
+
+## Optimization method and validation scope
+
+The optimization process uses CANNBot as a method and knowledge library:
+
+- Model Down and Up independently by M/N/K, dtype and input layout. Measure the
+  complete path before changing tiling or public matrix entry points.
+- Use the arch22/A3 route for UB capacity, branch/row batching and memory-vector
+  operations. Preserve each branch reduction and every BF16 boundary.
+- Rank candidates by measured stage costs, data reuse, transfer bytes and buffer
+  lifetimes. Record rejected candidates and all auxiliary execution tasks.
+- Keep Graph event latency separate from full msprof task sums. Verify the
+  original complete baseline and an additional same-public-API control.
+
+The frozen generalization manifest covers 26 explicit M values times two
+phases at H2560/K4/R320/BF16. It tests one model geometry with synthetic
+operands and does not estimate production traffic frequency or serving
+throughput. Nine boundary cases additionally cover nonaligned dimensions,
+strides, missing injection, shared norm, K2/6/8, empty rows and saturation;
+the default boundary invocation covers six, and the additional three use
+qwen_hc_tiling_boundaries.json. No cross-model performance claim is made.
+
+Full format.sh ci attempts are preserved separately from focused checks and
+successful HC-only builds. A full extension build and model-serving activation
+are separate from this device-validated HC development target.

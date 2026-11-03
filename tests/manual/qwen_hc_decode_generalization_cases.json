@@ -1,0 +1,1319 @@
+{
+  "job_id": "test-qwen38flashnext-hc-matmul",
+  "created_at": "2026-11-03T01:49:02.221270+00:00",
+  "fixed_geometry": {
+    "h": 2560,
+    "hc_count": 4,
+    "r": 320,
+    "d": 10240,
+    "dtype": "bfloat16",
+    "norm_weight": "per_branch_D",
+    "previous_injection": true,
+    "input_layout": "contiguous",
+    "eps": 1e-06
+  },
+  "m_values": [
+    1,
+    2,
+    3,
+    4,
+    7,
+    8,
+    9,
+    15,
+    16,
+    17,
+    31,
+    32,
+    33,
+    39,
+    40,
+    41,
+    63,
+    64,
+    65,
+    96,
+    127,
+    128,
+    129,
+    192,
+    255,
+    256
+  ],
+  "cases": [
+    {
+      "id": "decode-m1-intermediate",
+      "m": 1,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 13434880,
+      "coverage_tags": [
+        "old-protected-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m1-final",
+      "m": 1,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 13107200,
+      "coverage_tags": [
+        "old-protected-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m2-intermediate",
+      "m": 2,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 26869760,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m2-final",
+      "m": 2,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 26214400,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m3-intermediate",
+      "m": 3,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 40304640,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m3-final",
+      "m": 3,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 39321600,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m4-intermediate",
+      "m": 4,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 53739520,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m4-final",
+      "m": 4,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 52428800,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m7-intermediate",
+      "m": 7,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 94044160,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m7-final",
+      "m": 7,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 91750400,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m8-intermediate",
+      "m": 8,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 107479040,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m8-final",
+      "m": 8,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 104857600,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m9-intermediate",
+      "m": 9,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 120913920,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m9-final",
+      "m": 9,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 117964800,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m15-intermediate",
+      "m": 15,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 201523200,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m15-final",
+      "m": 15,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 196608000,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m16-intermediate",
+      "m": 16,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 214958080,
+      "coverage_tags": [
+        "old-protected-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m16-final",
+      "m": 16,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 209715200,
+      "coverage_tags": [
+        "old-protected-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m17-intermediate",
+      "m": 17,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 228392960,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m17-final",
+      "m": 17,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 222822400,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m31-intermediate",
+      "m": 31,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 416481280,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m31-final",
+      "m": 31,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 406323200,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m32-intermediate",
+      "m": 32,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 429916160,
+      "coverage_tags": [
+        "old-protected-M"
+      ]
+    },
+    {
+      "id": "decode-m32-final",
+      "m": 32,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 419430400,
+      "coverage_tags": [
+        "old-protected-M"
+      ]
+    },
+    {
+      "id": "decode-m33-intermediate",
+      "m": 33,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 443351040,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m33-final",
+      "m": 33,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 432537600,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m39-intermediate",
+      "m": 39,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 523960320,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m39-final",
+      "m": 39,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 511180800,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m40-intermediate",
+      "m": 40,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 537395200,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m40-final",
+      "m": 40,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 524288000,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m41-intermediate",
+      "m": 41,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 550830080,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m41-final",
+      "m": 41,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 537395200,
+      "coverage_tags": [
+        "new-M",
+        "dispatch-boundary"
+      ]
+    },
+    {
+      "id": "decode-m63-intermediate",
+      "m": 63,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 846397440,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m63-final",
+      "m": 63,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 825753600,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m64-intermediate",
+      "m": 64,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 859832320,
+      "coverage_tags": [
+        "old-protected-M"
+      ]
+    },
+    {
+      "id": "decode-m64-final",
+      "m": 64,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 838860800,
+      "coverage_tags": [
+        "old-protected-M"
+      ]
+    },
+    {
+      "id": "decode-m65-intermediate",
+      "m": 65,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 873267200,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m65-final",
+      "m": 65,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 851968000,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m96-intermediate",
+      "m": 96,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1289748480,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m96-final",
+      "m": 96,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1258291200,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m127-intermediate",
+      "m": 127,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1706229760,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m127-final",
+      "m": 127,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1664614400,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m128-intermediate",
+      "m": 128,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1719664640,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m128-final",
+      "m": 128,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1677721600,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m129-intermediate",
+      "m": 129,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1733099520,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m129-final",
+      "m": 129,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 1690828800,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m192-intermediate",
+      "m": 192,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 2579496960,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m192-final",
+      "m": 192,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 2516582400,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m255-intermediate",
+      "m": 255,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 3425894400,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m255-final",
+      "m": 255,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 3342336000,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m256-intermediate",
+      "m": 256,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": true,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        336,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 3439329280,
+      "coverage_tags": [
+        "new-M"
+      ]
+    },
+    {
+      "id": "decode-m256-final",
+      "m": 256,
+      "h": 2560,
+      "k": 4,
+      "r": 320,
+      "eps": 1e-06,
+      "use_combine": false,
+      "seed": 1701,
+      "source": "synthetic legal-M sweep with reused Qwen3.8-Flash-Next structural geometry",
+      "evidence_level": "not a production traffic distribution; new runtime coverage pending",
+      "down_shape": [
+        320,
+        10240
+      ],
+      "up_shape": [
+        10240,
+        320
+      ],
+      "effective_c_flops": 3355443200,
+      "coverage_tags": [
+        "new-M"
+      ]
+    }
+  ],
+  "limitations": [
+    "synthetic M coverage, not deployment frequency or maximum concurrency",
+    "eps is explicit test setting, deployment eps unknown",
+    "shared norm and absent injection are not swept; old boundary tests remain separate",
+    "does not establish MTP deployed geometry or full model-serving behavior"
+  ],
+  "source_evidence": [
+    "../dev-qwen38flashnext-hc/shapes/manifest.json",
+    "../dev-qwen38flashnext-hc/source-evidence/upstream.py"
+  ]
+}
