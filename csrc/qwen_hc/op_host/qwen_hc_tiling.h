@@ -5,16 +5,16 @@
 
 namespace vllm_ascend::hc {
 struct DeviceResources {
-    uint32_t vectorCoreCount;
-    uint64_t ubSizeBytes;
+  uint32_t vectorCoreCount;
+  uint64_t ubSizeBytes;
 };
 struct HcTilingPlan {
-    HcTilingData data;
-    uint64_t ubBytes;
+  HcTilingData data;
+  uint64_t ubBytes;
 };
 DeviceResources queryDeviceResources(int32_t deviceIndex);
 HcTilingPlan makeCombineNormTiling(HcTilingData data, DeviceResources resources);
 HcTilingPlan makeSiluTiling(HcTilingData data, DeviceResources resources);
 HcTilingPlan makeGateMixTiling(HcTilingData data, DeviceResources resources);
 uint64_t requiredUbBytes(const HcTilingData& data);
-} // namespace vllm_ascend::hc
+}  // namespace vllm_ascend::hc

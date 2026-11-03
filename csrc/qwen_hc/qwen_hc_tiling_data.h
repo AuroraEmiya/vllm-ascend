@@ -21,25 +21,23 @@ constexpr uint32_t kMaxBatchedGateGroups = 8;
 constexpr uint32_t kMaxDmaBlockCount = 4095;
 constexpr uint32_t kMaxSupportedHiddenSize = 8192;
 
-enum class HcTilingKey : uint32_t {
-    NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched
-};
+enum class HcTilingKey : uint32_t { NormSingle, NormBatched, SiluSingle, SiluBatched, GateSequential, GateBatched };
 
 // Host computes the complete launch plan. Device code does no capacity guessing.
 struct HcTilingData {
-    uint32_t rows = 0;
-    uint32_t hiddenSize = 0;
-    uint32_t groupCount = 0;
-    uint32_t residualStride = 0;
-    uint32_t blockStride = 0;
-    uint32_t injectionStride = 0;
-    uint32_t sharedWeight = 0;
-    uint32_t hasInjection = 0;
-    uint32_t tileSize = 0;
-    uint32_t rowBatch = 1;
-    uint32_t taskCount = 0;
-    uint32_t blockDim = 0;
-    HcTilingKey tilingKey = HcTilingKey::NormSingle;
-    float eps = 0;
+  uint32_t rows = 0;
+  uint32_t hiddenSize = 0;
+  uint32_t groupCount = 0;
+  uint32_t residualStride = 0;
+  uint32_t blockStride = 0;
+  uint32_t injectionStride = 0;
+  uint32_t sharedWeight = 0;
+  uint32_t hasInjection = 0;
+  uint32_t tileSize = 0;
+  uint32_t rowBatch = 1;
+  uint32_t taskCount = 0;
+  uint32_t blockDim = 0;
+  HcTilingKey tilingKey = HcTilingKey::NormSingle;
+  float eps = 0;
 };
-} // namespace vllm_ascend::hc
+}  // namespace vllm_ascend::hc
