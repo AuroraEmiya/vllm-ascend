@@ -43,6 +43,76 @@ class TestMlaMatmulTrialContract(unittest.TestCase):
         self.assertIn("mode8 is never selected", plan["protocol"]["native_comparison"])
         self.assertIn("no native rebuild", plan["protocol"]["native_comparison"])
 
+    def test_norm_b16_plan_keeps_exact_round7_control_and_all15_cases(self):
+        result = subprocess.run(
+            [sys.executable, str(HARNESS), "--plan", "--comparison", "norm-overlap-b16", "--mode", "paired"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["protocol"]["new_budget_round"], 10)
+        self.assertEqual(plan["pinned_baseline"]["baseline_commit"], TRIAL.NORM_OVERLAP_BASE_COMMIT)
+        self.assertEqual(plan["pinned_baseline"]["baseline_canonical_sha256"], TRIAL.NORM_OVERLAP_BASE_SHA256)
+        self.assertEqual(len(plan["selected_cases"]), 15)
+        self.assertIn("decode-b16", [case["id"] for case in plan["selected_cases"]])
+        self.assertIn("guard-tail-b31", [case["id"] for case in plan["selected_cases"]])
+        self.assertEqual(plan["protocol"]["calls_per_graph"], 10)
+        self.assertEqual(plan["protocol"]["paired_ab_ba_samples"], 20)
+
+    def test_single_kv_unit_orders_shared_b3_and_input_reuse_and_drains_output(self):
+        # Engines have FIFO order; only event edges order separate engines.
+        # No incoming event or previous output is assumed at kernel entry.
+        def model(input_event=True, output_event=True, cast_event=True, drain=True):
+            operations, before, tails = {}, {}, {}
+
+            def add(name, engine, accesses, dependencies=()):
+                operations[name] = accesses
+                before[name] = set(dependencies)
+                if engine in tails:
+                    before[name].add(tails[engine])
+                tails[engine] = name
+
+            add("kv-in", "MTE2", {"b0": "W", "b1": "W"})
+            add("kv-cast", "V", {"b0": "R", "b1": "R", "f0": "W"}, ["kv-in"])
+            add("kv-math", "V", {"f0": "W"})
+            add("kv-out-cast", "V", {"f0": "R", "b3": "W"})
+            add("kv-out", "MTE3", {"b3": "R"}, ["kv-out-cast"] if cast_event else [])
+            add("kr-in", "MTE2", {"b0": "W", "b1": "W", "b2": "W"}, ["kv-out-cast"] if input_event else [])
+            add("kr-cast", "V", {"b0": "R", "b1": "R", "b2": "R", "f0": "W"}, ["kr-in"])
+            add("kr-math", "V", {"f0": "W"})
+            add("kr-out-cast", "V", {"f0": "R", "b3": "W"}, ["kv-out"] if output_event else [])
+            add("kr-out", "MTE3", {"b3": "R"}, ["kr-out-cast"] if cast_event else [])
+            add("return", "S", {}, ["kr-out"] if drain else [])
+            for name in before:
+                pending = list(before[name])
+                while pending:
+                    predecessor = pending.pop()
+                    for ancestor in before[predecessor] - before[name]:
+                        before[name].add(ancestor)
+                        pending.append(ancestor)
+            conflicts = []
+            names = list(operations)
+            for index, left in enumerate(names):
+                for right in names[index + 1 :]:
+                    shared = operations[left].keys() & operations[right].keys()
+                    writes = [
+                        buffer for buffer in shared if "W" in (operations[left][buffer], operations[right][buffer])
+                    ]
+                    if writes and left not in before[right] and right not in before[left]:
+                        conflicts.append((left, right, writes))
+            return conflicts, before
+
+        conflicts, before = model()
+        self.assertEqual(conflicts, [])
+        self.assertNotIn("kv-out", before["kr-in"])
+        self.assertIn("kv-out", before["kr-out-cast"])
+        self.assertIn("kr-out", before["return"])
+        self.assertTrue(any("b3" in c[2] for c in model(output_event=False)[0]))
+        self.assertTrue(any("b0" in c[2] for c in model(input_event=False)[0]))
+        self.assertTrue(any("b3" in c[2] for c in model(cast_event=False)[0]))
+        self.assertNotIn("kr-out", model(drain=False)[1]["return"])
+
     def test_subset_keeps_frozen_manifest_order(self):
         manifest = TRIAL.pinned_inputs()["manifest"]
         result = TRIAL.select_cases(manifest, ["decode-b128", "decode-b1", "decode-b1"])
