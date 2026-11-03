@@ -213,7 +213,16 @@ class MlaPrologSerial:
         )
 
         if use_v3:
-            query = serial_matmul_v3(head_q, self.weight_uk).transpose(0, 1).contiguous()
+            head_product = serial_matmul_v3(head_q, self.weight_uk)
+            if rows == 1:
+                query = head_product.view(rows, self.heads, KV_RANK)
+            else:
+                query = head_product.new_empty((rows, self.heads, KV_RANK))
+                self._vector(
+                    head_product.view(self.heads * rows, KV_RANK),
+                    self.dummy, self.dummy, self.dummy, sine, cosine, index,
+                    2, rows, slots, query, self.dummy, cache_kv_flat, cache_kr_flat,
+                )
         elif rows == 1:
             query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
         else:

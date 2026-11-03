@@ -78,7 +78,7 @@ public:
         }
         // The last unit has no following reuse fence. Explicitly drain its
         // pipelined mode's output transfers before leaving the V stage.
-        if (t.mode == 6 || t.mode == 7 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64))
+        if (t.mode == 2 || t.mode == 6 || t.mode == 7 || (t.mode == 8 && t.rows >= 32 && t.rows <= 64))
             Sync<HardEvent::MTE3_S>();
     }
 
