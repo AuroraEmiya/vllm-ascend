@@ -21,6 +21,14 @@
       "k": 8,
       "r": 32,
       "shared_norm": true
+    },
+    {
+      "id": "sequential-gate-k9",
+      "m": 3,
+      "h": 65,
+      "k": 9,
+      "r": 17,
+      "strided": true
     }
   ]
 }

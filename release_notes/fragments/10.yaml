@@ -1,0 +1,9 @@
+pr: 10
+entries:
+  - category: performance
+    text: >-
+      The optional HC serial Ascend C path now derives core counts and UB budgets
+      from the current device and uses capacity-bounded branch, row and column
+      tiling for its Vector stages. Two independent public matrix calls and
+      BF16 stage boundaries are preserved.
+    hardware: [A3]
