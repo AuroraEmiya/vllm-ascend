@@ -143,13 +143,7 @@ class MlaPrologSerial:
         x = token_x.view(rows, self.hidden)
 
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
-        down_q_kv = (
-            torch_npu.npu_grouped_matmul(
-                [x], [self._matrix_nd[0].t()], split_item=0, group_type=-1, output_dtype=torch.bfloat16
-            )[0]
-            if use_linear
-            else torch.matmul(x, self._matrix_nz[0])
-        )
+        down_q_kv = torch.matmul(x, self._matrix_nd[0].t()) if use_linear else torch.matmul(x, self._matrix_nz[0])
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
         self._vector(
             down_q_kv,
@@ -159,7 +153,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            3,
+            4,
             rows,
             slots,
             normalized_q,
