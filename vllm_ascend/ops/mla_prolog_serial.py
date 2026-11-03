@@ -124,7 +124,7 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def compile_superkernel(self, *, optimize=True, matrix_backend="v3"):
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3", optimize_options=None):
         """Compile the full pipeline; warm up before outer Graph capture.
 
         ``optimize=False`` selects the static-kernel control. Weight refresh
@@ -132,7 +132,7 @@ class MlaPrologSerial:
         """
         from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
 
-        return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend)
+        return CompiledSerialPipeline(self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options)
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
         if token_x.ndim != 3 or token_x.shape[1] != 1 or not 1 <= token_x.shape[0] <= MAX_BATCH:

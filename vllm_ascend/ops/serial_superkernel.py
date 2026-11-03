@@ -21,7 +21,7 @@ class CompiledSerialPipeline:
     every child kernel was grouped; inspect the device trace for that claim.
     """
 
-    def __init__(self, pipeline, scope, *, optimize=True, matrix_backend="v3"):
+    def __init__(self, pipeline, scope, *, optimize=True, matrix_backend="v3", optimize_options=None):
         if matrix_backend not in ("torch", "v3"):
             raise ValueError("matrix_backend must be torch or v3")
         if matrix_backend == "v3" and not hasattr(torch.ops._C_ascend, "serial_matmul_v3_out"):
@@ -34,6 +34,7 @@ class CompiledSerialPipeline:
         if "LOCAL_WORLD_SIZE" not in os.environ:
             os.environ["LOCAL_WORLD_SIZE"] = "1"
         self.optimize = optimize
+        self.optimize_options = copy.deepcopy(optimize_options or {})
         self.pipeline = pipeline
         self.scope = scope
         self.preparation = {"first_call_wall_us_compile_install_execute": None,
@@ -48,7 +49,8 @@ class CompiledSerialPipeline:
         }
         # Both controls compile the same SK-ready children; only the outer
         # Graph grouping is disabled for optimize=False.
-        self.options["super_kernel_optimize_options"] = {"dcci_after_kernel_end": [".*"]}
+        # Default CANN child cache handling; whole-cache flush is opt-in.
+        self.options["super_kernel_optimize_options"] = self.optimize_options
 
         def forward(*args, **kwargs):
             torch.npu.super_kernel_scope_begin(scope)
@@ -79,7 +81,7 @@ class CompiledSerialPipeline:
         if self.optimize:
             torch.npu.synchronize()
             start = time.perf_counter_ns()
-            graph.super_kernel_optimize(optimize_options={"dcci_after_kernel_end": [".*"]})
+            graph.super_kernel_optimize(optimize_options=self.optimize_options)
             torch.npu.synchronize()
             self.preparation["outer_graph_optimize_wall_us"].append((time.perf_counter_ns() - start) / 1000)
         return graph
