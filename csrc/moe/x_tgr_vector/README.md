@@ -1,7 +1,7 @@
 # TextGatedResidual serial V stages
 
 This operator is part of the serial TextGatedResidual pipeline in
-`vllm_ascend/ops/text_gated_residual.py`. Matrix work uses public `torch.mm`.
+`vllm_ascend/ops/text_gated_residual.py`. Matrix work uses public `torch.matmul`.
 The independently written Ascend C operator implements three vector stages:
 group RMSNorm with optional raw gamma, SiLU of down projection divided by four,
 and gated branch mixing with optional write gate.
@@ -20,11 +20,16 @@ No inputs or caller-owned state are modified.
 
 With a gate, the prepared class packs the down and gate weights into BF16
 `[336,10240]`: 320 down rows, 4 gate rows, and 12 zero padding rows. A single
-public `torch.mm` computes these projections, then owned V computes SiLU and
+public `torch.matmul` computes these projections, then owned V computes SiLU and
 the write gate. Preparation allocates 6,881,280 extra bytes and is measured by
-the harness. The up projection remains a separate public `torch.mm`.
+the harness. The up projection remains a separate public `torch.matmul` with
+an explicitly prepared source-oriented BF16 FRACTAL_NZ weight, format29. Enable
+`torch.npu.config.allow_internal_format` before NPU construction. This adds
+6,553,600 persistent bytes; total gated preparation is13,434,880 bytes excluding
+source weights and allocator rounding. Refresh temporarily creates one NZ up
+weight, then copies it to the captured address outside forward.
 
-After changing down/gate weight contents, the caller must invoke
+After changing down, up or gate weight contents, the caller must invoke
 `prepared.refresh_weights_()` before replay, on the same stream or with an
 explicit stream dependency. The refresh copies only weights into the existing
 prepared address; input-dependent computation remains inside every Graph.
@@ -37,7 +42,11 @@ The mix stage loads the four branch segments with a strided DMA, evaluates
 their sigmoids together, then accumulates branch products in FP32 branch order.
 Each core owns disjoint token/hidden tiles. Its UB demand is `52*tile + 64`
 bytes, at most 133,184 bytes; tiling queries the available UB and reduces the
-tile if needed. Norm uses 51,232 bytes. DMA/vector dependencies use
+tile if needed. Norm uses51,232 bytes, or71,712 bytes for its two-buffer
+inference path when at least two branch rows per AIV are available. Gamma is
+reused within each launch when striding preserves the branch, with no cache
+across replays. Packed activation uses2/4/8 rows at token thresholds80/160/256
+respectively; its8-row scratch is42,560 bytes. DMA/vector dependencies use
 paired hardware events, with vector barriers between dependent operations.
 Inference without auxiliary outputs uses basic FP32 `Rsqrt` for its internal
 scale and omits the unused inverse-RMS allocation and scalar global-memory
@@ -58,6 +67,21 @@ output DMA can overlap because their BF16 buffers are disjoint. A `V_MTE2`
 event protects input/gamma reuse, and `MTE3_V` protects the output buffer before
 the next cast. The loop drains its final output DMA. Auxiliary mode and a
 single row per core retain the original `MTE3_MTE2` ordering.
+
+Matrix activations, weights and outputs stay BF16 in global memory. FP32
+numerical work is inside the own V UB buffers and is fully timed. Public raw
+gamma and optional inverse RMS are FP32 by contract. FP64 is used only for the
+independent CPU oracle outside capture. There is no BF16-to-FP32 activation
+promotion before a matrix call.
+
+The additional ten-round budget is exhausted. The retained compute matches
+round9. Round10 logical-contiguous ND down was rejected: at B32/64 its down
+tasks took46.957/36.917us and full Graph regressed; the actual kernel remained
+MatMulV2. Its extra logical buffer is absent from this selected implementation.
+Historical trial CLIs are reproduced from their identified trial commits;
+`matrix_trial.py --candidate-only` validates the retained current pipeline.
+Per-round successes, failures, selected-source final verification and fresh
+fused ratios are in the project output report, not combined across runs.
 
 The dimensions come from the public Qwen3.8-Flash-Next configuration. The token
 counts in the benchmark are synthetic and do not represent a captured model
