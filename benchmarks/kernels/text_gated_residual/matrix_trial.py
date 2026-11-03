@@ -31,12 +31,14 @@ def metadata(value):
     }
 
 
-def run_case(case):
+def run_case(case, candidate_only=False):
     cpu = validation.make_inputs(case)
     refs = validation.oracle(cpu, case)
     inputs = [v.npu() if v is not None else None for v in cpu]
     x, wd, wu, wg, gamma = inputs
-    objects = {"original": Original(wd, wu, wg), "candidate": Candidate(wd, wu, wg)}
+    objects = {"candidate": Candidate(wd, wu, wg)}
+    if not candidate_only:
+        objects = {"original": Original(wd, wu, wg), **objects}
     calls = {name: (lambda obj=obj: obj(x, gamma, case["need_backward"])) for name, obj in objects.items()}
     result = {
         "case": case,
@@ -95,9 +97,9 @@ def run_case(case):
         )
         result["status"] = "PASS" if passed else "FAIL_ACCURACY"
         if passed:
-            samples, orders = {"original": [], "candidate": []}, []
+            samples, orders = {name: [] for name in objects}, []
             for pair in range(20):
-                order = ("original", "candidate") if pair % 2 == 0 else ("candidate", "original")
+                order = tuple(objects) if pair % 2 == 0 else tuple(reversed(objects))
                 orders.append(list(order))
                 for name in order:
                     begin, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
@@ -109,7 +111,7 @@ def run_case(case):
             medians = {name: statistics.median(values) for name, values in samples.items()}
             result["timing"] = {
                 "medians_per_forward_us": medians,
-                "original_over_candidate": medians["original"] / medians["candidate"],
+                "original_over_candidate": None if candidate_only else medians["original"] / medians["candidate"],
                 "raw_us": samples,
                 "orders": orders,
                 "pairs": 20,
@@ -124,6 +126,7 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--work-root", type=Path, required=True)
+    parser.add_argument("--candidate-only", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
@@ -157,7 +160,7 @@ def main():
     for case in cases:
         start = time.time_ns()
         try:
-            row = run_case(case)
+            row = run_case(case, args.candidate_only)
         except Exception:
             row = {"case": case, "status": "INVALID", "timing": None, "error": traceback.format_exc()}
         row["host_begin_ns"] = start
