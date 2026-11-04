@@ -40,19 +40,20 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
     return ge::GRAPH_FAILED;
   const uint32_t hidden = width / channels;
   tile = 256;
-  if (rows >= cores)
+  const uint32_t waves = gate == rows * channels ? 1 : 2;
+  if (rows >= waves * cores)
     tile = 2560;
-  else if (2 * rows >= cores)
+  else if (2 * rows >= waves * cores)
     tile = 1280;
-  else if (4 * rows >= cores)
+  else if (4 * rows >= waves * cores)
     tile = 640;
-  else if (8 * rows >= cores)
+  else if (8 * rows >= waves * cores)
     tile = 320;
-  while (tile > 32 && 52ull * tile + 64 > ub) tile /= 2;
+  while (tile > 32 && (waves == 2 && rows * (hidden / tile) >= 2 * cores ? 72ull : 52ull) * tile + 64 > ub) tile /= 2;
   if (hidden % tile) return ge::GRAPH_FAILED;
   units = rows * (hidden / tile);
   work = channels * tile;
-  peak = 52ull * tile + 64;
+  peak = (gate != rows * channels && units >= 2 * cores ? 72ull : 52ull) * tile + 64;
 
   if (!units || peak > ub) return ge::GRAPH_FAILED;
   t.set_tile(tile);

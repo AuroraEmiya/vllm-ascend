@@ -146,6 +146,23 @@ class XMlaSplitRopeKernel {
     Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
     Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
     PipeBarrier<PIPE_V>();
+    if (t.mode == 10) {
+      // Keep each head's two halves in their original contiguous layout.
+      // Repeat strides broadcast one coefficient row across all live heads.
+      BinaryRepeatParams coefficients(1, 1, 1, 8, 8, 0);
+      BinaryRepeatParams halves(1, 1, 1, 8, 8, 8);
+      Mul(f4, f0, f2, static_cast<uint64_t>(ROPE_DIM), headCount, coefficients);
+      Mul(f3, f0[ROPE_DIM / 2], f1, static_cast<uint64_t>(ROPE_DIM / 2), headCount, coefficients);
+      Mul(f3[ROPE_DIM / 2], f0, f1[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), headCount, coefficients);
+      PipeBarrier<PIPE_V>();
+      Sub(f4, f4, f3, static_cast<uint64_t>(ROPE_DIM / 2), headCount, halves);
+      Add(f4[ROPE_DIM / 2], f4[ROPE_DIM / 2], f3[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), headCount, halves);
+      PipeBarrier<PIPE_V>();
+      Cast(b3, f4, RoundMode::CAST_RINT, count);
+      Sync<HardEvent::V_MTE3>();
+      DataCopy(qrGm[static_cast<uint64_t>(row * t.heads + head) * ROPE_DIM], b3, count);
+      return;
+    }
     uint64_t reserved = 0;
     GatherMask(f3, f0, static_cast<uint8_t>(1), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
     GatherMask(f3[halfCount], f0, static_cast<uint8_t>(2), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
