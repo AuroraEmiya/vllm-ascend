@@ -44,12 +44,14 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   uint64_t peak = 0;
 
   headTile = std::min<int64_t>(heads, 4);
-  while (headTile < 32 && 2 * headTile <= heads && rows * ((heads + 2 * headTile - 1) / (2 * headTile)) >= cores)
+  // Keep two waves where possible: each core needs a second task to overlap
+  // its next strided load with the previous contiguous store.
+  while (headTile < 32 && 2 * headTile <= heads && rows * ((heads + 2 * headTile - 1) / (2 * headTile)) >= 2 * cores)
     headTile *= 2;
-  while (headTile > 1 && 1024ull * headTile > ub) headTile /= 2;
+  while (headTile > 1 && 2048ull * headTile > ub) headTile /= 2;
   units = rows * ((heads + headTile - 1) / headTile);
   work = headTile * 512;
-  peak = 2ull * work;
+  peak = 4ull * work;
 
   if (peak > ub || !units) return ge::GRAPH_FAILED;
   t.set_units(units);

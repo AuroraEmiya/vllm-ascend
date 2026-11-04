@@ -85,6 +85,14 @@ checkout and source its vendor `bin/set_env.bash` before running device tests.
 Every stage may also be built by its name in `--ops`; a runnable staged pipeline
 needs all three of its registered Vector operators plus the matrix bridge.
 
+Use a fresh compilation working directory for each native source revision.
+Torch-NPU 2.10.0.post7's static run-package cache hashes op descriptions and
+grouping settings, without the native OPP source identity. Reinstalling a changed
+OPP alone can therefore restore an old static kernel. Record the source tree,
+loaded OPP hashes and newly generated run-package hashes. Reuse that cache only
+within the same candidate. Run harnesses by absolute path with this checkout in
+`PYTHONPATH`; the candidate directory must initially have no static outputs.
+
 ## Capture and replay
 
 ```python
