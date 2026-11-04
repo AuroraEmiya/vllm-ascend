@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// Licensed under CANN Open Software License Agreement Version 2.0.
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# Licensed under CANN Open Software License Agreement Version 2.0.
 if(BUILD_OPEN_PROJECT)
   target_sources(op_host_aclnn PRIVATE x_tgr_norm_def.cpp)
 endif()
