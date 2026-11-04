@@ -32,8 +32,8 @@
 #ifdef VLLM_ASCEND_SERIAL_V3
 #include "aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h"
 #endif
-#include "attention/x_mla_vector/x_mla_vector_torch_adpt.h"
-#include "moe/x_tgr_vector/x_tgr_vector_torch_adpt.h"
+#include "attention/mla_prolog_serial/torch_adpt.h"
+#include "transformer/text_gated_residual_serial/torch_adpt.h"
 #include "aclnn_torch_adapter/op_api_common.h"
 #include "moe/add_rms_norm_bias/add_rms_norm_bias_torch_adpt.h"
 #include "moe/rms_norm_cast/rms_norm_cast_torch_adpt.h"
@@ -3227,12 +3227,36 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     ops.def("npu_tgr_vector_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
             "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
     ops.impl("npu_tgr_vector_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_vector_out);
+    ops.def("npu_tgr_norm_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
+            "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
+    ops.impl("npu_tgr_norm_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_norm_out);
+    ops.def("npu_tgr_activation_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
+            "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
+    ops.impl("npu_tgr_activation_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_activation_out);
+    ops.def("npu_tgr_mix_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
+            "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
+    ops.impl("npu_tgr_mix_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_mix_out);
 
     ops.def("mla_prolog_vector_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
             "Tensor sine, Tensor cosine, Tensor index, int stage_mode, int rows, int heads, int cache_slots, "
             "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "
             "Tensor(c!) kv_cache, Tensor(d!) kr_cache) -> ()");
     ops.impl("mla_prolog_vector_out", torch::kPrivateUse1, &vllm_ascend::mla_prolog_vector_out);
+    ops.def("mla_norm_cache_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
+            "Tensor sine, Tensor cosine, Tensor index, int stage_mode, int rows, int heads, int cache_slots, "
+            "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "
+            "Tensor(c!) kv_cache, Tensor(d!) kr_cache) -> ()");
+    ops.impl("mla_norm_cache_out", torch::kPrivateUse1, &vllm_ascend::mla_norm_cache_out);
+    ops.def("mla_split_rope_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
+            "Tensor sine, Tensor cosine, Tensor index, int stage_mode, int rows, int heads, int cache_slots, "
+            "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "
+            "Tensor(c!) kv_cache, Tensor(d!) kr_cache) -> ()");
+    ops.impl("mla_split_rope_out", torch::kPrivateUse1, &vllm_ascend::mla_split_rope_out);
+    ops.def("mla_layout_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
+            "Tensor sine, Tensor cosine, Tensor index, int stage_mode, int rows, int heads, int cache_slots, "
+            "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "
+            "Tensor(c!) kv_cache, Tensor(d!) kr_cache) -> ()");
+    ops.impl("mla_layout_out", torch::kPrivateUse1, &vllm_ascend::mla_layout_out);
 
     ops.def(
         "npu_rms_norm_cast(Tensor x, Tensor gamma, float epsilon=1e-6)"

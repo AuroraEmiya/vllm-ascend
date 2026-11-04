@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--preload-code", type=int, choices=(1, 5), default=5)
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--baseline-route", choices=("aclnn", "torch", "v3"), default="aclnn")
+    parser.add_argument("--vector-backend", choices=("legacy", "staged"), default="staged")
     args = parser.parse_args()
     if args.single_call_graph and not args.no_timing:
         parser.error("single-call Graph is a correctness guard; use --no-timing")
@@ -60,6 +61,7 @@ def main():
             return instance
         begin = time.perf_counter_ns()
         compiled = instance.compile_superkernel(
+            vector_backend=args.vector_backend,
             optimize_options={"constant_codegen": 1, "split_mode": args.split_mode, "preload_code": args.preload_code},
             optimize=args.mode == "superkernel",
             matrix_backend=args.matrix_backend,
@@ -89,6 +91,7 @@ def main():
         "head_layout": args.head_layout,
         "matrix_backend": args.matrix_backend,
         "mode": args.mode,
+        "vector_backend": args.vector_backend,
         "baseline_route": args.baseline_route,
         "source_commit": args.source_commit,
         "cases": [],

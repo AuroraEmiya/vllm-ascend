@@ -98,6 +98,15 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
         endif()
     endif()
 
+    if(NOT ENABLE_EXPERIMENTAL)
+        file(GLOB SERIAL_HOST_CMAKE_FILES
+            "${CMAKE_CURRENT_SOURCE_DIR}/transformer/text_gated_residual_serial/*/op_host/CMakeLists.txt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/transformer/text_gated_residual_serial/legacy/*/op_host/CMakeLists.txt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/attention/mla_prolog_serial/*/op_host/CMakeLists.txt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/attention/mla_prolog_serial/legacy/*/op_host/CMakeLists.txt")
+        list(APPEND OP_HOST_CMAKE_FILES ${SERIAL_HOST_CMAKE_FILES})
+    endif()
+
     foreach(OP_CMAKE_FILE ${OP_HOST_CMAKE_FILES})
         if ("${OP_CMAKE_FILE}" MATCHES "op_host")
             get_filename_component(OP_HOST_DIR "${OP_CMAKE_FILE}" DIRECTORY)

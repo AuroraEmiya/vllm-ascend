@@ -76,6 +76,7 @@ class MlaPrologSerial:
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
         self._matrix_backend = "torch"
+        self._vector_backend = "legacy"
         self._head_layout = "transpose"
         self._split_head_tile = 0
         values = self._matrix_values()
@@ -127,7 +128,14 @@ class MlaPrologSerial:
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
     def compile_superkernel(
-        self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, head_layout="row", split_head_tile=16
+        self,
+        *,
+        optimize=True,
+        matrix_backend="v3_nz",
+        optimize_options=None,
+        head_layout="row",
+        split_head_tile=16,
+        vector_backend="staged",
     ):
         """Compile the full pipeline; warm up before outer Graph capture.
 
@@ -136,6 +144,9 @@ class MlaPrologSerial:
         """
         from vllm_ascend.compilation.serial_superkernel import CompiledSerialPipeline
 
+        if vector_backend not in ("legacy", "staged"):
+            raise ValueError("vector_backend must be legacy or staged")
+        self._vector_backend = vector_backend
         if head_layout not in ("transpose", "row", "tile8"):
             raise ValueError("head_layout must be transpose, row or tile8")
         if split_head_tile not in (0, 16):
@@ -277,7 +288,15 @@ class MlaPrologSerial:
     def _vector(
         self, x, aux, gamma_q, gamma_kv, sine, cosine, index, mode, rows, slots, y, query_rope, kv_cache, kr_cache
     ):
-        torch.ops._C_ascend.mla_prolog_vector_out(
+        if self._vector_backend == "legacy":
+            op = torch.ops._C_ascend.mla_prolog_vector_out
+        elif mode in (0, 3, 4, 5, 7):
+            op = torch.ops._C_ascend.mla_norm_cache_out
+        elif mode in (1, 6, 8, 10):
+            op = torch.ops._C_ascend.mla_split_rope_out
+        else:
+            op = torch.ops._C_ascend.mla_layout_out
+        op(
             x,
             aux,
             gamma_q,

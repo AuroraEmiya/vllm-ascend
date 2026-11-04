@@ -63,6 +63,7 @@ class TextGatedResidualSerial:
         self.device = w_down.device
         self.eps = eps
         self._matrix_backend = "torch"
+        self._vector_backend = "legacy"
         self._sk_packed_weight = None
         self._sk_pad_down = False
         self._sk_activation_mode = 10
@@ -117,7 +118,14 @@ class TextGatedResidualSerial:
         return self
 
     def compile_superkernel(
-        self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None, pad_down=640, batch_activation=True
+        self,
+        *,
+        optimize=True,
+        matrix_backend="v3_nz",
+        optimize_options=None,
+        pad_down=640,
+        batch_activation=True,
+        vector_backend="staged",
     ):
         """Compile the full pipeline; warm up before outer Graph capture.
 
@@ -126,6 +134,9 @@ class TextGatedResidualSerial:
         """
         from vllm_ascend.compilation.serial_superkernel import CompiledSerialPipeline
 
+        if vector_backend not in ("legacy", "staged"):
+            raise ValueError("vector_backend must be legacy or staged")
+        self._vector_backend = vector_backend
         self._sk_activation_mode = 11 if batch_activation else 10
         self.prepare_superkernel_packing(pad_down if matrix_backend == "v3_nz" else 0)
         return CompiledSerialPipeline(
@@ -164,7 +175,11 @@ class TextGatedResidualSerial:
         empty_fp32 = x.new_empty(0, dtype=torch.float32)
         norm = torch.empty_like(flat)
         inv_rms = x.new_empty((tokens, CHANNELS), dtype=torch.float32) if need_backward else empty_fp32
-        torch.ops._C_ascend.npu_tgr_vector_out(
+        (
+            torch.ops._C_ascend.npu_tgr_norm_out
+            if self._vector_backend == "staged"
+            else torch.ops._C_ascend.npu_tgr_vector_out
+        )(
             flat,
             self.dummy_gamma if gamma is None else gamma,
             self.dummy,
@@ -187,7 +202,11 @@ class TextGatedResidualSerial:
         down = projected if self.packed_weight is None else projected[:, :LOW_RANK]
         activation = x.new_empty((tokens, LOW_RANK))
         inject = empty if self.w_gate is None else x.new_empty((tokens, 16))
-        torch.ops._C_ascend.npu_tgr_vector_out(
+        (
+            torch.ops._C_ascend.npu_tgr_activation_out
+            if self._vector_backend == "staged"
+            else torch.ops._C_ascend.npu_tgr_vector_out
+        )(
             projected,
             self.dummy_gamma,
             self.dummy,
@@ -212,9 +231,11 @@ class TextGatedResidualSerial:
             else torch.matmul(activation, up_weight)
         )
         mixed = x.new_empty((tokens, BRANCH_HIDDEN))
-        torch.ops._C_ascend.npu_tgr_vector_out(
-            norm, self.dummy_gamma, up, self.dummy, self._mix_mode, CHANNELS, self.eps, mixed, empty_fp32, empty
-        )
+        (
+            torch.ops._C_ascend.npu_tgr_mix_out
+            if self._vector_backend == "staged"
+            else torch.ops._C_ascend.npu_tgr_vector_out
+        )(norm, self.dummy_gamma, up, self.dummy, self._mix_mode, CHANNELS, self.eps, mixed, empty_fp32, empty)
         return (
             mixed.view(batch, sequence, BRANCH_HIDDEN),
             inject if self.w_gate is None else inject[:, :CHANNELS].view(batch, sequence, CHANNELS),
