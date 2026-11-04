@@ -4,11 +4,11 @@
 // This adapter selects V3 explicitly; matrix arithmetic remains in CANN.
 #pragma once
 #include <memory>
-#include "../aclnn_torch_adapter/NPUBridge.h"
+#include "../NPUBridge.h"
 #include <torch/extension.h>
 #include <torch_npu/csrc/aten/CustomFunctions.h>
 #include <acl/acl.h>
-#include "serial_matmul_opdev.h"
+#include "opdev.h"
 #include <torch_npu/csrc/framework/OpCommand.h>
 #include <torch_npu/csrc/core/npu/NPUStream.h>
 #include <torch_npu/csrc/core/npu/NPUGuard.h>

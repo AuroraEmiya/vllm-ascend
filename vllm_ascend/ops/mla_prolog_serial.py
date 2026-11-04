@@ -134,7 +134,7 @@ class MlaPrologSerial:
         ``optimize=False`` selects the static-kernel control. Weight refresh
         remains explicit on this prepared owner, outside replay.
         """
-        from vllm_ascend.ops.serial_superkernel import CompiledSerialPipeline
+        from vllm_ascend.compilation.serial_superkernel import CompiledSerialPipeline
 
         if head_layout not in ("transpose", "row", "tile8"):
             raise ValueError("head_layout must be transpose, row or tile8")
@@ -172,7 +172,7 @@ class MlaPrologSerial:
         use_v3 = self._matrix_backend in ("v3", "v3_nz")
         use_nz = self._matrix_backend == "v3_nz"
         if use_v3:
-            from vllm_ascend.ops.serial_superkernel import serial_matmul_v3
+            from vllm_ascend.ops.serial_matmul import serial_matmul_v3
 
         use_linear = self.matrix_route(rows) == "nd_transposed_linear"
         down_q_kv = (

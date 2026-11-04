@@ -1,40 +1,74 @@
-# Serial MlaPrologSerial SuperKernel
+# Serial operators and SuperKernel
 
-This opt-in A3 decode path compiles the existing serial arithmetic into static
-child kernels and groups an outer NPUGraph with SuperKernel. Dependencies remain
-serial. A grouped replay executes device child functions without issuing Python
-or individual ACLNN launches for each stage.
+Both operators live in this single vLLM-Ascend checkout. Start with the Python
+operator, then follow its matrix and vector calls. This layout follows the
+existing repository's `ops/`, `compilation/`, ACLNN adapter, custom-op and test
+directories.
 
-## Requirements and build
+## Source map
 
-The experimental matrix bridge is pinned to CANN 9.2.0 L0 C++ signatures and the
-installed opdev ABI. Validation uses Ascend910_9362 (A3), PyTorch 2.10.0 and
-Torch-NPU 2.10.0.post7. Other toolkit ABIs require revalidation.
+| Responsibility | Source |
+| --- | --- |
+| TextGatedResidual full serial pipeline | [text_gated_residual.py](../../../vllm_ascend/ops/text_gated_residual.py) |
+| MLA Prolog full serial pipeline | [mla_prolog_serial.py](../../../vllm_ascend/ops/mla_prolog_serial.py) |
+| Shared matrix primitive | [serial_matmul.py](../../../vllm_ascend/ops/serial_matmul.py) |
+| Static compilation and Graph grouping | [serial_superkernel.py](../../../vllm_ascend/compilation/serial_superkernel.py) |
+| Torch tensor, workspace and stream adapter | [torch_adpt.h](../../../csrc/aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h) |
+| Installed CANN L0 Matmul bridge | [opdev.cpp](../../../csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.cpp) |
+| Optional matrix build target and ABI boundary | [serial_matmul.cmake](../../../cmake/serial_matmul.cmake) |
+| TGR custom-op host and device code | [x_tgr_vector](../../../csrc/moe/x_tgr_vector/) |
+| MLA custom-op host and device code | [x_mla_vector](../../../csrc/attention/x_mla_vector/) |
+| Shared extension registration | [torch_binding.cpp](../../../csrc/torch_binding.cpp) |
 
-Build the normal extension with `VLLM_ASCEND_ENABLE_SERIAL_V3=1`; its default is
-off. `CANN_OPDEV_CXX11_ABI` defaults to0, separate from the Torch extension ABI.
-Build and install the owned `x_mla_vector` OPP into this checkout:
+`ops/serial_superkernel.py` only re-exports the original imports for compatibility.
+There is one compilation implementation and one matrix wrapper.
+Matmul arithmetic is supplied by CANN. There is no handwritten Matmul
+SuperKernel device source in this patch.
+
+## Call paths
+
+TGR: group Norm -> down/gate Matmul -> activation -> up Matmul -> residual/gate mix.
+MLA: merged down Matmul -> Norm/RoPE/cache update -> query up Matmul -> split/RoPE
+-> head Matmul -> output layout.
+
+The Python operator expresses these dependencies. Its `compile_superkernel()`
+constructs `CompiledSerialPipeline` from `compilation/serial_superkernel.py`.
+The shared matrix wrapper invokes `_C_ascend.serial_matmul_v3_out`; the C++
+adapter calls installed `l0op::MatMulV3Nd` or `BatchMatMulV3Nd`.
+The vector calls invoke their separately registered custom operators.
+The scope and static compilation make these children available for explicit
+outer Graph grouping. Dependencies remain serial.
+
+## Build and preparation
+
+This experimental bridge is pinned to CANN 9.2 L0 signatures and opdev ABI.
+Recorded hardware validation used A3 Ascend910_9362, Torch 2.10.0 and
+Torch-NPU 2.10.0.post7. Revalidate other versions and hardware.
 
 ```bash
 VLLM_ASCEND_ENABLE_SERIAL_V3=1 python setup.py build_ext --inplace
 cd csrc
-bash build.sh --pkg --ops=x_mla_vector --soc=ascend910_93 --vendor_name=mla_serial -j4
+bash build.sh --pkg --ops=x_tgr_vector,x_mla_vector --soc=ascend910_93 --vendor_name=serial -j4
 ```
 
-Install the generated OPP under the checkout's `vllm_ascend/_cann_ops_custom`
-and source its vendor `bin/set_env.bash` before testing. Keep the retained
-baseline OPP available separately when running the comparison harness.
-The two wrappers share `serial_superkernel.py` and `csrc/serial_matmul/`.
+The matrix flag defaults off. Its opdev target uses `CANN_OPDEV_CXX11_ABI=0`
+separately from the Torch extension ABI. The target lives under
+`aclnn_torch_adapter/` because it adapts an installed operator; no local
+Matmul device kernel is compiled. Install the generated OPP into this
+checkout and source its vendor `bin/set_env.bash` before running device tests.
+The two unchanged vector operators may also be built/installed separately
+using `--ops=x_tgr_vector` and `--ops=x_mla_vector` with distinct vendor names.
 
 ## Capture and replay
-
-Prepare an instance using its existing public constructor. Enable internal
-formats before preparing NZ weights. Keep all inputs, weights and caches alive:
 
 ```python
 import torch
 import torch_npu
 
+from vllm_ascend.ops.mla_prolog_serial import MlaPrologSerial
+from vllm_ascend.ops.text_gated_residual import TextGatedResidualSerial
+
+# Construct one of the operators above with its documented weights first.
 torch.npu.config.allow_internal_format = True
 compiled = prepared_serial.compile_superkernel()
 stream = torch.npu.Stream()
@@ -51,60 +85,45 @@ with torch.npu.stream(stream):
     stream.synchronize()
 ```
 
-The first call compiles and installs static children. Warmup, capture, grouping
-and weight preparation belong outside replay timing. Address/shape/stride changes
-require recapture. Update source weights in place and call
-`compiled.refresh_weights_()` for TGR or `compiled.refresh_weights()` for MLA
-outside replay, ordering the update stream before replay. MLA cache indices
-must be distinct, valid and checked on CPU before capture; cache tensors retain
-their original alias and mutation semantics.
+Prepare format-sensitive weights after enabling internal formats. Keep inputs,
+weights and caches alive. Warmup, compilation, preparation, capture and grouping
+are outside replay timing. Refresh same-address source weight changes using
+TGR `refresh_weights_()` or MLA `refresh_weights()` outside replay and order
+the update stream before replay. Address/shape/stride changes require recapture.
+MLA cache indices must be distinct and in range; validate CPU metadata before
+capture. Alias and mutation semantics are unchanged.
 
-`optimize=False` retains the same static children without outer grouping.
-`matrix_backend="torch"` uses the retained public matrix route; `"v3"` uses ND
-V3 and `"v3_nz"` uses prepared NZ weights. V3 matrix choice is separate from the
-MLA fused baseline interface: the formal comparison uses `aclnnMlaProlog`.
+`optimize=False` uses identical static children without outer grouping.
+`matrix_backend="torch"` retains the public matrix route, `"v3"` uses ND V3,
+and `"v3_nz"` uses prepared NZ weights where supported. This matrix choice
+does not change the formal MLA fused baseline `aclnnMlaProlog`.
+The retained configuration remains `constant_codegen=1`, `preload_code=5`,
+default `split_mode=4`, TGR pad640/batched activation, and MLA row layout with
+sixteen-head split tiles. These are opt-in setup choices, not automatic routing.
+Matrix inputs/outputs and HBM intermediates stay BF16; local vector FP32 and
+public TGR FP32 inverse RMS retain their original semantics. FP64 is CPU-oracle
+work outside device capture.
 
-The retained full-group configuration uses `constant_codegen=1`,
-`preload_code=5` and the framework's default `split_mode=4`. TGR pads constant
-down/gate columns to640 and gathers only live336 columns for batched activation;
-the additional persistent buffer is12.5MiB. MLA uses sixteen-head Split/RoPE
-tiles and an owned whole-row DMA layout kernel. Controls remain explicit through
-`pad_down`, `batch_activation`, `head_layout`, `split_head_tile` and
-`optimize_options`. These options are static setup choices.
+## Tests and benchmarks
 
-Matrix inputs/outputs and HBM matrix intermediates remain BF16. RMS/vector
-arithmetic uses local FP32 where required. CPU FP64 exists only in the independent
-test oracle; it is outside captured execution. The adapter fixes logical ND and
-physical NZ descriptor metadata without copying or promoting matrix data.
-
-## Validation
-
-The hardware regression checks one complete call per Graph, then updates inputs
-and weights at the same addresses. This detects stale first-replay results that
-ten repeated calls could hide. MLA also checks touched and untouched cache regions.
+| Purpose | Location |
+| --- | --- |
+| CPU metadata and preparation guards | `tests/ut/ops/test_text_gated_residual.py`, `test_mla_prolog_serial.py` |
+| Compiler lifecycle and matrix routing tests | `tests/ut/compilation/test_serial_superkernel.py` |
+| Single-call NPU Graph and same-address update guards | `tests/e2e/pull_request/one_card/ops/test_*_superkernel.py` |
+| Independent reference, case manifests and performance harness | `benchmarks/kernels/text_gated_residual/`, `benchmarks/kernels/mla_prolog/` |
 
 ```bash
-LOCAL_WORLD_SIZE=1 pytest -q tests/e2e/pull_request/one_card/ops/test_mla_prolog_superkernel.py
+LOCAL_WORLD_SIZE=1 pytest -q tests/e2e/pull_request/one_card/ops/test_text_gated_residual_superkernel.py tests/e2e/pull_request/one_card/ops/test_mla_prolog_superkernel.py
 ```
 
-`benchmarks/kernels/mla_prolog/superkernel_trial.py` runs the frozen shape manifest,
-precision thresholds, original/static/SK controls and optional full msprof.
-Use `--single-call-graph --no-timing` for the one-call guard. Performance uses
-ten complete calls per Graph and20 alternating Event pairs; this is a separate
-protocol from the one-call guard. Compiler workers are capped at4 only in the
-benchmark/test process because installed9.2 otherwise reads host CPU count.
+The full benchmark uses ten complete calls per Graph and twenty alternating
+Event pairs; the single-call tests are correctness guards. Inspect marked
+complete device replay to establish grouping. One mixed task per ten-call Graph
+does not mean one task per individual call. Mixed task duration does not expose
+child C/V times; report these as null and keep static-control diagnostics separate.
+Full grouping does not guarantee speedup or serving integration.
 
-Compilation flags alone do not establish grouping. Inspect the marked complete
-device replay: representative full-group cases produce one `sk_entry_mix12` per
-Graph. Gate-free/auxiliary configurations must be checked individually. Mixed SK
-task duration cannot be split into C/V child times from this trace; report null
-for those fields and use the ungrouped static control for stage diagnosis.
-Full grouping does not guarantee a speedup; the MLA multi-token path can remain
-slower than its fused baseline. Per-case results and failures are kept in the
-separate development evidence report.
-
-## Public references
-
-- [SuperKernel principles](https://asc.gitcode.com/guide/programming_guide/advanced_programming/super_kernel/principles.html)
-- [Operator adaptation](https://asc.gitcode.com/guide/programming_guide/advanced_programming/super_kernel/operator_adaptation.html)
-- [Generic ops-nn matmul](https://gitcode.com/cann/ops-nn/tree/v9.2.0/matmul)
+This refactor preserves the retained algorithm and historical performance
+evidence. Its current source/binary identity and verification are recorded in
+the task's separate refactor report; old timings do not certify a new binary.

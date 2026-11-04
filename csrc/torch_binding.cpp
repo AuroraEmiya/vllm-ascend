@@ -30,9 +30,10 @@
 #include "ops.h"
 #include "utils.h"
 #ifdef VLLM_ASCEND_SERIAL_V3
-#include "serial_matmul/serial_matmul_torch_adpt.h"
+#include "aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h"
 #endif
 #include "attention/x_mla_vector/x_mla_vector_torch_adpt.h"
+#include "moe/x_tgr_vector/x_tgr_vector_torch_adpt.h"
 #include "aclnn_torch_adapter/op_api_common.h"
 #include "moe/add_rms_norm_bias/add_rms_norm_bias_torch_adpt.h"
 #include "moe/rms_norm_cast/rms_norm_cast_torch_adpt.h"
@@ -3223,6 +3224,10 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
     ops.def("serial_matmul_v3_out(Tensor a, Tensor b, bool transpose_b, bool batched, Tensor(a!) out) -> ()");
     ops.impl("serial_matmul_v3_out", torch::kPrivateUse1, &vllm_ascend::serial_matmul_v3_out);
 #endif
+    ops.def("npu_tgr_vector_out(Tensor x, Tensor gamma, Tensor aux, Tensor gate, "
+            "int stage_mode, int channels, float eps, Tensor(a!) y, Tensor(b!) inv, Tensor(c!) inject) -> ()");
+    ops.impl("npu_tgr_vector_out", torch::kPrivateUse1, &vllm_ascend::npu_tgr_vector_out);
+
     ops.def("mla_prolog_vector_out(Tensor x, Tensor aux, Tensor gamma_q, Tensor gamma_kv, "
             "Tensor sine, Tensor cosine, Tensor index, int stage_mode, int rows, int heads, int cache_slots, "
             "float eps_q, float eps_kv, Tensor(a!) y, Tensor(b!) query_rope, "

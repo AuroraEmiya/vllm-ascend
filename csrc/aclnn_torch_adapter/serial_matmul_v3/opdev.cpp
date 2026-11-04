@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // CANN opdev uses its own libstdc++ ABI; no Torch headers in this TU.
-#include "serial_matmul_opdev.h"
+#include "opdev.h"
 #include <cstdio>
 #include <opdev/make_op_executor.h>
 #include <opdev/op_dfx.h>
