@@ -146,28 +146,33 @@ class XMlaSplitRopeKernel {
     Cast(f1, b1, RoundMode::CAST_NONE, ROPE_DIM);
     Cast(f2, b2, RoundMode::CAST_NONE, ROPE_DIM);
     PipeBarrier<PIPE_V>();
+    uint64_t reserved = 0;
+    GatherMask(f3, f0, static_cast<uint8_t>(1), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
+    GatherMask(f3[halfCount], f0, static_cast<uint8_t>(2), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
+    PipeBarrier<PIPE_V>();
+
     if (t.mode == 10) {
-      // Keep each head's two halves in their original contiguous layout.
-      // Repeat strides broadcast one coefficient row across all live heads.
-      BinaryRepeatParams coefficients(1, 1, 1, 8, 8, 0);
+      // Gather patterns1/2 select even/odd source elements, not consecutive
+      // halves. Retain that required permutation; directly form head-major
+      // [even-result32, odd-result32] output with strided V writes.
+      const uint8_t repeats = static_cast<uint8_t>(headCount);
+      BinaryRepeatParams coefficients(1, 1, 1, 8, 4, 0);
       BinaryRepeatParams halves(1, 1, 1, 8, 8, 8);
-      Mul(f4, f0, f2, static_cast<uint64_t>(ROPE_DIM), headCount, coefficients);
-      Mul(f3, f0[ROPE_DIM / 2], f1, static_cast<uint64_t>(ROPE_DIM / 2), headCount, coefficients);
-      Mul(f3[ROPE_DIM / 2], f0, f1[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), headCount, coefficients);
+      Mul(f4, f3, f2, static_cast<uint64_t>(ROPE_DIM / 2), repeats, coefficients);
+      Mul(f4[ROPE_DIM / 2], f3[halfCount], f2[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), repeats,
+          coefficients);
+      // Gather has finished consuming f0, so it now holds sine products.
+      Mul(f0, f3[halfCount], f1, static_cast<uint64_t>(ROPE_DIM / 2), repeats, coefficients);
+      Mul(f0[ROPE_DIM / 2], f3, f1[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), repeats, coefficients);
       PipeBarrier<PIPE_V>();
-      Sub(f4, f4, f3, static_cast<uint64_t>(ROPE_DIM / 2), headCount, halves);
-      Add(f4[ROPE_DIM / 2], f4[ROPE_DIM / 2], f3[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), headCount, halves);
+      Sub(f4, f4, f0, static_cast<uint64_t>(ROPE_DIM / 2), repeats, halves);
+      Add(f4[ROPE_DIM / 2], f4[ROPE_DIM / 2], f0[ROPE_DIM / 2], static_cast<uint64_t>(ROPE_DIM / 2), repeats, halves);
       PipeBarrier<PIPE_V>();
       Cast(b3, f4, RoundMode::CAST_RINT, count);
       Sync<HardEvent::V_MTE3>();
       DataCopy(qrGm[static_cast<uint64_t>(row * t.heads + head) * ROPE_DIM], b3, count);
       return;
     }
-    uint64_t reserved = 0;
-    GatherMask(f3, f0, static_cast<uint8_t>(1), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
-    GatherMask(f3[halfCount], f0, static_cast<uint8_t>(2), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
-    PipeBarrier<PIPE_V>();
-
     const uint64_t mask = headCount == 1 ? ROPE_DIM / 2 : ROPE_DIM;
     const uint8_t repeats = headCount <= 2 ? 1 : headCount / 2;
     BinaryRepeatParams broadcast(1, 1, 1, 8, 8, 0);

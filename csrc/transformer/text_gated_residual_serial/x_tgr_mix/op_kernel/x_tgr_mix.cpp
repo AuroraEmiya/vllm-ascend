@@ -17,36 +17,13 @@ class XTgrMixKernel {
     invG.SetGlobalBuffer((__gm__ float*)inv);
     injectG.SetGlobalBuffer((__gm__ bfloat16_t*)inject);
     const uint32_t count = t.workElements;
-    buffered = !t.hasGate && t.units >= 2 * GetBlockNum();
-    if (buffered) {
-      pipe.InitBuffer(mixInput, 2, count * 4);
-      pipe.InitBuffer(mixOutput, 2, t.tile * 2);
-    } else {
-      pipe.InitBuffer(b0, count * 2);
-      pipe.InitBuffer(b1, count * 2);
-    }
+    pipe.InitBuffer(b0, count * 2);
+    pipe.InitBuffer(b1, count * 2);
     pipe.InitBuffer(f0, count * 4);
     pipe.InitBuffer(f1, count * 4);
     pipe.InitBuffer(f2, t.tile * 4);
   }
   __aicore__ inline void Process() {
-    if (buffered) {
-      Prefetch(GetBlockIdx());
-      for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
-        auto input = mixInput.DeQue<bfloat16_t>();
-        if (unit + GetBlockNum() < t.units) Prefetch(unit + GetBlockNum());
-        auto output = mixOutput.AllocTensor<bfloat16_t>();
-        ComputeMix(input, input[t.workElements], output, t.tile);
-        mixInput.FreeTensor(input);
-        mixOutput.EnQue(output);
-        auto ready = mixOutput.DeQue<bfloat16_t>();
-        const uint32_t h = t.width / t.channels, tiles = h / t.tile;
-        DataCopy(yG[(unit / tiles) * h + (unit % tiles) * t.tile], ready, t.tile);
-        mixOutput.FreeTensor(ready);
-      }
-      Fence<HardEvent::MTE3_MTE2>();
-      return;
-    }
     for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
       Mix(unit);
     }
@@ -75,20 +52,20 @@ class XTgrMixKernel {
     Barrier();
   }
 
-  __aicore__ inline void Prefetch(uint32_t unit) {
-    const uint32_t h = t.width / t.channels, tiles = h / t.tile;
-    const uint32_t off = (unit / tiles) * t.width + (unit % tiles) * t.tile;
-    auto input = mixInput.AllocTensor<bfloat16_t>();
-    const DataCopyParams cp{static_cast<uint16_t>(t.channels), static_cast<uint16_t>(t.tile / 16),
-                            static_cast<uint16_t>((h - t.tile) / 16), 0};
-    DataCopy(input, xG[off], cp);
-    DataCopy(input[t.workElements], uG[off], cp);
-    mixInput.EnQue(input);
-  }
-  __aicore__ inline void ComputeMix(LocalTensor<bfloat16_t> xb, LocalTensor<bfloat16_t> ub,
-                                    LocalTensor<bfloat16_t> output, uint32_t n) {
-    const uint32_t all = n * t.channels;
+  __aicore__ inline void Mix(uint32_t unit) {
+    uint32_t h = t.width / t.channels, tiles = (h + t.tile - 1) / t.tile;
+    uint32_t row = unit / tiles, col = (unit % tiles) * t.tile, n = h - col;
+    n = n < t.tile ? n : t.tile;
+    auto xb = b0.Get<bfloat16_t>(), ub = b1.Get<bfloat16_t>();
     auto z = f0.Get<float>(), q = f1.Get<float>(), sum = f2.Get<float>();
+    // DataCopy strides and lengths are in 32-byte blocks. All supported
+    // tiles divide the hidden width and are multiples of 16 BF16 values.
+    const DataCopyParams cp{static_cast<uint16_t>(t.channels), static_cast<uint16_t>(n / 16),
+                            static_cast<uint16_t>((h - n) / 16), 0};
+    const uint32_t off = row * t.width + col, all = n * t.channels;
+    DataCopy(xb, xG[off], cp);
+    DataCopy(ub, uG[off], cp);
+    Fence<HardEvent::MTE2_V>();
     Cast(z, xb, RoundMode::CAST_NONE, all);
     Cast(q, ub, RoundMode::CAST_NONE, all);
     Barrier();
@@ -103,23 +80,7 @@ class XTgrMixKernel {
     Barrier();
     Muls(sum, sum, 1.0f / t.channels, n);
     Barrier();
-    Cast(output, sum, RoundMode::CAST_RINT, n);
-  }
-  __aicore__ inline void Mix(uint32_t unit) {
-    uint32_t h = t.width / t.channels, tiles = (h + t.tile - 1) / t.tile;
-    uint32_t row = unit / tiles, col = (unit % tiles) * t.tile, n = h - col;
-    n = n < t.tile ? n : t.tile;
-    auto xb = b0.Get<bfloat16_t>(), ub = b1.Get<bfloat16_t>();
-    auto q = f1.Get<float>();
-    // DataCopy strides and lengths are in 32-byte blocks. All supported
-    // tiles divide the hidden width and are multiples of 16 BF16 values.
-    const DataCopyParams cp{static_cast<uint16_t>(t.channels), static_cast<uint16_t>(n / 16),
-                            static_cast<uint16_t>((h - n) / 16), 0};
-    const uint32_t off = row * t.width + col;
-    DataCopy(xb, xG[off], cp);
-    DataCopy(ub, uG[off], cp);
-    Fence<HardEvent::MTE2_V>();
-    ComputeMix(xb, ub, xb, n);
+    Cast(xb, sum, RoundMode::CAST_RINT, n);
     Fence<HardEvent::V_MTE3>();
     DataCopy(yG[row * h + col], xb, n);
     if (t.hasGate && col == 0) {
@@ -142,9 +103,6 @@ class XTgrMixKernel {
     Fence<HardEvent::MTE3_MTE2>();
   }
   TPipe pipe;
-  bool buffered = false;
-  TQue<TPosition::VECIN, 2> mixInput;
-  TQue<TPosition::VECOUT, 2> mixOutput;
   TBuf<TPosition::VECCALC> b0, b1, f0, f1, f2, f3, scalar;
   GlobalTensor<bfloat16_t> xG, uG, gateG, yG, injectG;
   GlobalTensor<float> gG, invG;

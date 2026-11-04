@@ -30,7 +30,7 @@ class XTgrNormKernel {
     }
   }
   __aicore__ inline void Process() {
-    // When block count is divisible by channels, grid stride preserves gamma.
+    // With40 AIVs, striding by the block count preserves the channel.
     // Cache (1+gamma) only when every active core has at least two rows;
     // reload it for every kernel invocation so same-address updates work.
     gammaCached = t.mode == 4 && t.hasGamma && t.units >= 2 * GetBlockNum() && GetBlockNum() % t.channels == 0;
@@ -43,13 +43,7 @@ class XTgrNormKernel {
       Barrier();
     }
     if (t.mode == 4 && t.tile == 2) {
-      PrefetchNorm(GetBlockIdx());
-      for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
-        auto input = normInput.DeQue<bfloat16_t>();
-        // The other input slot can be filled while V consumes this row.
-        if (unit + GetBlockNum() < t.units) PrefetchNorm(unit + GetBlockNum());
-        BufferedNorm(unit, input);
-      }
+      for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) BufferedNorm(unit);
       Fence<HardEvent::MTE3_MTE2>();
       return;
     }
@@ -140,14 +134,12 @@ class XTgrNormKernel {
     }
   }
 
-  __aicore__ inline void PrefetchNorm(uint32_t row) {
+  __aicore__ inline void BufferedNorm(uint32_t row) {
     const uint32_t h = t.width / t.channels, off = row * h;
     auto input = normInput.AllocTensor<bfloat16_t>();
     DataCopy(input, xG[off], h);
     normInput.EnQue(input);
-  }
-  __aicore__ inline void BufferedNorm(uint32_t row, LocalTensor<bfloat16_t> xb) {
-    const uint32_t h = t.width / t.channels, off = row * h;
+    auto xb = normInput.DeQue<bfloat16_t>();
     auto yb = normOutput.AllocTensor<bfloat16_t>();
     auto z = f0.Get<float>(), q = f1.Get<float>(), tmp = f2.Get<float>();
     auto r = scalar.Get<float>(), g = f3.Get<float>();

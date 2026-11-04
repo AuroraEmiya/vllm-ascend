@@ -43,10 +43,8 @@ class XTgrActivationKernel {
     WaitFlag<event>(id);
   }
 
-  __aicore__ inline void SigmoidFrom(LocalTensor<float> v, LocalTensor<float> source, uint32_t n) {
-    // Combine the former copy and negate. Keep the scaled SiLU input in
-    // source for the final multiply, with exactly the same FP32 values.
-    Muls(v, source, -1.0f, n);
+  __aicore__ inline void Sigmoid(LocalTensor<float> v, uint32_t n) {
+    Muls(v, v, -1.0f, n);
     Barrier();
     Exp(v, v, n);
     Barrier();
@@ -57,8 +55,6 @@ class XTgrActivationKernel {
     Reciprocal(v, v, n);
     Barrier();
   }
-
-  __aicore__ inline void Sigmoid(LocalTensor<float> v, uint32_t n) { SigmoidFrom(v, v, n); }
 
   __aicore__ inline void Activation(uint32_t unit) {
     uint32_t off = unit * t.tile, n = t.rows * t.width - off;
@@ -71,7 +67,9 @@ class XTgrActivationKernel {
     Barrier();
     Muls(z, z, 1.0f / t.channels, n);
     Barrier();
-    SigmoidFrom(q, z, n);
+    Muls(q, z, 1.0f, n);
+    Barrier();
+    Sigmoid(q, n);
     Mul(z, z, q, n);
     Barrier();
     Cast(yb, z, RoundMode::CAST_RINT, n);
@@ -95,7 +93,9 @@ class XTgrActivationKernel {
     Barrier();
     Muls(z, z, 1.0f / t.channels, 320);
     Barrier();
-    SigmoidFrom(q, z, 320);
+    Muls(q, z, 1.0f, 320);
+    Barrier();
+    Sigmoid(q, 320);
     Mul(z, z, q, 320);
     Barrier();
     Cast(yb, z, RoundMode::CAST_RINT, 320);
@@ -131,7 +131,9 @@ class XTgrActivationKernel {
     Barrier();
     Muls(z, z, 1.0f / t.channels, all);
     Barrier();
-    SigmoidFrom(q, z, all);
+    Muls(q, z, 1.0f, all);
+    Barrier();
+    Sigmoid(q, all);
     Mul(z, z, q, all);
     Barrier();
     Cast(yb, z, RoundMode::CAST_RINT, all);
