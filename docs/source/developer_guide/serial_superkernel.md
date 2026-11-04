@@ -16,14 +16,40 @@ directories.
 | Torch tensor, workspace and stream adapter | [torch_adpt.h](../../../csrc/aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h) |
 | Installed CANN L0 Matmul bridge | [opdev.cpp](../../../csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.cpp) |
 | Optional matrix build target and ABI boundary | [serial_matmul.cmake](../../../cmake/serial_matmul.cmake) |
-| TGR custom-op host and device code | [x_tgr_vector](../../../csrc/moe/x_tgr_vector/) |
-| MLA custom-op host and device code | [x_mla_vector](../../../csrc/attention/x_mla_vector/) |
+| TGR native serial operator, including its three Vector stages | [text_gated_residual_serial](../../../csrc/transformer/text_gated_residual_serial/) |
+| MLA native serial operator, including its three Vector stages | [mla_prolog_serial](../../../csrc/attention/mla_prolog_serial/) |
 | Shared extension registration | [torch_binding.cpp](../../../csrc/torch_binding.cpp) |
 
 `ops/serial_superkernel.py` only re-exports the original imports for compatibility.
 There is one compilation implementation and one matrix wrapper.
 Matmul arithmetic is supplied by CANN. There is no handwritten Matmul
 SuperKernel device source in this patch.
+
+Each native serial operator is a complete parent directory. Its stages have
+their own host definition, shape/type inference, tiling policy/data and device
+kernel. The shared Torch adapter is at the parent level:
+
+```text
+csrc/
+  transformer/text_gated_residual_serial/
+    torch_adpt.h
+    x_tgr_norm/{op_host,op_kernel}/
+    x_tgr_activation/{op_host,op_kernel}/
+    x_tgr_mix/{op_host,op_kernel}/
+    legacy/x_tgr_vector/{op_host,op_kernel}/
+  attention/mla_prolog_serial/
+    torch_adpt.h
+    x_mla_norm_cache/{op_host,op_kernel}/
+    x_mla_split_rope/{op_host,op_kernel}/
+    x_mla_layout/{op_host,op_kernel}/
+    legacy/x_mla_vector/{op_host,op_kernel}/
+```
+
+The `legacy` stages preserve the previous implementation for explicit runtime
+controls. `compile_superkernel(vector_backend="staged")` selects the new stages;
+`vector_backend="legacy"` selects that control. Both use the same matrix and
+Graph grouping adapters. Matrix adapters stay shared because they bridge the
+same installed CANN primitive for both complete operators.
 
 ## Call paths
 
@@ -48,7 +74,7 @@ Torch-NPU 2.10.0.post7. Revalidate other versions and hardware.
 ```bash
 VLLM_ASCEND_ENABLE_SERIAL_V3=1 python setup.py build_ext --inplace
 cd csrc
-bash build.sh --pkg --ops=x_tgr_vector,x_mla_vector --soc=ascend910_93 --vendor_name=serial -j4
+bash build.sh --pkg --ops=x_tgr_vector,x_mla_vector,x_tgr_norm,x_tgr_activation,x_tgr_mix,x_mla_norm_cache,x_mla_split_rope,x_mla_layout --soc=ascend910_93 --vendor_name=serial -j4
 ```
 
 The matrix flag defaults off. Its opdev target uses `CANN_OPDEV_CXX11_ABI=0`
@@ -56,8 +82,8 @@ separately from the Torch extension ABI. The target lives under
 `aclnn_torch_adapter/` because it adapts an installed operator; no local
 Matmul device kernel is compiled. Install the generated OPP into this
 checkout and source its vendor `bin/set_env.bash` before running device tests.
-The two unchanged vector operators may also be built/installed separately
-using `--ops=x_tgr_vector` and `--ops=x_mla_vector` with distinct vendor names.
+Every stage may also be built by its name in `--ops`; a runnable staged pipeline
+needs all three of its registered Vector operators plus the matrix bridge.
 
 ## Capture and replay
 
@@ -124,6 +150,6 @@ does not mean one task per individual call. Mixed task duration does not expose
 child C/V times; report these as null and keep static-control diagnostics separate.
 Full grouping does not guarantee speedup or serving integration.
 
-This refactor preserves the retained algorithm and historical performance
-evidence. Its current source/binary identity and verification are recorded in
-the task's separate refactor report; old timings do not certify a new binary.
+Source/binary identities and verification are recorded in the task's reports.
+Historical performance belongs to its recorded binaries; a new tiling or
+kernel version requires fresh precision, state and Graph performance results.

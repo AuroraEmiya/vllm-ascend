@@ -154,7 +154,7 @@ class XMlaSplitRopeKernel {
     const uint64_t mask = headCount == 1 ? ROPE_DIM / 2 : ROPE_DIM;
     const uint8_t repeats = headCount <= 2 ? 1 : headCount / 2;
     BinaryRepeatParams broadcast(1, 1, 1, 8, 8, 0);
-    if (t.mode == 8) {
+    if (t.mode == 8 || t.mode == 10) {
       RopePackedCoefficients(halfCount, mask, repeats, broadcast);
     } else {
       BroadcastHalf(f2);
