@@ -24,11 +24,10 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
        (c.GetDim(1)!=16 && c.GetDim(1)!=128) || c.GetDim(0)*c.GetDim(1)<b) return ge::GRAPH_FAILED;
   }
   units=b; in=2*q+2*k+3*r+16;out=q+k+r;
-  const uint32_t cacheGamma=b>cores?1u:0u;
-  peak=4ull*in+4ull*out+16ull*q+20ull*r+128+cacheGamma*4ull*k;
+  peak=4ull*in+4ull*out+16ull*q+20ull*r+128;
   if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
   ContactNormTilingData t;
-  t.set_rows(b);t.set_cacheGamma(cacheGamma);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
+  t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
   t.set_units(units);t.set_headTile(ht);t.set_inElements(in);t.set_outElements(out);
   t.SaveToBuffer(context->GetRawTilingData()->GetData(),context->GetRawTilingData()->GetCapacity());
   context->GetRawTilingData()->SetDataSize(t.GetDataSize());

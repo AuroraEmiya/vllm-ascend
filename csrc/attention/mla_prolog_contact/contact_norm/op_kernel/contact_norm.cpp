@@ -8,7 +8,7 @@ class ContactNormKernel {
  public:
   __aicore__ inline void Init(GM_ADDR dq,GM_ADDR dkv,GM_ADDR gq,GM_ADDR gkv,GM_ADDR sine,GM_ADDR cosine,
       GM_ADDR index,GM_ADDR cq,GM_ADDR kv,GM_ADDR kr,const ContactNormDeviceData& data) {
-    t=data;gammaLoadQueued=false;gammaConverted=false;
+    t=data;
     dqG.SetGlobalBuffer((__gm__ bfloat16_t*)dq);dkvG.SetGlobalBuffer((__gm__ bfloat16_t*)dkv);
     gqG.SetGlobalBuffer((__gm__ bfloat16_t*)gq);gkvG.SetGlobalBuffer((__gm__ bfloat16_t*)gkv);
     sinG.SetGlobalBuffer((__gm__ bfloat16_t*)sine);cosG.SetGlobalBuffer((__gm__ bfloat16_t*)cosine);
@@ -16,7 +16,6 @@ class ContactNormKernel {
     cqG.SetGlobalBuffer((__gm__ bfloat16_t*)cq);kvG.SetGlobalBuffer((__gm__ bfloat16_t*)kv);krG.SetGlobalBuffer((__gm__ bfloat16_t*)kr);
     pipe.InitBuffer(inputQ,2,t.inElements*2);pipe.InitBuffer(outputQ,2,t.outElements*2);
     pipe.InitBuffer(valueB,t.qRank*4);pipe.InitBuffer(gammaB,t.qRank*4);
-    if(t.cacheGamma)pipe.InitBuffer(gammaKvB,t.kvRank*4);
     pipe.InitBuffer(squareB,t.qRank*4);pipe.InitBuffer(reduceB,t.qRank*4);pipe.InitBuffer(sumB,128);
     pipe.InitBuffer(ropeB,t.rope*4);pipe.InitBuffer(sinB,t.rope*4);
     pipe.InitBuffer(cosB,t.rope*4);pipe.InitBuffer(tmpB,t.rope*4);
@@ -33,10 +32,8 @@ class ContactNormKernel {
   __aicore__ inline void CopyIn(uint32_t row) {
     auto x=inputQ.AllocTensor<bfloat16_t>();
     const uint32_t q=t.qRank,k=t.kvRank,r=t.rope;
-    Load(x,dqG[row*q],q);Load(x[2*q],dkvG[row*(k+r)],k+r);
-    if(!t.cacheGamma || !gammaLoadQueued) {
-      Load(x[q],gqG,q);Load(x[2*q+k+r],gkvG,k);gammaLoadQueued=true;
-    }
+    Load(x,dqG[row*q],q);Load(x[q],gqG,q);
+    Load(x[2*q],dkvG[row*(k+r)],k+r);Load(x[2*q+k+r],gkvG,k);
     Load(x[2*q+2*k+r],sinG[row*r],r);Load(x[2*q+2*k+2*r],cosG[row*r],r);
     auto idx=x[2*q+2*k+3*r].ReinterpretCast<int64_t>();
     DataCopyPad(idx,indexG[row],DataCopyExtParams{1,8,0,0,0},DataCopyPadExtParams<int64_t>{false,0,0,0});
@@ -55,16 +52,10 @@ class ContactNormKernel {
     const uint32_t q=t.qRank,k=t.kvRank,r=t.rope,half=r/2;
     auto x=inputQ.DeQue<bfloat16_t>();auto out=outputQ.AllocTensor<bfloat16_t>();
     auto v=valueB.Get<float>(),gamma=gammaB.Get<float>();
-    auto gammaKv=t.cacheGamma?gammaKvB.Get<float>():gamma;
-    Cast(v,x,RoundMode::CAST_NONE,q);
-    if(!t.cacheGamma || !gammaConverted)Cast(gamma,x[q],RoundMode::CAST_NONE,q);
-    PipeBarrier<PIPE_V>();
+    Cast(v,x,RoundMode::CAST_NONE,q);Cast(gamma,x[q],RoundMode::CAST_NONE,q);PipeBarrier<PIPE_V>();
     Normalize(v,gamma,q);Cast(out,v,RoundMode::CAST_RINT,q);PipeBarrier<PIPE_V>();
-    Cast(v,x[2*q],RoundMode::CAST_NONE,k+r);
-    if(!t.cacheGamma || !gammaConverted)Cast(gammaKv,x[2*q+k+r],RoundMode::CAST_NONE,k);
-    PipeBarrier<PIPE_V>();
-    Normalize(v,gammaKv,k);Cast(out[q],v,RoundMode::CAST_RINT,k);PipeBarrier<PIPE_V>();
-    gammaConverted=true;
+    Cast(v,x[2*q],RoundMode::CAST_NONE,k+r);Cast(gamma,x[2*q+k+r],RoundMode::CAST_NONE,k);PipeBarrier<PIPE_V>();
+    Normalize(v,gamma,k);Cast(out[q],v,RoundMode::CAST_RINT,k);PipeBarrier<PIPE_V>();
     auto rope=ropeB.Get<float>(),sine=sinB.Get<float>(),cosine=cosB.Get<float>(),tmp=tmpB.Get<float>();
     Cast(sine,x[2*q+2*k+r],RoundMode::CAST_NONE,r);Cast(cosine,x[2*q+2*k+2*r],RoundMode::CAST_NONE,r);
     uint64_t reserved=0;
@@ -84,11 +75,11 @@ class ContactNormKernel {
     Store(cqG[row*t.qRank],out,t.qRank);Store(kvG[slot*t.kvRank],out[t.qRank],t.kvRank);
     Store(krG[slot*t.rope],out[t.qRank+t.kvRank],t.rope);outputQ.FreeTensor(out);
   }
-  ContactNormDeviceData t;TPipe pipe;bool gammaLoadQueued=false,gammaConverted=false;
+  ContactNormDeviceData t;TPipe pipe;
   GlobalTensor<bfloat16_t> dqG,dkvG,gqG,gkvG,sinG,cosG,cqG,kvG,krG;
   GlobalTensor<int64_t> indexG;
   TQue<TPosition::VECIN,2> inputQ;TQue<TPosition::VECOUT,1> outputQ;
-  TBuf<TPosition::VECCALC> valueB,gammaB,gammaKvB,squareB,reduceB,sumB,ropeB,sinB,cosB,tmpB;
+  TBuf<TPosition::VECCALC> valueB,gammaB,squareB,reduceB,sumB,ropeB,sinB,cosB,tmpB;
 };
 }
 extern "C" __global__ __aicore__ void contact_norm(GM_ADDR dq,GM_ADDR dkv,GM_ADDR gq,GM_ADDR gkv,

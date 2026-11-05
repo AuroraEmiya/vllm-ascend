@@ -4,7 +4,7 @@
 #include <cstdint>
 struct ContactNormDeviceData {
   uint32_t rows;
-  uint32_t cacheGamma;
+  uint32_t heads;
   uint32_t qRank;
   uint32_t kvRank;
   uint32_t nope;
