@@ -1,5 +1,5 @@
 // Licensed under CANN Open Software License Agreement Version 2.0.
-#include "../../kernel_common.h"
+#include "contact_serial_common.h"
 #include "contact_norm_tiling.h"
 using namespace AscendC;
 using namespace ContactSerial;
