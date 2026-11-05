@@ -41,11 +41,15 @@ class ContactNormKernel {
   }
   __aicore__ inline void Normalize(LocalTensor<float> v,LocalTensor<float> gamma,uint32_t width) {
     auto square=squareB.Get<float>(),reduce=reduceB.Get<float>(),sum=sumB.Get<float>();
-    Mul(square,v,v,width);PipeBarrier<PIPE_V>();
+    Mul(square,v,v,width);Duplicate(sum,0.0f,8);PipeBarrier<PIPE_V>();
     ReduceSum<float,true>(sum,square,reduce,width);PipeBarrier<PIPE_V>();
-    SyncVectorToScalar(pipe);
-    const float inv=1.0f/sqrt(sum.GetValue(0)/static_cast<float>(static_cast<int32_t>(width))+1e-5f);
-    Muls(v,v,inv,width);PipeBarrier<PIPE_V>();
+    const float reciprocalWidth=1.0f/static_cast<float>(static_cast<int32_t>(width));
+    Muls(sum,sum,reciprocalWidth,8);PipeBarrier<PIPE_V>();
+    Adds(sum,sum,1e-5f,8);PipeBarrier<PIPE_V>();
+    Rsqrt(reduce,sum,8);PipeBarrier<PIPE_V>();
+    Brcb(square,reduce,1,{1,8});PipeBarrier<PIPE_V>();
+    BinaryRepeatParams inverseBroadcast(1,1,0,8,8,0);
+    Mul(v,v,square,uint64_t(64),static_cast<uint8_t>(width/64),inverseBroadcast);PipeBarrier<PIPE_V>();
     Mul(v,v,gamma,width);PipeBarrier<PIPE_V>();
   }
   __aicore__ inline int64_t Compute() {
