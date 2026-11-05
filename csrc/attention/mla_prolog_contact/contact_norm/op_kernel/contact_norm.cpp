@@ -25,14 +25,17 @@ class ContactNormKernel {
     CopyIn(unit);
     for(;unit<t.units;unit+=GetBlockNum()) {
       if(unit+GetBlockNum()<t.units)CopyIn(unit+GetBlockNum());
-      const int64_t slot=Compute();CopyOut(unit,slot);
+      const int64_t slot=Compute(unit);CopyOut(unit,slot);
     }
   }
  private:
-  __aicore__ inline void CopyIn(uint32_t row) {
+  __aicore__ inline void CopyIn(uint32_t unit) {
     auto x=inputQ.AllocTensor<bfloat16_t>();
     const uint32_t q=t.qRank,k=t.kvRank,r=t.rope;
-    Load(x,dqG[row*q],q);Load(x[q],gqG,q);
+    if(unit<t.rows) {
+      Load(x,dqG[unit*q],q);Load(x[q],gqG,q);inputQ.EnQue(x);return;
+    }
+    const uint32_t row=unit-t.rows;
     Load(x[2*q],dkvG[row*(k+r)],k+r);Load(x[2*q+k+r],gkvG,k);
     Load(x[2*q+2*k+r],sinG[row*r],r);Load(x[2*q+2*k+2*r],cosG[row*r],r);
     auto idx=x[2*q+2*k+3*r].ReinterpretCast<int64_t>();
@@ -41,23 +44,22 @@ class ContactNormKernel {
   }
   __aicore__ inline void Normalize(LocalTensor<float> v,LocalTensor<float> gamma,uint32_t width) {
     auto square=squareB.Get<float>(),reduce=reduceB.Get<float>(),sum=sumB.Get<float>();
-    Mul(square,v,v,width);Duplicate(sum,0.0f,8);PipeBarrier<PIPE_V>();
+    Mul(square,v,v,width);PipeBarrier<PIPE_V>();
     ReduceSum<float,true>(sum,square,reduce,width);PipeBarrier<PIPE_V>();
-    const float reciprocalWidth=1.0f/static_cast<float>(static_cast<int32_t>(width));
-    Muls(sum,sum,reciprocalWidth,8);PipeBarrier<PIPE_V>();
-    Adds(sum,sum,1e-5f,8);PipeBarrier<PIPE_V>();
-    Rsqrt(reduce,sum,8);PipeBarrier<PIPE_V>();
-    Brcb(square,reduce,1,{1,8});PipeBarrier<PIPE_V>();
-    BinaryRepeatParams inverseBroadcast(1,1,0,8,8,0);
-    Mul(v,v,square,uint64_t(64),static_cast<uint8_t>(width/64),inverseBroadcast);PipeBarrier<PIPE_V>();
+    SyncVectorToScalar(pipe);
+    const float inv=1.0f/sqrt(sum.GetValue(0)/static_cast<float>(static_cast<int32_t>(width))+1e-5f);
+    Muls(v,v,inv,width);PipeBarrier<PIPE_V>();
     Mul(v,v,gamma,width);PipeBarrier<PIPE_V>();
   }
-  __aicore__ inline int64_t Compute() {
+  __aicore__ inline int64_t Compute(uint32_t unit) {
     const uint32_t q=t.qRank,k=t.kvRank,r=t.rope,half=r/2;
     auto x=inputQ.DeQue<bfloat16_t>();auto out=outputQ.AllocTensor<bfloat16_t>();
     auto v=valueB.Get<float>(),gamma=gammaB.Get<float>();
-    Cast(v,x,RoundMode::CAST_NONE,q);Cast(gamma,x[q],RoundMode::CAST_NONE,q);PipeBarrier<PIPE_V>();
-    Normalize(v,gamma,q);Cast(out,v,RoundMode::CAST_RINT,q);PipeBarrier<PIPE_V>();
+    if(unit<t.rows) {
+      Cast(v,x,RoundMode::CAST_NONE,q);Cast(gamma,x[q],RoundMode::CAST_NONE,q);PipeBarrier<PIPE_V>();
+      Normalize(v,gamma,q);Cast(out,v,RoundMode::CAST_RINT,q);PipeBarrier<PIPE_V>();
+      inputQ.FreeTensor(x);outputQ.EnQue(out);return 0;
+    }
     Cast(v,x[2*q],RoundMode::CAST_NONE,k+r);Cast(gamma,x[2*q+k+r],RoundMode::CAST_NONE,k);PipeBarrier<PIPE_V>();
     Normalize(v,gamma,k);Cast(out[q],v,RoundMode::CAST_RINT,k);PipeBarrier<PIPE_V>();
     auto rope=ropeB.Get<float>(),sine=sinB.Get<float>(),cosine=cosB.Get<float>(),tmp=tmpB.Get<float>();
@@ -74,10 +76,14 @@ class ContactNormKernel {
     const int64_t slot=x[2*q+2*k+3*r].ReinterpretCast<int64_t>().GetValue(0);
     inputQ.FreeTensor(x);outputQ.EnQue(out);return slot;
   }
-  __aicore__ inline void CopyOut(uint32_t row,int64_t slot) {
+  __aicore__ inline void CopyOut(uint32_t unit,int64_t slot) {
     auto out=outputQ.DeQue<bfloat16_t>();
-    Store(cqG[row*t.qRank],out,t.qRank);Store(kvG[slot*t.kvRank],out[t.qRank],t.kvRank);
-    Store(krG[slot*t.rope],out[t.qRank+t.kvRank],t.rope);outputQ.FreeTensor(out);
+    if(unit<t.rows)Store(cqG[unit*t.qRank],out,t.qRank);
+    else {
+      Store(kvG[slot*t.kvRank],out[t.qRank],t.kvRank);
+      Store(krG[slot*t.rope],out[t.qRank+t.kvRank],t.rope);
+    }
+    outputQ.FreeTensor(out);
   }
   ContactNormDeviceData t;TPipe pipe;
   GlobalTensor<bfloat16_t> dqG,dkvG,gqG,gkvG,sinG,cosG,cqG,kvG,krG;
