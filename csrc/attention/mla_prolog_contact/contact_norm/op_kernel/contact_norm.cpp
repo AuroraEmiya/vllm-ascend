@@ -4,10 +4,10 @@
 using namespace AscendC;
 using namespace ContactSerial;
 namespace {
-class Norm {
+class ContactNormKernel {
  public:
   __aicore__ inline void Init(GM_ADDR dq,GM_ADDR dkv,GM_ADDR gq,GM_ADDR gkv,GM_ADDR sine,GM_ADDR cosine,
-      GM_ADDR index,GM_ADDR cq,GM_ADDR kv,GM_ADDR kr,const ContactNormTilingData& data) {
+      GM_ADDR index,GM_ADDR cq,GM_ADDR kv,GM_ADDR kr,const ContactNormDeviceData& data) {
     t=data;
     dqG.SetGlobalBuffer((__gm__ bfloat16_t*)dq);dkvG.SetGlobalBuffer((__gm__ bfloat16_t*)dkv);
     gqG.SetGlobalBuffer((__gm__ bfloat16_t*)gq);gkvG.SetGlobalBuffer((__gm__ bfloat16_t*)gkv);
@@ -44,7 +44,7 @@ class Norm {
     Mul(square,v,v,width);PipeBarrier<PIPE_V>();
     ReduceSum<float,true>(sum,square,reduce,width);PipeBarrier<PIPE_V>();
     SyncVectorToScalar(pipe);
-    const float inv=1.0f/sqrt(sum.GetValue(0)/static_cast<float>(width)+1e-5f);
+    const float inv=1.0f/sqrt(sum.GetValue(0)/static_cast<float>(static_cast<int32_t>(width))+1e-5f);
     Muls(v,v,inv,width);PipeBarrier<PIPE_V>();
     Mul(v,v,gamma,width);PipeBarrier<PIPE_V>();
   }
@@ -75,7 +75,7 @@ class Norm {
     Store(cqG[row*t.qRank],out,t.qRank);Store(kvG[slot*t.kvRank],out[t.qRank],t.kvRank);
     Store(krG[slot*t.rope],out[t.qRank+t.kvRank],t.rope);outputQ.FreeTensor(out);
   }
-  ContactNormTilingData t;TPipe pipe;
+  ContactNormDeviceData t;TPipe pipe;
   GlobalTensor<bfloat16_t> dqG,dkvG,gqG,gkvG,sinG,cosG,cqG,kvG,krG;
   GlobalTensor<int64_t> indexG;
   TQue<TPosition::VECIN,2> inputQ;TQue<TPosition::VECOUT,1> outputQ;
@@ -85,6 +85,7 @@ class Norm {
 extern "C" __global__ __aicore__ void contact_norm(GM_ADDR dq,GM_ADDR dkv,GM_ADDR gq,GM_ADDR gkv,
     GM_ADDR sine,GM_ADDR cosine,GM_ADDR index,GM_ADDR kv,GM_ADDR kr,GM_ADDR cq,GM_ADDR kv_out,GM_ADDR kr_out,
     GM_ADDR workspace,GM_ADDR tiling) {
-  GET_TILING_DATA(t,tiling);KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-  Norm op;op.Init(dq,dkv,gq,gkv,sine,cosine,index,cq,kv_out,kr_out,t);op.Process();
+  REGISTER_TILING_DEFAULT(ContactNormDeviceData);
+  GET_TILING_DATA_WITH_STRUCT(ContactNormDeviceData,t,tiling);KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
+  ContactNormKernel op;op.Init(dq,dkv,gq,gkv,sine,cosine,index,cq,kv_out,kr_out,t);op.Process();
 }

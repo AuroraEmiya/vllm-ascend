@@ -4,9 +4,9 @@
 using namespace AscendC;
 using namespace ContactSerial;
 namespace {
-class Layout {
+class ContactLayoutKernel {
  public:
-  __aicore__ inline void Init(GM_ADDR x,GM_ADDR y,const ContactLayoutTilingData& data) {
+  __aicore__ inline void Init(GM_ADDR x,GM_ADDR y,const ContactLayoutDeviceData& data) {
     t=data;xG.SetGlobalBuffer((__gm__ bfloat16_t*)x);yG.SetGlobalBuffer((__gm__ bfloat16_t*)y);
     pipe.InitBuffer(inputQ,2,t.inElements*2);pipe.InitBuffer(outputQ,2,t.outElements*2);
   }
@@ -31,11 +31,12 @@ class Layout {
         DataCopyExtParams{static_cast<uint16_t>(count),t.kvRank*2,(t.rows-1)*t.kvRank*2,0,0},DataCopyPadExtParams<bfloat16_t>{false,0,0,0});
     inputQ.EnQue(in);
   }
-  ContactLayoutTilingData t;TPipe pipe;GlobalTensor<bfloat16_t> xG,yG;
+  ContactLayoutDeviceData t;TPipe pipe;GlobalTensor<bfloat16_t> xG,yG;
   TQue<TPosition::VECIN,2> inputQ;TQue<TPosition::VECOUT,1> outputQ;
 };
 }
 extern "C" __global__ __aicore__ void contact_layout(GM_ADDR x,GM_ADDR y,GM_ADDR workspace,GM_ADDR tiling) {
-  GET_TILING_DATA(t,tiling);KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-  Layout op;op.Init(x,y,t);op.Process();
+  REGISTER_TILING_DEFAULT(ContactLayoutDeviceData);
+  GET_TILING_DATA_WITH_STRUCT(ContactLayoutDeviceData,t,tiling);KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
+  ContactLayoutKernel op;op.Init(x,y,t);op.Process();
 }

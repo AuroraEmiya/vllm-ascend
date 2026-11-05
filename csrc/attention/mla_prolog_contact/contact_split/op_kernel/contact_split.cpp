@@ -4,9 +4,9 @@
 using namespace AscendC;
 using namespace ContactSerial;
 namespace {
-class Split {
+class ContactSplitKernel {
  public:
-  __aicore__ inline void Init(GM_ADDR x,GM_ADDR sine,GM_ADDR cosine,GM_ADDR qc,GM_ADDR qr,const ContactSplitTilingData& data) {
+  __aicore__ inline void Init(GM_ADDR x,GM_ADDR sine,GM_ADDR cosine,GM_ADDR qc,GM_ADDR qr,const ContactSplitDeviceData& data) {
     t=data;xG.SetGlobalBuffer((__gm__ bfloat16_t*)x);sinG.SetGlobalBuffer((__gm__ bfloat16_t*)sine);
     cosG.SetGlobalBuffer((__gm__ bfloat16_t*)cosine);qcG.SetGlobalBuffer((__gm__ bfloat16_t*)qc);qrG.SetGlobalBuffer((__gm__ bfloat16_t*)qr);
     pipe.InitBuffer(inputQ,2,t.inElements*2);pipe.InitBuffer(outputQ,2,t.outElements*2);
@@ -63,13 +63,14 @@ class Split {
     Store(qrG[(static_cast<uint64_t>(row)*t.heads+head)*t.rope],out[t.headTile*t.nope],count*t.rope);
     outputQ.FreeTensor(out);
   }
-  ContactSplitTilingData t;TPipe pipe;GlobalTensor<bfloat16_t> xG,sinG,cosG,qcG,qrG;
+  ContactSplitDeviceData t;TPipe pipe;GlobalTensor<bfloat16_t> xG,sinG,cosG,qcG,qrG;
   TQue<TPosition::VECIN,2> inputQ;TQue<TPosition::VECOUT,1> outputQ;
   TBuf<TPosition::VECCALC> valueB,gatherB,resultB,coeffB;
 };
 }
 extern "C" __global__ __aicore__ void contact_split(GM_ADDR x,GM_ADDR sine,GM_ADDR cosine,GM_ADDR qc,GM_ADDR qr,
     GM_ADDR workspace,GM_ADDR tiling) {
-  GET_TILING_DATA(t,tiling);KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-  Split op;op.Init(x,sine,cosine,qc,qr,t);op.Process();
+  REGISTER_TILING_DEFAULT(ContactSplitDeviceData);
+  GET_TILING_DATA_WITH_STRUCT(ContactSplitDeviceData,t,tiling);KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
+  ContactSplitKernel op;op.Init(x,sine,cosine,qc,qr,t);op.Process();
 }

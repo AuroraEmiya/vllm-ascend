@@ -2,7 +2,7 @@
 // Licensed under CANN Open Software License Agreement Version 2.0.
 #pragma once
 #include <cstdint>
-struct ContactLayoutTilingData {
+struct ContactLayoutDeviceData {
   uint32_t rows;
   uint32_t heads;
   uint32_t qRank;
