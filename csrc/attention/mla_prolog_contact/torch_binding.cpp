@@ -20,7 +20,7 @@ void Split(const at::Tensor& x,const at::Tensor& sine,const at::Tensor& cosine,
   const at::Tensor* tensors[]={&x,&sine,&cosine,&qc,&qr};for(const auto* z:tensors)Check(*z);
   EXEC_NPU_CMD(aclnnContactSplit,x,sine,cosine,heads,nope,rope,qc,qr);
 }
-void Layout(const at::Tensor& x,at::Tensor& y) {
+void ContactLayout(const at::Tensor& x,at::Tensor& y) {
   Check(x);Check(y);EXEC_NPU_CMD(aclnnContactLayout,x,y);
 }
 void MetaNorm(const at::Tensor&,const at::Tensor&,const at::Tensor&,const at::Tensor&,const at::Tensor&,
@@ -34,7 +34,7 @@ TORCH_LIBRARY_FRAGMENT(_C_ascend,m) {
   m.def("contact_layout_out(Tensor x, Tensor(a!) y) -> ()");
 }
 TORCH_LIBRARY_IMPL(_C_ascend,PrivateUse1,m) {
-  m.impl("contact_norm_out",&Norm);m.impl("contact_split_out",&Split);m.impl("contact_layout_out",&Layout);
+  m.impl("contact_norm_out",&Norm);m.impl("contact_split_out",&Split);m.impl("contact_layout_out",&ContactLayout);
 }
 TORCH_LIBRARY_IMPL(_C_ascend,Meta,m) {
   m.impl("contact_norm_out",&MetaNorm);m.impl("contact_split_out",&MetaSplit);m.impl("contact_layout_out",&MetaLayout);
