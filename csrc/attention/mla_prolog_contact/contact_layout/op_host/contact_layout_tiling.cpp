@@ -12,10 +12,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   if(s.GetDimNum()!=3) return ge::GRAPH_FAILED;
   n=s.GetDim(0);b=s.GetDim(1);k=s.GetDim(2);
   if ((n!=8 && n!=16 && n!=32 && n!=64) || k!=512) return ge::GRAPH_FAILED;
-  ht=n;while(ht>1 && b*((n+ht-1)/ht)<cores)ht/=2;units=b*((n+ht-1)/ht);in=out=ht*k;
+  ht=std::min(16u,n);units=b*((n+ht-1)/ht);in=out=ht*k;
   peak=4ull*in;
-  while(peak>ub && ht>1) {ht/=2;in=out=ht*k;peak=4ull*in;}
-  units=b*((n+ht-1)/ht);
   if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
   ContactLayoutTilingData t;
   t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);

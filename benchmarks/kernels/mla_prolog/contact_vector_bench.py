@@ -43,10 +43,12 @@ def main():
         if a.static:
             from torch_npu.dynamo.npugraph_ex._acl_concrete_graph import static_kernel
             static_kernel._compute_opc_compile_jobs=lambda:'4'
-            candidate=torch.compile(candidate,backend='npugraph_ex',dynamic=False,fullgraph=True,options={
-                'force_eager':True,'inplace_pass':False,'clone_input':False,'clone_output':False,
-                'static_kernel_compile':True,'super_kernel_optimize':False})
+            from vllm_ascend.ops.mla_prolog_contact import compile_contact_static
     for c in cases:
+        if a.static:
+            # Each shape owns a fresh compile lifecycle outside measured replay.
+            torch._dynamo.reset()
+            candidate=compile_contact_static()
         row=dict(case=c,status='STARTED',routes={},raw_samples=[],preparation={});result['cases'].append(row);save()
         print('CONTACT_PHASE CASE',c['id'],flush=True)
         data,kv0,kr0=make_case(c);initials=(kv0,kr0);ref=oracle(data,c,*initials)

@@ -48,3 +48,15 @@ def mla_prolog_contact(x,wdq,wuq,wuk,wdkv,gq,gkv,sine,cosine,index,kv_cache,kr_c
     empty_float=torch.empty(0,dtype=torch.float32,device=x.device)
     empty_bf16=torch.empty(0,dtype=torch.bfloat16,device=x.device)
     return query,qr,empty_float,empty_bf16,empty_float
+
+def compile_contact_static():
+    """Compile the same Torch/Vector pipeline; no SuperKernel or eager fallback.
+
+    Warm up before the caller's ordinary NPUGraph capture. Compilation keeps
+    the literal torch.matmul interface and the caller's input/cache ownership.
+    Inspect a full device trace before claiming a different matrix dispatch.
+    """
+    load_contact_extension()
+    return torch.compile(mla_prolog_contact,backend='npugraph_ex',dynamic=False,fullgraph=True,options={
+        'force_eager':True,'inplace_pass':False,'clone_input':False,'clone_output':False,
+        'static_kernel_compile':True,'super_kernel_optimize':False})
