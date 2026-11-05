@@ -29,3 +29,15 @@ def test_contact_serial_state(case_id,edge):
         d['sin'],d['cos'],d['index'],*caches)
     torch.npu.synchronize()
     assert check(out,caches,ref,data,c,(kv0,kr0))['passed']
+
+
+@pytest.mark.parametrize('batch,heads',[(63,32),(64,64)])
+def test_contact_layout_row_group_tail(batch,heads):
+    """Cover an odd final row group and the four-row DMA path independently."""
+    load_contact_extension();torch.npu.set_device(0)
+    source=torch.arange(heads*batch*512,dtype=torch.float32).remainder(257).bfloat16().reshape(heads,batch,512)
+    device=source.npu()
+    out=torch.empty((batch,1,heads,512),dtype=torch.bfloat16,device='npu')
+    torch.ops._C_ascend.contact_layout_out(device,out)
+    torch.npu.synchronize()
+    assert torch.equal(out.cpu().squeeze(1),source.permute(1,0,2))

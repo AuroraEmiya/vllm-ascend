@@ -23,7 +23,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
     if(c.GetDimNum()!=4 || c.GetDim(2)!=1 || c.GetDim(3)!=(i==7?k:r) ||
        (c.GetDim(1)!=16 && c.GetDim(1)!=128) || c.GetDim(0)*c.GetDim(1)<b) return ge::GRAPH_FAILED;
   }
-  units=2*b; in=2*q+2*k+3*r+16;out=q+k+r;
+  units=b; in=2*q+2*k+3*r+16;out=q+k+r;
   peak=4ull*in+4ull*out+16ull*q+20ull*r+128;
   if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
   ContactNormTilingData t;

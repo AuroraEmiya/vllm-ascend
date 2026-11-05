@@ -14,19 +14,27 @@ class ContactLayoutKernel {
     uint32_t unit=GetBlockIdx();if(unit>=t.units)return;CopyIn(unit);
     for(;unit<t.units;unit+=GetBlockNum()) {
       if(unit+GetBlockNum()<t.units)CopyIn(unit+GetBlockNum());
-      const uint32_t tiles=(t.heads+t.headTile-1)/t.headTile,row=unit/tiles,head=(unit%tiles)*t.headTile;
+      const uint32_t tiles=(t.heads+t.headTile-1)/t.headTile,row=(unit/tiles)*t.rowTile,head=(unit%tiles)*t.headTile;
       const uint32_t count=t.heads-head<t.headTile?t.heads-head:t.headTile;
+      const uint32_t rowCount=t.rows-row<t.rowTile?t.rows-row:t.rowTile;
       auto in=copyQ.DeQue<bfloat16_t>();
-      Store(yG[(static_cast<uint64_t>(row)*t.heads+head)*t.kvRank],in,count*t.kvRank);copyQ.FreeTensor(in);
+      if(t.rowTile==1)Store(yG[(static_cast<uint64_t>(row)*t.heads+head)*t.kvRank],in,count*t.kvRank);
+      else for(uint32_t rr=0;rr<rowCount;++rr) {
+        // UB is [head,row,KV]; GM is [row,head,KV]. UB stride is in 32B blocks.
+        DataCopyPad(yG[(static_cast<uint64_t>(row+rr)*t.heads+head)*t.kvRank],in[rr*t.kvRank],
+            DataCopyExtParams{static_cast<uint16_t>(count),t.kvRank*2,(rowCount-1)*t.kvRank*2/32,0,0});
+      }
+      copyQ.FreeTensor(in);
     }
   }
  private:
   __aicore__ inline void CopyIn(uint32_t unit) {
-    const uint32_t tiles=(t.heads+t.headTile-1)/t.headTile,row=unit/tiles,head=(unit%tiles)*t.headTile;
+    const uint32_t tiles=(t.heads+t.headTile-1)/t.headTile,row=(unit/tiles)*t.rowTile,head=(unit%tiles)*t.headTile;
     const uint32_t count=t.heads-head<t.headTile?t.heads-head:t.headTile;
+    const uint32_t rowCount=t.rows-row<t.rowTile?t.rows-row:t.rowTile;
     auto in=copyQ.AllocTensor<bfloat16_t>();
     DataCopyPad(in,xG[(static_cast<uint64_t>(head)*t.rows+row)*t.kvRank],
-        DataCopyExtParams{static_cast<uint16_t>(count),t.kvRank*2,(t.rows-1)*t.kvRank*2,0,0},DataCopyPadExtParams<bfloat16_t>{false,0,0,0});
+        DataCopyExtParams{static_cast<uint16_t>(count),rowCount*t.kvRank*2,(t.rows-rowCount)*t.kvRank*2,0,0},DataCopyPadExtParams<bfloat16_t>{false,0,0,0});
     copyQ.EnQue(in);
   }
   ContactLayoutDeviceData t;TPipe pipe;GlobalTensor<bfloat16_t> xG,yG;

@@ -12,11 +12,18 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   if(s.GetDimNum()!=3) return ge::GRAPH_FAILED;
   n=s.GetDim(0);b=s.GetDim(1);k=s.GetDim(2);
   if ((n!=8 && n!=16 && n!=32 && n!=64) || k!=512) return ge::GRAPH_FAILED;
-  ht=std::min(16u,n);units=b*((n+ht-1)/ht);in=out=ht*k;
+  ht=std::min(16u,n);
+  uint32_t rowTile=1;const uint32_t headTiles=(n+ht-1)/ht;
+  while(rowTile<4) {
+    const uint32_t next=rowTile*2;
+    if(((b+next-1)/next)*headTiles<cores || 4ull*ht*next*k>ub)break;
+    rowTile=next;
+  }
+  units=((b+rowTile-1)/rowTile)*headTiles;in=out=ht*rowTile*k;
   peak=4ull*in;
   if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
   ContactLayoutTilingData t;
-  t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
+  t.set_rows(b);t.set_heads(n);t.set_rowTile(rowTile);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
   t.set_units(units);t.set_headTile(ht);t.set_inElements(in);t.set_outElements(out);
   t.SaveToBuffer(context->GetRawTilingData()->GetData(),context->GetRawTilingData()->GetCapacity());
   context->GetRawTilingData()->SetDataSize(t.GetDataSize());

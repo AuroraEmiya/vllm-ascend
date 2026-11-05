@@ -5,7 +5,7 @@
 struct ContactLayoutDeviceData {
   uint32_t rows;
   uint32_t heads;
-  uint32_t qRank;
+  uint32_t rowTile;
   uint32_t kvRank;
   uint32_t nope;
   uint32_t rope;

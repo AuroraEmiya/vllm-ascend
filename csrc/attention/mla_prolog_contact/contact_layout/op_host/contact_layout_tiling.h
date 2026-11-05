@@ -8,7 +8,7 @@ namespace optiling {
 BEGIN_TILING_DATA_DEF(ContactLayoutTilingData)
 TILING_DATA_FIELD_DEF(uint32_t, rows);
 TILING_DATA_FIELD_DEF(uint32_t, heads);
-TILING_DATA_FIELD_DEF(uint32_t, qRank);
+TILING_DATA_FIELD_DEF(uint32_t, rowTile);
 TILING_DATA_FIELD_DEF(uint32_t, kvRank);
 TILING_DATA_FIELD_DEF(uint32_t, nope);
 TILING_DATA_FIELD_DEF(uint32_t, rope);
