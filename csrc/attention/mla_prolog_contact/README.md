@@ -24,3 +24,40 @@ Install the binary CANN run package under `vllm_ascend/_cann_ops_custom` inside
 the task Docker. Source transfer uses GitHub commits and server fetch/checkout.
 The ordinary extension supports `VLLM_ASCEND_ENABLE_CONTACT_SERIAL`; the
 standalone loader builds the identical bridge for isolated operator validation.
+
+The final execution option is static compilation of these same seven children:
+
+```python
+from vllm_ascend.ops.mla_prolog_contact import compile_contact_static
+
+run = compile_contact_static()
+run(*args)  # Lazy static compile/install and first execution; outside capture.
+torch.npu.synchronize()
+graph = torch.npu.NPUGraph()
+with torch.npu.graph(graph):
+    outputs = run(*args)
+graph.replay()
+torch.npu.synchronize()
+```
+
+The factory explicitly sets `super_kernel_optimize=False`; there is no scope or
+binary grouping step. The four matrix calls remain literal `torch.matmul`.
+Callers own all inputs, weights and caches. Update values at stable addresses
+between replays; compile/capture again when shape, dtype or addresses change.
+Compilation/installation and capture costs must be reported separately from
+steady replay. Static caches must be isolated by the custom operator revision.
+
+Final host tiling derives all live storage from the input and queried resources:
+
+| Stage | Work units | UB storage |
+|---|---|---|
+| Norm/cache | B, one combined Q/KV row | Two packed BF16 input/output buffers; FP32 RMS/RoPE scratch |
+| Split/RoPE | B × ceil(N/headTile), headTile=min(N,16) | Two packed BF16 input/output buffers; FP32 RoPE scratch |
+| Query layout | ceil(B/rowTile) × ceil(N/headTile) | Two bound BF16 buffers, 4×headTile×rowTile×KV bytes total |
+
+Layout chooses rowTile from 1/2/4, retaining enough units for the queried AIV
+cores when possible and fitting UB. Its strided DMA handles the partial final
+row group directly. No Vector arithmetic or extra layout operator is needed.
+Norm and Split retain their next-unit prefetch. More norm cores, Vector inverse
+broadcast, launch-local gamma caching and a separate NoPE queue were measured
+and excluded because they did not establish stable gains in this decode domain.

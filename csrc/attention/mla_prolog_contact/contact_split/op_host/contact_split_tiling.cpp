@@ -16,8 +16,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   if (context->GetInputShape(1)->GetStorageShape().GetShapeSize()!=b*r ||
       context->GetInputShape(2)->GetStorageShape().GetShapeSize()!=b*r) return ge::GRAPH_FAILED;
   ht=std::min(16u,n); units=b*((n+ht-1)/ht);
-  in=ht*r+2*r;out=ht*r;
-  peak=4ull*ht*d+4ull*in+4ull*out+4ull*(3*ht*r+2*r);
+  in=ht*(d+r)+2*r;out=ht*(d+r);
+  peak=4ull*in+4ull*out+4ull*(3*ht*r+2*r);
   if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
   ContactSplitTilingData t;
   t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);

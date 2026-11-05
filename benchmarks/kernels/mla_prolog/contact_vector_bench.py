@@ -14,7 +14,9 @@ def identity():
     paths={l.split()[-1] for l in Path('/proc/self/maps').read_text().splitlines()
         if '.so' in l and any(z in l for z in ('opapi','nnopbase','contact_vector','optiling','contact_kernels','cust_opsproto'))}
     return dict(torch=torch.__version__,torch_npu=torch_npu.__version__,soc=torch.npu.get_device_name(0),
-        hf32=bool(torch.npu.matmul.allow_hf32),files={p:sha(p) for p in sorted(paths) if Path(p).is_file()})
+        hf32=bool(torch.npu.matmul.allow_hf32),jit_compile_false=torch.npu.is_jit_compile_false(),
+        mm_bmm_format_nd=torch.npu.get_mm_bmm_format_nd(),
+        files={p:sha(p) for p in sorted(paths) if Path(p).is_file()})
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,required=True)
