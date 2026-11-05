@@ -186,6 +186,9 @@ def main():
                 row.update(status='ERROR', traceback=traceback.format_exc())
             save()
 
+        result['inputs_immutable_before_update'] = all(torch.equal(t.cpu(), data[n]) for n, t in d.items())
+        result['nz_immutable_before_update'] = all(torch.equal(t.cpu(), data[n]) for n, t in nz.items())
+        assert result['inputs_immutable_before_update'] and result['nz_immutable_before_update']
         phase('stable_address_update')
         updated = make_data(case['batch'], case['hidden'], case['heads'], case['seed'] + 1)
         slots = initial_kv.numel() // 512
