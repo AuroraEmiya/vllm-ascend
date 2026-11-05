@@ -103,6 +103,7 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
             "${CMAKE_CURRENT_SOURCE_DIR}/transformer/text_gated_residual_serial/*/op_host/CMakeLists.txt"
             "${CMAKE_CURRENT_SOURCE_DIR}/transformer/text_gated_residual_serial/legacy/*/op_host/CMakeLists.txt"
             "${CMAKE_CURRENT_SOURCE_DIR}/attention/mla_prolog_serial/*/op_host/CMakeLists.txt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/attention/mla_prolog_contact/*/op_host/CMakeLists.txt"
             "${CMAKE_CURRENT_SOURCE_DIR}/attention/mla_prolog_serial/legacy/*/op_host/CMakeLists.txt")
         list(APPEND OP_HOST_CMAKE_FILES ${SERIAL_HOST_CMAKE_FILES})
     endif()

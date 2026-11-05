@@ -1,0 +1,7 @@
+if(BUILD_OPEN_PROJECT)
+  target_sources(op_host_aclnn PRIVATE contact_norm_def.cpp)
+endif()
+add_ops_compile_options(OP_NAME ContactNorm OPTIONS --cce-auto-sync=off -Wno-deprecated-declarations)
+if(NOT BUILD_OPS_RTY_KERNEL)
+  add_modules_sources(OPTYPE contact_norm ACLNNTYPE aclnn)
+endif()

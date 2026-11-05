@@ -1,0 +1,7 @@
+if(BUILD_OPEN_PROJECT)
+  target_sources(op_host_aclnn PRIVATE contact_layout_def.cpp)
+endif()
+add_ops_compile_options(OP_NAME ContactLayout OPTIONS --cce-auto-sync=off -Wno-deprecated-declarations)
+if(NOT BUILD_OPS_RTY_KERNEL)
+  add_modules_sources(OPTYPE contact_layout ACLNNTYPE aclnn)
+endif()

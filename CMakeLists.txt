@@ -102,6 +102,7 @@ set(
 
 pybind11_add_module(vllm_ascend_C ${VLLM_ASCEND_SRC})
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/serial_matmul.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/csrc/attention/mla_prolog_contact/integrate.cmake)
 
 if(SOC_VERSION MATCHES "ascend910_93.*")
   target_compile_definitions(vllm_ascend_C PRIVATE VLLM_ASCEND_ENABLE_SPARSE_KV_OFFLOAD)
