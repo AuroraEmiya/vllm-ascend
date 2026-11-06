@@ -39,10 +39,11 @@ class XMlaSplitRopeKernel {
     qrGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(queryRope));
     kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
     krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
-    pipe.InitBuffer(b0Buf, (t.headTile * 128) * 2);
-    pipe.InitBuffer(b1Buf, (64) * 2);
-    pipe.InitBuffer(b2Buf, 64 * 2);
-    pipe.InitBuffer(b3Buf, (t.workElements) * 2);
+    const uint32_t copies = t.mode >= 30 ? 2 : 1;
+    pipe.InitBuffer(b0Buf, t.headTile * 128 * 2 * copies);
+    pipe.InitBuffer(b1Buf, 64 * 2 * copies);
+    pipe.InitBuffer(b2Buf, 64 * 2 * copies);
+    pipe.InitBuffer(b3Buf, t.workElements * 2 * copies);
     pipe.InitBuffer(f0Buf, t.floatElements * 4);
     pipe.InitBuffer(f1Buf, t.floatElements * 4);
     pipe.InitBuffer(f2Buf, t.floatElements * 4);
@@ -61,6 +62,26 @@ class XMlaSplitRopeKernel {
     idx = indexBuf.Get<int64_t>();
   }
   __aicore__ inline void Process() {
+    if (t.mode >= 30) {
+      SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+      SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+      uint32_t iteration = 0;
+      for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum(), ++iteration) {
+        const uint32_t slot = iteration & 1u;
+        const int32_t eventId = slot ? EVENT_ID1 : EVENT_ID0;
+        WaitFlag<HardEvent::MTE3_MTE2>(eventId);
+        b0 = b0Buf.Get<bfloat16_t>()[slot * t.headTile * 128];
+        b1 = b1Buf.Get<bfloat16_t>()[slot * 64];
+        b2 = b2Buf.Get<bfloat16_t>()[slot * 64];
+        b3 = b3Buf.Get<bfloat16_t>()[slot * t.workElements];
+        SplitAndRope(unit);
+        // Covers both the NoPE DMA and the later QR DMA from this slot.
+        SetFlag<HardEvent::MTE3_MTE2>(eventId);
+      }
+      WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+      WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+      return;
+    }
     for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
       Sync<HardEvent::V_MTE2>();
       Sync<HardEvent::MTE3_MTE2>();
@@ -114,7 +135,7 @@ class XMlaSplitRopeKernel {
     const uint32_t head = (unit % tiles) * tileSize;
     const uint32_t headCount = t.heads - head < tileSize ? t.heads - head : tileSize;
     // Preserve round6's retained DMA selection in the mode8 path.
-    const bool overlapInput = t.mode == 6 || ((t.mode == 8 || t.mode == 10) && t.rows >= 32 && t.rows <= 64);
+    const bool overlapInput = t.mode >= 30 || t.mode == 6 || ((t.mode == 8 || t.mode == 10) && t.rows >= 32 && t.rows <= 64);
     const uint64_t source = static_cast<uint64_t>(row * t.heads + head) * UP_HEAD_WIDTH;
     DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
     DataCopyExtParams copyQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
@@ -151,7 +172,7 @@ class XMlaSplitRopeKernel {
     GatherMask(f3[halfCount], f0, static_cast<uint8_t>(2), true, count, GatherMaskParams(1, 1, 8, 0), reserved);
     PipeBarrier<PIPE_V>();
 
-    if (t.mode == 10) {
+    if (t.mode == 10 || t.mode >= 30) {
       // Gather patterns1/2 select even/odd source elements, not consecutive
       // halves. Retain that required permutation; directly form head-major
       // [even-result32, odd-result32] output with strided V writes.
