@@ -1,0 +1,39 @@
+{
+  "norm": {
+    "cases": 18,
+    "geomean": 1.0624071431785116,
+    "regressions": [
+      {
+        "rows": 256,
+        "mode": 20,
+        "speedup": 0.9778396874688592
+      }
+    ]
+  },
+  "split": {
+    "cases": 18,
+    "geomean": 1.4443595673833867,
+    "regressions": []
+  },
+  "layout": {
+    "cases": 18,
+    "geomean": 1.2232415606464928,
+    "regressions": [
+      {
+        "rows": 33,
+        "mode": 12,
+        "speedup": 0.920295139048413
+      },
+      {
+        "rows": 64,
+        "mode": 12,
+        "speedup": 0.9905800560849208
+      },
+      {
+        "rows": 2048,
+        "mode": 12,
+        "speedup": 0.9427334853652474
+      }
+    ]
+  }
+}

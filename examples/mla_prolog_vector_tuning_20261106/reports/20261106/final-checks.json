@@ -1,0 +1,174 @@
+{
+  "checks": {
+    "ten_source_identified_vector_rounds_pass": true,
+    "all_80_declared_B_S_cases_paired_precision_and_samples_pass": true,
+    "nine_S2_cases_pass": true,
+    "static-grid-s1_all_cases_pass": true,
+    "contract-guards-s0_all_cases_pass": true,
+    "all_100_pipeline_triplets_precision_samples_and_cache_aliases_pass": true,
+    "all_99_comparable_cases_use_final_tested_source": true,
+    "same_address_refresh_cases": 4,
+    "three_matrices_and_three_vectors_one_SuperKernel_trace_pass": true,
+    "torch_matmul_executes_but_whole_grouping_failure_preserved": true,
+    "iteration_emails_sent": 10,
+    "production_source_count_recomputed_from_tested_commit": true
+  },
+  "tested_production_files": [
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUBridge.cpp",
+      "sha256": "0584211ae839e6b7524887b8c24ca1222d5dff3d7c4609af9548e55f22fd8cf6"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUBridge.h",
+      "sha256": "20afcbf147970f6779bbeeddcca3b1701f6b4087aa0b2b05954f5e0dbbbc691d"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUStorageImpl.cpp",
+      "sha256": "5adfaa3aff7f88342a6a01aa37104a9d6a9375ea6c93f795fc2d0afa6080a518"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUStorageImpl.h",
+      "sha256": "efd9d47443a72074b774f2057923ea15144c76e12fb4f6bed98233fa3e5f30c4"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/op_api_common.h",
+      "sha256": "f2891621ab4e748867d67cc99a6395836240e9885549b23d54e636b53767733a"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.cpp",
+      "sha256": "eccf239979418c88e18cd5ec2db08be8cb952b9c20abe464d2edfffa9534d587"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.h",
+      "sha256": "a05201c81b18e95afa2f525949744c060f20f5ff4eb1556d2c0cece3194fbc91"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h",
+      "sha256": "9bf3568dbec5ce13081759aba42cf36a5ac735371cc0602b38c30670d6efb31a"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_def.cpp",
+      "sha256": "19e9a83cce48ca953f3c0790fdeae54b15e4e5d1e0b7d0990a802d3202b68cd9"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_infershape.cpp",
+      "sha256": "7c4886df78c89202b3dd9e1f7e26fd775c5d7c321d172ec13aaf310d46e89f43"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_tiling.cpp",
+      "sha256": "a7b64d8e4a5abc611acbcf773fc6343fdcaec408db8ce652ee912b02524077ae"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_tiling.h",
+      "sha256": "13b24b915520caefc92398d611af488f6f05501bb59e63566f9f215d44027629"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_kernel/x_mla_vector.cpp",
+      "sha256": "102b61a8aba2bec94a3da733e61c1a8928ce643207fefb01951b785a4cb3f9b8"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_kernel/x_mla_vector_tiling.h",
+      "sha256": "85414c376b6f1cb8b78e4bb6722c13277294b56097b196b6278faa3aa60ed89f"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/torch_adpt.h",
+      "sha256": "12f86344190ce5b04a74ddaba3811dfb616fde2f56071765706644c4174cdd71"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_def.cpp",
+      "sha256": "20f5edff4d8c0db7173618b03402b9c7d7d3d4ec4d79ef8314918196a8abcf86"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_infershape.cpp",
+      "sha256": "206c255a4cdb9e08823840bcbdf06b719c95816d6b570e2b0e498c4c132e05b8"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_tiling.cpp",
+      "sha256": "4767dcf5500dea927a015cb50c123019bf501775dc6204ad0a69b96aaea87539"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_tiling.h",
+      "sha256": "38766f89912b8dcc576a7d258deb63616af5093ac6f6650fe331afb1c2257ccb"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_kernel/x_mla_layout.cpp",
+      "sha256": "5645e52d0c7a6d094f6f525f451b01972d6b5b81ca0ad7736a20a6d1ff7846f5"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_kernel/x_mla_layout_tiling.h",
+      "sha256": "ea61bbe19ac2fea8e328e3c8e17d36fe0aa369bdf9632a32b3e9ef02f9b45d78"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_def.cpp",
+      "sha256": "b86f14b6b7b9e7e732de8e2ed2de206fbc41bc739df67ea70c64db78d4352dda"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_infershape.cpp",
+      "sha256": "5142e6cade286c36d9144cbaeb12eb1c9bcd51ba34cd0e78db2ba9c48b2e94aa"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_tiling.cpp",
+      "sha256": "fb724b0dfd8bc453a5b0d4f9f693c99302546751322944a88b3f8b528d2e0a9d"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_tiling.h",
+      "sha256": "76aaaa8f0f262d8dd672106159db6ac9f9ff16a024bde222ced9a7fe6c2017d2"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_kernel/x_mla_norm_cache.cpp",
+      "sha256": "692be550dbe9086a57c2835cfe5207ba23a9456e5dd6fe5144b549e54b59f44d"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_kernel/x_mla_norm_cache_tiling.h",
+      "sha256": "3ad2706a346d9cab2e46a9c0d7dffc5356a192ddff2d6a0e7e127559b9458d57"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_def.cpp",
+      "sha256": "7ec71215e26fb7d3935295a07fe6299b04a705f0b8e5051108fbb663b7781948"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_infershape.cpp",
+      "sha256": "3d47688723565e4efda02ffdd377e54650180da2208e78d996d10a441c8526e7"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_tiling.cpp",
+      "sha256": "301516d6ad19c6fa3c193514b4a06c818b05549405eb10874644b7bf206189ba"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_tiling.h",
+      "sha256": "77697594f0917fe7a37d83ca6d17199120c7e8eab1c0e70bd75bf195432ad7d0"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_kernel/x_mla_split_rope.cpp",
+      "sha256": "6af10f234819b21dff13b774aa5db0efd324efe3a2a8e6d80cf9473b47883819"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_kernel/x_mla_split_rope_tiling.h",
+      "sha256": "f66afc6d89e15eb505dc594acb7e0b8596c92ea4a061125c8a01c536aed7782a"
+    },
+    {
+      "path": "csrc/binding.cpp",
+      "sha256": "e59f08468f27e8db9e07149e0868becc2fba7baed2a2933baaa0a4ff2dd99bf1"
+    },
+    {
+      "path": "mla_superkernel/__init__.py",
+      "sha256": "0a0bd5cd414195b17e4d367a17f953f3d10d956f6c55b511aa87de7ebaddd98b"
+    },
+    {
+      "path": "mla_superkernel/build_extension.py",
+      "sha256": "29873d168493570402031bf70432fb7c4ad433a1a671e6dc90b629d19d7f687c"
+    },
+    {
+      "path": "mla_superkernel/compiler.py",
+      "sha256": "82d3ff86a46b7fe68558ab7c66453a74ca2496dae5cb938a264fe2d5af3cf7e1"
+    },
+    {
+      "path": "mla_superkernel/pipeline.py",
+      "sha256": "157dcedac6ba3f76e732418101df43056f7829edce551c3324e31d7495bddb59"
+    },
+    {
+      "path": "mla_superkernel/serial_matmul.py",
+      "sha256": "e666f2b17fd932638c549e9e2862f510b67ab993d28d2c3a2477be7b1a6423d7"
+    }
+  ]
+}

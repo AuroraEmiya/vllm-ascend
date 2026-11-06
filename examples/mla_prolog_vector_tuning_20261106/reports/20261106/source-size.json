@@ -1,0 +1,176 @@
+{
+  "source": "38252c2f7deb13b9bc085c641d0ca7152b2b00ce",
+  "scope": "Physical lines in shipped production C++/headers, Python orchestration/compiler/loaders. Tests, oracle, build scripts, CMake, docs, generated files and external CANN/Torch implementation excluded.",
+  "baseline_physical_lines": 9785,
+  "baseline_recounted": false,
+  "baseline_snapshot": {
+    "status": "AVAILABLE_PUBLIC_SOURCE_SNAPSHOT",
+    "path": "C:\\Users\\s30083169\\Downloads\\ops-transformer-9.0.0-beta.1-attention-mla_prolog.zip",
+    "archive_sha256": "a93412face226b722ab4bccfe806cb1deb2af6c38b27d5ff89faf5ad05717bc8",
+    "version_label": "9.0.0-beta.1",
+    "runtime_baseline_version": "CANN 9.2.0",
+    "scope": "all production C/C++ in operator op_host and op_kernel, all included branches/architectures; excludes tests/examples/docs/build",
+    "reason": null
+  },
+  "current_physical_lines": 3384,
+  "absolute_change": -6401,
+  "change_percent": -65.41645375574859,
+  "files": [
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUBridge.cpp",
+      "physical_lines": 30
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUBridge.h",
+      "physical_lines": 29
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUStorageImpl.cpp",
+      "physical_lines": 52
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUStorageImpl.h",
+      "physical_lines": 67
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/op_api_common.h",
+      "physical_lines": 772
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.cpp",
+      "physical_lines": 70
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.h",
+      "physical_lines": 9
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h",
+      "physical_lines": 72
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_def.cpp",
+      "physical_lines": 29
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_infershape.cpp",
+      "physical_lines": 26
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_tiling.cpp",
+      "physical_lines": 60
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_tiling.h",
+      "physical_lines": 19
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_kernel/x_mla_vector.cpp",
+      "physical_lines": 371
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_kernel/x_mla_vector_tiling.h",
+      "physical_lines": 14
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/torch_adpt.h",
+      "physical_lines": 73
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_def.cpp",
+      "physical_lines": 37
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_infershape.cpp",
+      "physical_lines": 25
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_tiling.cpp",
+      "physical_lines": 73
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_tiling.h",
+      "physical_lines": 22
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_kernel/x_mla_layout.cpp",
+      "physical_lines": 119
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_kernel/x_mla_layout_tiling.h",
+      "physical_lines": 17
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_def.cpp",
+      "physical_lines": 37
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_infershape.cpp",
+      "physical_lines": 25
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_tiling.cpp",
+      "physical_lines": 69
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_tiling.h",
+      "physical_lines": 22
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_kernel/x_mla_norm_cache.cpp",
+      "physical_lines": 255
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_kernel/x_mla_norm_cache_tiling.h",
+      "physical_lines": 17
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_def.cpp",
+      "physical_lines": 37
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_infershape.cpp",
+      "physical_lines": 25
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_tiling.cpp",
+      "physical_lines": 75
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_tiling.h",
+      "physical_lines": 22
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_kernel/x_mla_split_rope.cpp",
+      "physical_lines": 259
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_kernel/x_mla_split_rope_tiling.h",
+      "physical_lines": 17
+    },
+    {
+      "path": "csrc/binding.cpp",
+      "physical_lines": 30
+    },
+    {
+      "path": "mla_superkernel/__init__.py",
+      "physical_lines": 17
+    },
+    {
+      "path": "mla_superkernel/build_extension.py",
+      "physical_lines": 35
+    },
+    {
+      "path": "mla_superkernel/compiler.py",
+      "physical_lines": 92
+    },
+    {
+      "path": "mla_superkernel/pipeline.py",
+      "physical_lines": 348
+    },
+    {
+      "path": "mla_superkernel/serial_matmul.py",
+      "physical_lines": 16
+    }
+  ]
+}

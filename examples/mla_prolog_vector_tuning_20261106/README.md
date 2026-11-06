@@ -3,6 +3,8 @@
 来自我们自己的 R5 三矩阵 MLA Prolog，非 Contact。源码基点与逐文件来源见 `SOURCE_PROVENANCE.json`。
 此目录可单独编译，不需要 vLLM 或整个 vllm-ascend 仓库。CANN 通用矩阵库仍是外部依赖，矩阵设备实现未复制进来。
 
+追加十轮优化的结果、80组 B/S 表和逐轮数据见 [reports/20261106/REPORT.md](reports/20261106/REPORT.md)。完整 MLA 相对融合基线1.5×的目标未达到；最终组合改善了原串行流程。tiling、双缓冲和事件生命周期的设计见 [TUNING_NOTES.md](TUNING_NOTES.md)。
+
 执行流程：合并下投影 Matmul → Vector RMSNorm + KV RoPE/cache → 上投影 Matmul → Vector split + Q RoPE → 分 head Matmul → Vector 输出寻址（B×S>1）。权重合并/NZ准备只在初始化和显式 refresh 时发生。所有矩阵输入、输出保持 BF16，Vector 内部用 FP32 完成归约和 RoPE。
 
 源码入口：
@@ -34,7 +36,7 @@ python scripts/bench_shape_grid.py --mode S0 --vector-modes adaptive --selection
 
 `scripts/build.sh` 使用当前 CANN 安装内的 `msopgen` 和 CMake 支持生成构建目录，再放入这里的四个 MLA Vector 源码并编译 Torch 绑定。通用构建框架来自本机 CANN 安装，不放入交付包。每次从新的 build 目录开始；构建是否通过见最终 `REPORT.md` 中的新环境验证记录。
 
-若已有我们原 R5 版本编译好的绑定和 OPP，验证 `torch.matmul` 接口时可直接设置 `MLASK_EXISTING_BINDING=/absolute/path/to/vllm_ascend_C.cpython-312-aarch64-linux-gnu.so`、对应的 `ASCEND_CUSTOM_OPP_PATH` 和 `LD_LIBRARY_PATH`，再运行研究脚本；无需为这一步重新编译 Vector 或安装 vLLM。该路径必须是自己的 R5 产物，研究结果会记录文件 hash。
+Torch 绑定的 schema 未变，可通过 `MLASK_EXISTING_BINDING=/absolute/path/to/our/native_binding.so` 复用 ABI 匹配的自有桥接二进制。三个 Vector 的 OPP 必须从本版 host/kernel 重新编译，不能把旧 R5 OPP 用于新的 mode20/21/30/32/12/14。`scripts/build.sh` 在复用绑定时仍会生成并编译本版 OPP；`scripts/env.sh` 选择本目录的新 OPP，结果记录实际加载的二进制 hash。
 
 矩阵后端：
 

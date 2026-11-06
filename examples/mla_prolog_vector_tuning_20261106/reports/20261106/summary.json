@@ -1,0 +1,59 @@
+{
+  "iterations_measured": 10,
+  "iteration_emails_sent": 10,
+  "pipeline_cases": 100,
+  "passing_comparable_cases": 99,
+  "sets": [
+    {
+      "run": "bs-grid-s0",
+      "n": 80,
+      "original_over_candidate_geomean": 1.0667833587627638,
+      "fused_over_candidate_geomean": 0.8083553457413741,
+      "at_least_1_5x_vs_fused": 0,
+      "regressions_vs_original": 2
+    },
+    {
+      "run": "contract-guards-s0",
+      "n": 5,
+      "original_over_candidate_geomean": 1.0258352239914443,
+      "fused_over_candidate_geomean": 0.7215182891714457,
+      "at_least_1_5x_vs_fused": 0,
+      "regressions_vs_original": 1
+    },
+    {
+      "run": "sk-grid-s2",
+      "n": 9,
+      "original_over_candidate_geomean": 1.0713996489294146,
+      "fused_over_candidate_geomean": 0.8532888149290837,
+      "at_least_1_5x_vs_fused": 0,
+      "regressions_vs_original": 0
+    },
+    {
+      "run": "sk-layout-proof-b32",
+      "n": 1,
+      "original_over_candidate_geomean": 1.0730942981251095,
+      "fused_over_candidate_geomean": 0.729668591171601,
+      "at_least_1_5x_vs_fused": 0,
+      "regressions_vs_original": 0
+    },
+    {
+      "run": "static-grid-s1",
+      "n": 3,
+      "original_over_candidate_geomean": 1.047795801415794,
+      "fused_over_candidate_geomean": 0.8672388424576816,
+      "at_least_1_5x_vs_fused": 0,
+      "regressions_vs_original": 1
+    },
+    {
+      "run": "torch-matmul-control-b32",
+      "n": 1,
+      "original_over_candidate_geomean": 1.057124908826234,
+      "fused_over_candidate_geomean": 0.7625165190508597,
+      "at_least_1_5x_vs_fused": 0,
+      "regressions_vs_original": 0
+    }
+  ],
+  "fused_speedup_target": 1.5,
+  "fused_target_met_in_any_measured_case": false,
+  "whole_pipeline_goal_achieved": false
+}

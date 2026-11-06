@@ -1,10 +1,10 @@
 # MLA Prolog 源码包编译与复现
 
-验证 `torch.matmul` 接口可以直接复用我们 R5 版本已经编好的 Vector OPP 和 Torch 绑定。只有从源码重建交付包时，才需要下面的完整编译步骤。
+本版增加了三个 Vector 的新模式，必须构建本版 host/kernel OPP。Torch 绑定的 schema 未变，可显式复用 ABI 匹配的自有绑定以跳过桥接编译；复用绑定不会跳过 OPP 构建。
 
 本次已验证环境：Linux aarch64、Ascend910_9362 / A3、CANN 9.2.0、Python 3.12、PyTorch 2.10.0、Torch-NPU 2.10.0.post7、C++17、CMake、ninja。Torch 的 Python 依赖也须可导入，包括 sympy。通用矩阵实现来自外部 CANN 库；包里提供我们的 L0 V3 调用桥，不包含 CANN GEMM 设备源码。
 
-解压到一个新的、可写目录，使用已经映射空闲 NPU 的开发容器：
+通过 Git 拉取到一个新的、可写目录，在开发容器内构建：
 
 ```bash
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
@@ -16,16 +16,16 @@ source scripts/env.sh
 
 `build.sh` 会调用安装在 CANN 内的 `msopgen` 生成构建模板，放入本包四个 Vector 原型的 host/kernel，构建并安装到本目录的 `install/`，然后编译 `mla_superkernel_native.so`。成功标志是 `STANDALONE_MLA_BINDING_READY`；编译产物 hash 在 `outputs/build-binaries.sha256`。`prepare_build.py` 拒绝复用已有生成目录，重新从头构建时请使用新的源码目录。无需 vLLM 或 vllm-ascend 源码仓。
 
-正常使用源码包新编译的绑定时，不设置 `MLASK_EXISTING_BINDING`。如果只是复用我们以前编好的 R5 产物做接口试验，可显式配置：
+正常构建新的绑定时，不设置 `MLASK_EXISTING_BINDING`。若使用已编译且 ABI 匹配的自有绑定，在构建前显式配置：
 
 ```bash
 export PYTHONPATH=/path/to/this/package:${PYTHONPATH:-}
-export MLASK_EXISTING_BINDING=/path/to/our/R5/vllm_ascend_C.cpython-312-aarch64-linux-gnu.so
-export ASCEND_CUSTOM_OPP_PATH=/path/to/our/R5/vendors/serial_transformer
-export LD_LIBRARY_PATH=$ASCEND_CUSTOM_OPP_PATH/op_api/lib:${LD_LIBRARY_PATH:-}
+export MLASK_EXISTING_BINDING=/path/to/our/mla_superkernel_native.so
+bash scripts/build.sh > build.log 2>&1
+source scripts/env.sh
 ```
 
-这个选项只加载指定文件，没有自动回退。二进制须与当前 Python、Torch-NPU 和 CANN 匹配。
+这个选项只加载指定绑定，没有自动回退。二进制须与当前 Python、Torch-NPU 和 CANN 匹配。新的 OPP 仍安装到本目录 install/；不要把旧 R5 OPP 的路径放在本版 OPP 前面。
 
 三次都使用 `torch.matmul`、保持与 V3 对照相同的 NZ 权重与 Vector 路由：
 
