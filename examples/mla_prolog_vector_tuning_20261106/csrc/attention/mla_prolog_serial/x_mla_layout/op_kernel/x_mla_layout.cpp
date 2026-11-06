@@ -40,11 +40,11 @@ class XMlaLayoutKernel {
     kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
     krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
     // Mode11 uses disjoint ping/pong regions, including the DMA output lifetime.
-    pipe.InitBuffer(b0Buf, t.workElements * (t.mode == 11 ? 4 : 2));
+    pipe.InitBuffer(b0Buf, t.workElements * (t.mode >= 11 ? 4 : 2));
     b0 = b0Buf.Get<bfloat16_t>();
   }
   __aicore__ inline void Process() {
-    if (t.mode == 11) {
+    if (t.mode >= 11) {
       SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
       SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
       uint32_t iteration = 0;
@@ -73,15 +73,27 @@ class XMlaLayoutKernel {
     // contiguous batch-major row. The UB-only mode needs no vector buffers.
     const uint32_t tileHeads = t.headTile;
     const uint32_t tiles = (t.heads + tileHeads - 1) / tileHeads;
-    const uint32_t row = unit / tiles, head = (unit % tiles) * tileHeads;
+    const uint32_t rowTile = t.mode >= 12 ? t.floatElements : 1;
+    const uint32_t row = (unit / tiles) * rowTile, head = (unit % tiles) * tileHeads;
     const uint32_t liveHeads = t.heads - head < tileHeads ? t.heads - head : tileHeads;
-    DataCopyExtParams copy{static_cast<uint16_t>(liveHeads), KV_RANK * sizeof(bfloat16_t),
-                           static_cast<uint32_t>((t.rows - 1) * KV_RANK * sizeof(bfloat16_t)), 0, 0};
+    const uint32_t liveRows = t.rows - row < rowTile ? t.rows - row : rowTile;
+    DataCopyExtParams copy{static_cast<uint16_t>(liveHeads), liveRows * KV_RANK * sizeof(bfloat16_t),
+                           static_cast<uint32_t>((t.rows - liveRows) * KV_RANK * sizeof(bfloat16_t)),
+                           static_cast<uint32_t>((rowTile - liveRows) * KV_RANK * sizeof(bfloat16_t) / 32), 0};
     DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
     auto buffer = b0[bufferOffset];
     DataCopyPad(buffer, xGm[(head * t.rows + row) * KV_RANK], copy, noPad);
     Sync<HardEvent::MTE2_MTE3>();
-    DataCopy(yGm[(static_cast<uint64_t>(row) * t.heads + head) * KV_RANK], buffer, liveHeads * KV_RANK);
+    if (rowTile == 1) {
+      DataCopy(yGm[(static_cast<uint64_t>(row) * t.heads + head) * KV_RANK], buffer, liveHeads * KV_RANK);
+    } else {
+      // DMA strides perform the [head,row,512] -> [row,head,512] mapping.
+      // UB strides are in 32-byte blocks; GM strides above are bytes.
+      DataCopyExtParams write{static_cast<uint16_t>(liveHeads), KV_RANK * sizeof(bfloat16_t),
+                              static_cast<uint32_t>((rowTile - 1) * KV_RANK * sizeof(bfloat16_t) / 32), 0, 0};
+      for (uint32_t r = 0; r < liveRows; ++r)
+        DataCopyPad(yGm[(static_cast<uint64_t>(row + r) * t.heads + head) * KV_RANK], buffer[r * KV_RANK], write);
+    }
   }
   uint32_t cachedGammaWidth;
   TPipe pipe;

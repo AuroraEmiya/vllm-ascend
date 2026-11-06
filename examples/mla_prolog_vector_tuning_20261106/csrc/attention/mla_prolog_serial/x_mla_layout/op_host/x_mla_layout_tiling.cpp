@@ -9,7 +9,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   const auto* a = context->GetAttrs();
   const int64_t mode = *a->GetInt(0), rows = *a->GetInt(1), heads = *a->GetInt(2), slots = *a->GetInt(3);
   const float epsQ = *a->GetFloat(4), epsKv = *a->GetFloat(5);
-  if (!(mode == 2 || mode == 9 || mode == 11) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 || (heads & (heads - 1)) ||
+  if (!(mode == 2 || mode == 9 || mode == 11 || mode == 12) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 || (heads & (heads - 1)) ||
       slots < rows || slots > 1048576 || !std::isfinite(epsQ) || !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0)
     return ge::GRAPH_FAILED;
   platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
@@ -43,13 +43,17 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   uint32_t headTile = 1, units = 0, work = 0, fp32 = 0;
   uint64_t peak = 0;
 
+  const uint32_t rowTile = mode == 12 ? 2 : 1;
+  const uint32_t rowTiles = (rows + rowTile - 1) / rowTile;
   headTile = std::min<int64_t>(heads, 4);
-  while (headTile < 32 && 2 * headTile <= heads && rows * ((heads + 2 * headTile - 1) / (2 * headTile)) >= cores)
+  while (headTile < 32 && 2 * headTile <= heads && rowTiles * ((heads + 2 * headTile - 1) / (2 * headTile)) >= cores)
     headTile *= 2;
   while (headTile > 1 && 1024ull * headTile > ub) headTile /= 2;
-  units = rows * ((heads + headTile - 1) / headTile);
-  work = headTile * 512;
-  peak = (mode == 11 ? 4ull : 2ull) * work;
+  while (headTile > 1 && (mode >= 11 ? 4ull : 2ull) * headTile * rowTile * 512 > ub) headTile /= 2;
+  units = rowTiles * ((heads + headTile - 1) / headTile);
+  work = headTile * rowTile * 512;
+  fp32 = rowTile;  // Layout has no FP32 buffer; this ABI field carries the row tile.
+  peak = (mode >= 11 ? 4ull : 2ull) * work;
 
   if (peak > ub || !units) return ge::GRAPH_FAILED;
   t.set_units(units);

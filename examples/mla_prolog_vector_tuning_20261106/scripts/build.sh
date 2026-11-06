@@ -16,4 +16,9 @@ test "${#packages[@]}" -eq 1
 bash "${packages[0]}" --quiet --install-path="$root/install"
 source "$root/scripts/env.sh"
 python -c 'import mla_superkernel; print("STANDALONE_MLA_BINDING_READY")'
-find "$root/install" "$root/build/binding" -type f \( -name '*.so' -o -name '*.o' \) -exec sha256sum '{}' + > "$root/outputs/build-binaries.sha256"
+find "$root/install" -type f \( -name '*.so' -o -name '*.o' \) -exec sha256sum '{}' + > "$root/outputs/build-binaries.sha256"
+if test -n "${MLASK_EXISTING_BINDING:-}"; then
+    sha256sum "$MLASK_EXISTING_BINDING" >> "$root/outputs/build-binaries.sha256"
+else
+    find "$root/build/binding" -type f \( -name '*.so' -o -name '*.o' \) -exec sha256sum '{}' + >> "$root/outputs/build-binaries.sha256"
+fi
