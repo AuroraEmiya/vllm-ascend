@@ -77,7 +77,7 @@ class XMlaLayoutKernel {
     const uint32_t row = (unit / tiles) * rowTile, head = (unit % tiles) * tileHeads;
     const uint32_t liveHeads = t.heads - head < tileHeads ? t.heads - head : tileHeads;
     const uint32_t liveRows = t.rows - row < rowTile ? t.rows - row : rowTile;
-    DataCopyExtParams copy{static_cast<uint16_t>(liveHeads), liveRows * KV_RANK * sizeof(bfloat16_t),
+    DataCopyExtParams copy{static_cast<uint16_t>(liveHeads), static_cast<uint32_t>(liveRows * KV_RANK * sizeof(bfloat16_t)),
                            static_cast<uint32_t>((t.rows - liveRows) * KV_RANK * sizeof(bfloat16_t)),
                            static_cast<uint32_t>((rowTile - liveRows) * KV_RANK * sizeof(bfloat16_t) / 32), 0};
     DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
