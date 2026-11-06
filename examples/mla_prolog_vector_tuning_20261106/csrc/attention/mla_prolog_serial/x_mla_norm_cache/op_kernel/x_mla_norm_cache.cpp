@@ -28,6 +28,7 @@ class XMlaNormCacheKernel {
                               const XMlaNormCacheTilingData& tiling) {
     t = tiling;
     cachedGammaWidth = 0;
+    cachedGammaKinds = 0;
     outputSlot = 0;
     xGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(x));
     auxGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(aux));
@@ -69,7 +70,15 @@ class XMlaNormCacheKernel {
     for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
       Sync<HardEvent::V_MTE2>();
       if (t.mode != 7 && t.mode < 20) Sync<HardEvent::MTE3_MTE2>();
-      NormAndCache(unit);
+      if (t.mode >= 21) {
+        // Co-locate the two branches of a token while keeping both gammas
+        // resident. The RoPE coefficient window [0,64) remains separate.
+        NormAndCache(2 * unit);
+        Sync<HardEvent::V_MTE2>();
+        NormAndCache(2 * unit + 1);
+      } else {
+        NormAndCache(unit);
+      }
     }
     if (t.mode >= 20) {
       WaitFlag<HardEvent::MTE3_V>(EVENT_ID0);
@@ -96,16 +105,19 @@ class XMlaNormCacheKernel {
 
   __aicore__ inline void Normalize(GlobalTensor<bfloat16_t> input, uint64_t offset, GlobalTensor<bfloat16_t> gamma,
                                    uint32_t width, float eps, GlobalTensor<bfloat16_t> output, uint64_t outputOffset) {
+    const uint32_t gammaOffset = GAMMA_OFFSET + (t.mode >= 21 && width == KV_RANK ? QUERY_RANK : 0);
+    const uint32_t gammaKind = width == QUERY_RANK ? 1u : 2u;
     DataCopy(b0, input[offset], width);
     if (t.mode == 5 || t.mode == 7 || t.mode >= 20) {
       // The width tag also handles a platform with odd blockDim where
       // a core alternates query/KV units. Init invalidates it per launch.
-      const bool loadGamma = cachedGammaWidth != width;
+      const bool loadGamma = t.mode >= 21 ? (cachedGammaKinds & gammaKind) == 0 : cachedGammaWidth != width;
       if (loadGamma) DataCopy(b1, gamma, width);
       Sync<HardEvent::MTE2_V>();
       Cast(f0, b0, RoundMode::CAST_NONE, width);
-      if (loadGamma) Cast(f1[GAMMA_OFFSET], b1, RoundMode::CAST_NONE, width);
+      if (loadGamma) Cast(f1[gammaOffset], b1, RoundMode::CAST_NONE, width);
       cachedGammaWidth = width;
+      cachedGammaKinds |= gammaKind;
     } else {
       // Preserve the mode4 control's load/cast algorithm.
       DataCopy(b1, gamma, width);
@@ -142,7 +154,7 @@ class XMlaNormCacheKernel {
     }
     PipeBarrier<PIPE_V>();
     if (t.mode == 5 || t.mode == 7 || t.mode >= 20)
-      Mul(f0, f0, f1[GAMMA_OFFSET], width);
+      Mul(f0, f0, f1[gammaOffset], width);
     else
       Mul(f0, f0, f1, width);
     PipeBarrier<PIPE_V>();
@@ -219,7 +231,7 @@ class XMlaNormCacheKernel {
       Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
     }
   }
-  uint32_t cachedGammaWidth, outputSlot;
+  uint32_t cachedGammaWidth, cachedGammaKinds, outputSlot;
   TPipe pipe;
   TBuf<TPosition::VECCALC> b0Buf, b1Buf, b2Buf, b3Buf, f0Buf, f1Buf, f2Buf, f3Buf, f4Buf, indexBuf;
   LocalTensor<bfloat16_t> b0, b1, b2, b3;
