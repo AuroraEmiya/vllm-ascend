@@ -39,10 +39,26 @@ class XMlaLayoutKernel {
     qrGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(queryRope));
     kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
     krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
-    pipe.InitBuffer(b0Buf, t.workElements * 2);
+    // Mode11 uses disjoint ping/pong regions, including the DMA output lifetime.
+    pipe.InitBuffer(b0Buf, t.workElements * (t.mode == 11 ? 4 : 2));
     b0 = b0Buf.Get<bfloat16_t>();
   }
   __aicore__ inline void Process() {
+    if (t.mode == 11) {
+      SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+      SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+      uint32_t iteration = 0;
+      for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum(), ++iteration) {
+        const int32_t eventId = (iteration & 1u) ? EVENT_ID1 : EVENT_ID0;
+        WaitFlag<HardEvent::MTE3_MTE2>(eventId);
+        RestoreLayout(unit, (iteration & 1u) * t.workElements);
+        SetFlag<HardEvent::MTE3_MTE2>(eventId);
+      }
+      // Consume both tokens before returning to a parent SuperKernel.
+      WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+      WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+      return;
+    }
     for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
       Sync<HardEvent::V_MTE2>();
       Sync<HardEvent::MTE3_MTE2>();
@@ -52,7 +68,7 @@ class XMlaLayoutKernel {
   }
 
  private:
-  __aicore__ inline void RestoreLayout(uint32_t unit) {
+  __aicore__ inline void RestoreLayout(uint32_t unit, uint32_t bufferOffset = 0) {
     // Read all heads of one row with a strided GM DMA, then write one
     // contiguous batch-major row. The UB-only mode needs no vector buffers.
     const uint32_t tileHeads = t.headTile;
@@ -62,9 +78,10 @@ class XMlaLayoutKernel {
     DataCopyExtParams copy{static_cast<uint16_t>(liveHeads), KV_RANK * sizeof(bfloat16_t),
                            static_cast<uint32_t>((t.rows - 1) * KV_RANK * sizeof(bfloat16_t)), 0, 0};
     DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
-    DataCopyPad(b0, xGm[(head * t.rows + row) * KV_RANK], copy, noPad);
+    auto buffer = b0[bufferOffset];
+    DataCopyPad(buffer, xGm[(head * t.rows + row) * KV_RANK], copy, noPad);
     Sync<HardEvent::MTE2_MTE3>();
-    DataCopy(yGm[(static_cast<uint64_t>(row) * t.heads + head) * KV_RANK], b0, liveHeads * KV_RANK);
+    DataCopy(yGm[(static_cast<uint64_t>(row) * t.heads + head) * KV_RANK], buffer, liveHeads * KV_RANK);
   }
   uint32_t cachedGammaWidth;
   TPipe pipe;

@@ -9,7 +9,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   const auto* a = context->GetAttrs();
   const int64_t mode = *a->GetInt(0), rows = *a->GetInt(1), heads = *a->GetInt(2), slots = *a->GetInt(3);
   const float epsQ = *a->GetFloat(4), epsKv = *a->GetFloat(5);
-  if (!(mode == 2 || mode == 9) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 || (heads & (heads - 1)) ||
+  if (!(mode == 2 || mode == 9 || mode == 11) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 || (heads & (heads - 1)) ||
       slots < rows || slots > 1048576 || !std::isfinite(epsQ) || !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0)
     return ge::GRAPH_FAILED;
   platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
@@ -49,7 +49,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   while (headTile > 1 && 1024ull * headTile > ub) headTile /= 2;
   units = rows * ((heads + headTile - 1) / headTile);
   work = headTile * 512;
-  peak = 2ull * work;
+  peak = (mode == 11 ? 4ull : 2ull) * work;
 
   if (peak > ub || !units) return ge::GRAPH_FAILED;
   t.set_units(units);
