@@ -28,6 +28,7 @@ class XMlaNormCacheKernel {
                               const XMlaNormCacheTilingData& tiling) {
     t = tiling;
     cachedGammaWidth = 0;
+    outputSlot = 0;
     xGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(x));
     auxGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(aux));
     gammaQGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(gammaQ));
@@ -42,7 +43,7 @@ class XMlaNormCacheKernel {
     pipe.InitBuffer(b0Buf, (1536) * 2);
     pipe.InitBuffer(b1Buf, (1536) * 2);
     pipe.InitBuffer(b2Buf, 64 * 2);
-    pipe.InitBuffer(b3Buf, (1536) * 2);
+    pipe.InitBuffer(b3Buf, (1536) * 2 * (t.mode >= 20 ? 2 : 1));
     pipe.InitBuffer(f0Buf, t.floatElements * 4);
     pipe.InitBuffer(f1Buf, t.floatElements * 4);
     pipe.InitBuffer(f2Buf, t.floatElements * 4);
@@ -61,19 +62,42 @@ class XMlaNormCacheKernel {
     idx = indexBuf.Get<int64_t>();
   }
   __aicore__ inline void Process() {
+    if (t.mode >= 20) {
+      SetFlag<HardEvent::MTE3_V>(EVENT_ID0);
+      SetFlag<HardEvent::MTE3_V>(EVENT_ID1);
+    }
     for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
       Sync<HardEvent::V_MTE2>();
-      if (t.mode != 7) Sync<HardEvent::MTE3_MTE2>();
+      if (t.mode != 7 && t.mode < 20) Sync<HardEvent::MTE3_MTE2>();
       NormAndCache(unit);
     }
-    Sync<HardEvent::MTE3_S>();
+    if (t.mode >= 20) {
+      WaitFlag<HardEvent::MTE3_V>(EVENT_ID0);
+      WaitFlag<HardEvent::MTE3_V>(EVENT_ID1);
+    } else {
+      Sync<HardEvent::MTE3_S>();
+    }
   }
 
  private:
+  __aicore__ inline void AcquireOutput() {
+    if (t.mode < 20) return;
+    const int32_t eventId = outputSlot ? EVENT_ID1 : EVENT_ID0;
+    WaitFlag<HardEvent::MTE3_V>(eventId);
+    b3 = b3Buf.Get<bfloat16_t>()[outputSlot * QUERY_RANK];
+  }
+
+  __aicore__ inline void ReleaseOutput() {
+    if (t.mode < 20) return;
+    const int32_t eventId = outputSlot ? EVENT_ID1 : EVENT_ID0;
+    SetFlag<HardEvent::MTE3_V>(eventId);
+    outputSlot ^= 1u;
+  }
+
   __aicore__ inline void Normalize(GlobalTensor<bfloat16_t> input, uint64_t offset, GlobalTensor<bfloat16_t> gamma,
                                    uint32_t width, float eps, GlobalTensor<bfloat16_t> output, uint64_t outputOffset) {
     DataCopy(b0, input[offset], width);
-    if (t.mode == 5 || t.mode == 7) {
+    if (t.mode == 5 || t.mode == 7 || t.mode >= 20) {
       // The width tag also handles a platform with odd blockDim where
       // a core alternates query/KV units. Init invalidates it per launch.
       const bool loadGamma = cachedGammaWidth != width;
@@ -117,7 +141,7 @@ class XMlaNormCacheKernel {
       Muls(f0, f0, inverse, width);
     }
     PipeBarrier<PIPE_V>();
-    if (t.mode == 5 || t.mode == 7)
+    if (t.mode == 5 || t.mode == 7 || t.mode >= 20)
       Mul(f0, f0, f1[GAMMA_OFFSET], width);
     else
       Mul(f0, f0, f1, width);
@@ -125,15 +149,17 @@ class XMlaNormCacheKernel {
     // Mode7 may still have a previous norm/RoPE DMA reading b3.
     // Input b0 and FP32 arithmetic can proceed before this exact reuse.
     if (t.mode == 7) Sync<HardEvent::MTE3_V>();
+    AcquireOutput();
     Cast(b3, f0, RoundMode::CAST_RINT, width);
     Sync<HardEvent::V_MTE3>();
     DataCopy(output[outputOffset], b3, width);
+    ReleaseOutput();
   }
 
   __aicore__ inline void Rope(GlobalTensor<bfloat16_t> input, uint64_t offset, uint32_t row,
                               GlobalTensor<bfloat16_t> output, uint64_t outputOffset) {
     Sync<HardEvent::V_MTE2>();
-    if (t.mode != 7) Sync<HardEvent::MTE3_MTE2>();
+    if (t.mode != 7 && t.mode < 20) Sync<HardEvent::MTE3_MTE2>();
     DataCopy(b0, input[offset], ROPE_DIM);
     DataCopy(b1, sinGm[row * ROPE_DIM], ROPE_DIM);
     DataCopy(b2, cosGm[row * ROPE_DIM], ROPE_DIM);
@@ -161,9 +187,11 @@ class XMlaNormCacheKernel {
     PipeBarrier<PIPE_V>();
     // Protect the KV output still being read from this same b3.
     if (t.mode == 7) Sync<HardEvent::MTE3_V>();
+    AcquireOutput();
     Cast(b3, f4, RoundMode::CAST_RINT, ROPE_DIM);
     Sync<HardEvent::V_MTE3>();
     DataCopy(output[outputOffset], b3, ROPE_DIM);
+    ReleaseOutput();
   }
 
   __aicore__ inline void NormAndCache(uint32_t unit) {
@@ -191,7 +219,7 @@ class XMlaNormCacheKernel {
       Rope(auxGm, row * (KV_RANK + ROPE_DIM) + KV_RANK, row, krGm, static_cast<uint64_t>(slot) * ROPE_DIM);
     }
   }
-  uint32_t cachedGammaWidth;
+  uint32_t cachedGammaWidth, outputSlot;
   TPipe pipe;
   TBuf<TPosition::VECCALC> b0Buf, b1Buf, b2Buf, b3Buf, f0Buf, f1Buf, f2Buf, f3Buf, f4Buf, indexBuf;
   LocalTensor<bfloat16_t> b0, b1, b2, b3;
