@@ -23,7 +23,7 @@ for name,_ in ops:
                           [dict(name=n,param_type='required',type='float') for n in ('eps_q','eps_kv')]))
 schema=build/'mla-operators.json'
 schema.write_text(json.dumps(spec,indent=2)+'\n')
-subprocess.run(['msopgen','gen','-i',str(schema),'-c','ai_core-ascend910_93','-f','aclnn','-lan','cpp','-out',str(target)],check=True)
+subprocess.run(['msopgen','gen','-i',str(schema),'-op','XMlaNormCache','-c','ai_core-ascend910_93','-f','aclnn','-lan','cpp','-out',str(target)],check=True)
 projects=[p.parent for p in target.rglob('CMakePresets.json') if (p.parent/'op_host').is_dir()]
 if len(projects)!=1: raise RuntimeError(f'Unexpected generated project roots: {projects}')
 project=projects[0]
