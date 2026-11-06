@@ -16,7 +16,7 @@ def main():
     p.add_argument('--stage', choices=['norm', 'split', 'layout', 'all'], default='all')
     p.add_argument('--rows', default='1,8,31,32,64,128,512,2048')
     p.add_argument('--heads', type=int, default=32)
-    p.add_argument('--modes', default='baseline', help='baseline or comma-separated kernel mode integers')
+    p.add_argument('--modes', default='baseline', help='baseline, adaptive, or comma-separated kernel mode integers')
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--samples', type=int, default=20)
     p.add_argument('--calls', type=int, default=50)
@@ -29,6 +29,7 @@ def main():
         import torch_npu
         import mla_superkernel
         from mla_superkernel.reference import rms, rope_reference, compare
+        from mla_superkernel.pipeline import MlaPrologSerial
         torch.set_num_threads(4); torch.npu.set_device(0)
         torch.npu.config.allow_internal_format = True
         result['environment'] = {'torch': torch.__version__, 'torch_npu': torch_npu.__version__, 'device': torch.npu.get_device_name(0)}
@@ -46,7 +47,14 @@ def main():
                  'index': index.npu(), 'gq':gq.npu(), 'gkv':gkv.npu()}
             for stage in stages:
                 baseline = (7 if rows >= 32 else 4) if stage=='norm' else 10 if stage=='split' else 2
-                modes = [baseline] if a.modes=='baseline' else list(dict.fromkeys([baseline]+list(map(int,a.modes.split(',')))))
+                if a.modes=='adaptive':
+                    policy=object.__new__(MlaPrologSerial)
+                    policy._matrix_backend='v3_nz';policy._split_head_tile=16;policy._head_layout='row'
+                    policy._vector_backend='staged';policy._vector_policy='tuned';policy._vector_modes=(None,None,None)
+                    candidate=policy.vector_modes(rows)[['norm','split','layout'].index(stage)]
+                    modes=list(dict.fromkeys([baseline,candidate]))
+                else:
+                    modes = [baseline] if a.modes=='baseline' else list(dict.fromkeys([baseline]+list(map(int,a.modes.split(',')))))
                 if stage == 'norm':
                     x = rnd((rows,2112)); expected = [rms(x[:,:1536].double(),gq.double()),
                         rms(x[:,1536:2048].double(),gkv.double()), rope_reference(x[:,2048:].double(),sine.double(),cosine.double())]

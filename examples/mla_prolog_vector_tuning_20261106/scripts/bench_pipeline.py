@@ -28,6 +28,8 @@ def main():
     p=argparse.ArgumentParser()
     p.add_argument('--batch',type=int,required=True);p.add_argument('--sequence',type=int,default=1)
     p.add_argument('--hidden',type=int,default=7168);p.add_argument('--heads',type=int,default=32)
+    p.add_argument('--block-size',type=int,choices=[16,128],default=16)
+    p.add_argument('--index-mode',choices=['edges','reverse','strided'],default='edges')
     p.add_argument('--mode',choices=['S0','S1','S2'],default='S2')
     p.add_argument('--backend',choices=['v3_nz','torch_matmul_nz'],default='v3_nz')
     p.add_argument('--vector-modes',default='baseline')
@@ -50,12 +52,15 @@ def main():
             from torch_npu.dynamo.npugraph_ex._acl_concrete_graph import static_kernel
             static_kernel._compute_opc_compile_jobs=lambda:'4'
         except ImportError:pass
-        case=dict(batch=a.batch,sequence=a.sequence,hidden=a.hidden,heads=a.heads,seed=20261106,block_size=16,index_mode='edges')
+        case=dict(batch=a.batch,sequence=a.sequence,hidden=a.hidden,heads=a.heads,seed=20261106,block_size=a.block_size,index_mode=a.index_mode)
         data,initial_kv,initial_kr=build_case(case);dev={k:v.npu() for k,v in data.items()}
         pipeline=MlaPrologSerial(*(dev[k] for k in ('wdq','wuq','wuk','wdkv','gq','gkv')))
         pipeline._matrix_backend=a.backend
+        pipeline._vector_policy='baseline'
         candidate=copy.copy(pipeline)
-        if a.vector_modes!='baseline':
+        if a.vector_modes=='adaptive':
+            candidate._vector_policy='tuned'
+        elif a.vector_modes!='baseline':
             candidate._vector_modes=tuple(map(int,a.vector_modes.split(',')))
         weights={k:torch_npu.npu_format_cast(dev[k],29) for k in ('wdq','wuq','wdkv')}
         stream=torch.npu.Stream();graphs={};outputs={};owners={};caches={}
@@ -145,10 +150,15 @@ def main():
                 result['variants'][label]['same_address_update']=c
                 if not c['pass'] or not result['refresh_addresses_preserved']:result['variants'][label]['status']='REFRESH_FAILURE'
         result['loaded_binaries']={}
+        result['vector_routes']={'original':pipeline.vector_modes(a.batch*a.sequence),
+                                 'candidate':candidate.vector_modes(a.batch*a.sequence)}
         for line in Path('/proc/self/maps').read_text().splitlines():
             f=Path(line.split()[-1])
             if f.is_file() and f.suffix=='.so' and any(v in str(f) for v in ('mla_superkernel_native','mla_public_baseline','mlask_transformer','libopapi','libnnopbase')):result['loaded_binaries'][str(f)]=hashlib.sha256(f.read_bytes()).hexdigest()
         result['status']='PASS' if all(r['status']=='PASS' for r in result['variants'].values()) else 'VARIANT_FAILURE'
+        if a.mode!='S0':
+            from inspect_static_metadata import inspect
+            result['static_metadata']=inspect(out)
     except Exception as exc:result.update(status='ERROR',error=str(exc),traceback=traceback.format_exc())
     result['finished']=datetime.now(timezone.utc).isoformat()
     (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({k:v for k,v in result.items() if k not in ('loaded_binaries',)},indent=2))

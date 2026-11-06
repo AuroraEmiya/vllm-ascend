@@ -81,6 +81,7 @@ class MlaPrologSerial:
         self._head_layout = "row"
         self._split_head_tile = 16
         self._vector_modes = (None, None, None)
+        self._vector_policy = "tuned"
         values = self._matrix_values()
         self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in values)
         self._matrix_nd = tuple(torch_npu.npu_format_cast(value.t().contiguous(), ND_FORMAT) for value in values)
@@ -128,6 +129,29 @@ class MlaPrologSerial:
     def matrix_route(rows):
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
+
+    def vector_modes(self, rows):
+        """Select tested Vector algorithms using static token/head metadata.
+
+        Explicit mode overrides are available for reproducible experiments.
+        The original algorithms remain selectable with _vector_policy='baseline'.
+        Tiling inside each host operator still queries the actual UB/AIV limits.
+        """
+        modern_matrix = self._matrix_backend in ("v3", "v3_nz") or self._matrix_backend.startswith("torch_matmul")
+        defaults = (
+            7 if rows >= NORM_OUTPUT_OVERLAP_MIN_BATCH else 4,
+            10 if modern_matrix and self._split_head_tile == 16 else
+            (6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1),
+            9 if self._head_layout == "tile8" else 2,
+        )
+        if self._vector_policy == "tuned" and self._vector_backend == "staged" and modern_matrix:
+            defaults = (
+                21 if rows >= 512 else 20,
+                32 if rows >= 32 else 30,
+                14 if rows <= 32 else 12,
+            )
+        return tuple(default if override is None else override
+                     for default, override in zip(defaults, self._vector_modes))
 
     def compile_superkernel(
         self,
@@ -186,6 +210,7 @@ class MlaPrologSerial:
         sine, cosine = rope_sin.view(rows, ROPE_DIM), rope_cos.view(rows, ROPE_DIM)
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
+        norm_mode, split_mode, layout_mode = self.vector_modes(rows)
 
         use_v3 = self._matrix_backend in ("v3", "v3_nz")
         use_nz = self._matrix_backend == "v3_nz"
@@ -211,7 +236,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            self._vector_modes[0] if self._vector_modes[0] is not None else (7 if rows >= NORM_OUTPUT_OVERLAP_MIN_BATCH else 4),
+            norm_mode,
             rows,
             slots,
             normalized_q,
@@ -239,9 +264,7 @@ class MlaPrologSerial:
             sine,
             cosine,
             index,
-            self._vector_modes[1] if self._vector_modes[1] is not None else 10
-            if (use_v3 or self._matrix_backend.startswith("torch_matmul")) and self._split_head_tile == 16
-            else (6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1),
+            split_mode,
             rows,
             slots,
             head_q,
@@ -267,7 +290,7 @@ class MlaPrologSerial:
                     sine,
                     cosine,
                     index,
-                    self._vector_modes[2] if self._vector_modes[2] is not None else (9 if self._head_layout == "tile8" else 2),
+                    layout_mode,
                     rows,
                     slots,
                     query,
@@ -298,9 +321,9 @@ class MlaPrologSerial:
     ):
         if self._vector_backend == "legacy":
             op = torch.ops._C_ascend.mla_prolog_vector_out
-        elif mode in (0, 3, 4, 5, 7):
+        elif mode in (0, 3, 4, 5, 7, 20, 21, 22, 23):
             op = torch.ops._C_ascend.mla_norm_cache_out
-        elif mode in (1, 6, 8, 10):
+        elif mode in (1, 6, 8, 10, 30, 31, 32):
             op = torch.ops._C_ascend.mla_split_rope_out
         else:
             op = torch.ops._C_ascend.mla_layout_out
