@@ -9,7 +9,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   const auto* a = context->GetAttrs();
   const int64_t mode = *a->GetInt(0), rows = *a->GetInt(1), heads = *a->GetInt(2), slots = *a->GetInt(3);
   const float epsQ = *a->GetFloat(4), epsKv = *a->GetFloat(5);
-  if (!(mode == 0 || mode == 3 || mode == 4 || mode == 5 || mode == 7 || mode == 20 || mode == 21) || rows < 1 || rows > 65536 || heads < 1 ||
+  if (!(mode == 0 || mode == 3 || mode == 4 || mode == 5 || mode == 7 || mode == 20 || mode == 21 || mode == 22 || mode == 23) || rows < 1 || rows > 65536 || heads < 1 ||
       heads > 128 || (heads & (heads - 1)) || slots < rows || slots > 1048576 || !std::isfinite(epsQ) ||
       !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0)
     return ge::GRAPH_FAILED;
@@ -55,7 +55,10 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   t.set_floatElements(fp32);
   t.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
   context->GetRawTilingData()->SetDataSize(t.GetDataSize());
-  context->SetBlockDim(std::min(units, cores));
+  // A measured control for launch/parallelism versus more work per AIV core.
+  const uint32_t coreBudget = mode == 22 ? std::max(1u, cores / 2)
+                              : mode == 23 ? std::max(1u, cores / 4) : cores;
+  context->SetBlockDim(std::min(units, coreBudget));
   context->SetTilingKey(0);
   context->GetWorkspaceSizes(1)[0] = 0;
   return ge::GRAPH_SUCCESS;
