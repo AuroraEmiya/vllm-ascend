@@ -1,0 +1,9 @@
+build/
+install/
+outputs/
+.cache/
+__pycache__/
+*.pyc
+csrc/build/
+csrc/build_out/
+csrc/third_party/
