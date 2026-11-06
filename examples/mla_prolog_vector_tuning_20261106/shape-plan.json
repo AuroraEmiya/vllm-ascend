@@ -1,0 +1,524 @@
+{
+  "source_url": "https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/aolapi/context/ops-transformer/aclnnMlaProlog.md",
+  "source_kind": "public API constraints; synthetic workload",
+  "retrieved": "2026-11-06",
+  "documented": {
+    "B": [
+      0,
+      65536
+    ],
+    "S": "no fixed upper bound on A2/A3",
+    "T_for_packed_interface": [
+      0,
+      1048576
+    ]
+  },
+  "implemented_nonempty_subset": {
+    "B": [
+      1,
+      65536
+    ],
+    "S_min": 1,
+    "B_times_S_max": 65536,
+    "dtype": "BF16",
+    "hidden": 7168,
+    "heads": 32,
+    "block_sizes": [
+      16,
+      128
+    ]
+  },
+  "sampling": "geometric step x2 in main grid; explicit axis tails and non-power-of-two branch neighbors",
+  "cases": [
+    {
+      "batch": 1,
+      "sequence": 1,
+      "rows": 1,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 2,
+      "rows": 2,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 4,
+      "rows": 4,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 8,
+      "rows": 8,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 16,
+      "rows": 16,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 32,
+      "rows": 32,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 64,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 1,
+      "sequence": 128,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 1,
+      "rows": 2,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 2,
+      "rows": 4,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 4,
+      "rows": 8,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 8,
+      "rows": 16,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 16,
+      "rows": 32,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 32,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 64,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 2,
+      "sequence": 128,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 1,
+      "rows": 4,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 2,
+      "rows": 8,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 4,
+      "rows": 16,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 8,
+      "rows": 32,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 16,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 32,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 64,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 4,
+      "sequence": 128,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 1,
+      "rows": 8,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 2,
+      "rows": 16,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 4,
+      "rows": 32,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 8,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 16,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 32,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 64,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 8,
+      "sequence": 128,
+      "rows": 1024,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 1,
+      "rows": 16,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 2,
+      "rows": 32,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 4,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 8,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 16,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 32,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 64,
+      "rows": 1024,
+      "category": "main_grid"
+    },
+    {
+      "batch": 16,
+      "sequence": 128,
+      "rows": 2048,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 1,
+      "rows": 32,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 2,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 4,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 8,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 16,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 32,
+      "rows": 1024,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 64,
+      "rows": 2048,
+      "category": "main_grid"
+    },
+    {
+      "batch": 32,
+      "sequence": 128,
+      "rows": 4096,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 1,
+      "rows": 64,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 2,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 4,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 8,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 16,
+      "rows": 1024,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 32,
+      "rows": 2048,
+      "category": "main_grid"
+    },
+    {
+      "batch": 64,
+      "sequence": 64,
+      "rows": 4096,
+      "category": "main_grid"
+    },
+    {
+      "batch": 128,
+      "sequence": 1,
+      "rows": 128,
+      "category": "main_grid"
+    },
+    {
+      "batch": 128,
+      "sequence": 2,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 128,
+      "sequence": 4,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 128,
+      "sequence": 8,
+      "rows": 1024,
+      "category": "main_grid"
+    },
+    {
+      "batch": 128,
+      "sequence": 16,
+      "rows": 2048,
+      "category": "main_grid"
+    },
+    {
+      "batch": 128,
+      "sequence": 32,
+      "rows": 4096,
+      "category": "main_grid"
+    },
+    {
+      "batch": 256,
+      "sequence": 1,
+      "rows": 256,
+      "category": "main_grid"
+    },
+    {
+      "batch": 256,
+      "sequence": 2,
+      "rows": 512,
+      "category": "main_grid"
+    },
+    {
+      "batch": 256,
+      "sequence": 4,
+      "rows": 1024,
+      "category": "main_grid"
+    },
+    {
+      "batch": 256,
+      "sequence": 8,
+      "rows": 2048,
+      "category": "main_grid"
+    },
+    {
+      "batch": 256,
+      "sequence": 16,
+      "rows": 4096,
+      "category": "main_grid"
+    },
+    {
+      "batch": 512,
+      "sequence": 1,
+      "rows": 512,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1024,
+      "sequence": 1,
+      "rows": 1024,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 4096,
+      "sequence": 1,
+      "rows": 4096,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 16384,
+      "sequence": 1,
+      "rows": 16384,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 65536,
+      "sequence": 1,
+      "rows": 65536,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 256,
+      "rows": 256,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 512,
+      "rows": 512,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 1024,
+      "rows": 1024,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 4096,
+      "rows": 4096,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 31,
+      "rows": 31,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 33,
+      "rows": 33,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 127,
+      "rows": 127,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 1,
+      "sequence": 129,
+      "rows": 129,
+      "category": "axis_or_boundary"
+    },
+    {
+      "batch": 3,
+      "sequence": 17,
+      "rows": 51,
+      "category": "axis_or_boundary"
+    }
+  ],
+  "iteration_probe_rows": [
+    1,
+    8,
+    31,
+    32,
+    64,
+    128,
+    512,
+    2048
+  ]
+}
