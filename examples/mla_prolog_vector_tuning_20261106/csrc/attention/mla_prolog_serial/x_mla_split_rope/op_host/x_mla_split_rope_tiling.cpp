@@ -9,7 +9,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   const auto* a = context->GetAttrs();
   const int64_t mode = *a->GetInt(0), rows = *a->GetInt(1), heads = *a->GetInt(2), slots = *a->GetInt(3);
   const float epsQ = *a->GetFloat(4), epsKv = *a->GetFloat(5);
-  if (!(mode == 1 || mode == 6 || mode == 8 || mode == 10 || mode == 30 || mode == 31) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 ||
+  if (!(mode == 1 || mode == 6 || mode == 8 || mode == 10 || mode == 30 || mode == 31 || mode == 32) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 ||
       (heads & (heads - 1)) || slots < rows || slots > 1048576 || !std::isfinite(epsQ) || !std::isfinite(epsKv) ||
       epsQ <= 0 || epsKv <= 0)
     return ge::GRAPH_FAILED;
@@ -55,7 +55,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   units = rows * ((heads + headTile - 1) / headTile);
   work = headTile * 64;
   fp32 = std::max(256u, work);
-  peak = (mode >= 30 ? 4ull : 2ull) * (headTile * 128 + 128 + work) + 20ull * fp32 + 32;
+  const uint32_t inputHeadWidth = mode >= 32 ? 192 : 128;
+  peak = (mode >= 30 ? 4ull : 2ull) * (headTile * inputHeadWidth + 128 + work) + 20ull * fp32 + 32;
   if (peak > ub || !units) return ge::GRAPH_FAILED;
   t.set_units(units);
   t.set_headTile(headTile);

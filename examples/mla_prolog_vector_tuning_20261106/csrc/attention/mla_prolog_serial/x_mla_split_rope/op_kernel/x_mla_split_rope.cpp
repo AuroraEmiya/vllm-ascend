@@ -40,7 +40,7 @@ class XMlaSplitRopeKernel {
     kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
     krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
     const uint32_t copies = t.mode >= 30 ? 2 : 1;
-    pipe.InitBuffer(b0Buf, t.headTile * 128 * 2 * copies);
+    pipe.InitBuffer(b0Buf, t.headTile * (t.mode >= 32 ? 192 : 128) * 2 * copies);
     pipe.InitBuffer(b1Buf, 64 * 2 * copies);
     pipe.InitBuffer(b2Buf, 64 * 2 * copies);
     pipe.InitBuffer(b3Buf, t.workElements * 2 * copies);
@@ -70,7 +70,7 @@ class XMlaSplitRopeKernel {
         const uint32_t slot = iteration & 1u;
         const int32_t eventId = slot ? EVENT_ID1 : EVENT_ID0;
         WaitFlag<HardEvent::MTE3_MTE2>(eventId);
-        b0 = b0Buf.Get<bfloat16_t>()[slot * t.headTile * 128];
+        b0 = b0Buf.Get<bfloat16_t>()[slot * t.headTile * (t.mode >= 32 ? 192 : 128)];
         b1 = b1Buf.Get<bfloat16_t>()[slot * 64];
         b2 = b2Buf.Get<bfloat16_t>()[slot * 64];
         b3 = b3Buf.Get<bfloat16_t>()[slot * t.workElements];
@@ -140,9 +140,14 @@ class XMlaSplitRopeKernel {
     DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
     DataCopyExtParams copyQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
                             ROPE_DIM * sizeof(bfloat16_t), 0, 0};
-    DataCopyPad(b0, xGm[source], copyQ, noPad);
+    if (t.mode >= 32)
+      DataCopy(b0, xGm[source], headCount * UP_HEAD_WIDTH);
+    else
+      DataCopyPad(b0, xGm[source], copyQ, noPad);
     Sync<HardEvent::MTE2_MTE3>();
-    DataCopyExtParams writeQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t), 0,
+    // UB source stride is in 32-byte blocks; GM destination stride is bytes.
+    DataCopyExtParams writeQ{static_cast<uint16_t>(headCount), NOPE_DIM * sizeof(bfloat16_t),
+                             static_cast<uint32_t>(t.mode >= 32 ? ROPE_DIM * sizeof(bfloat16_t) / 32 : 0),
                              static_cast<uint32_t>((t.rows - 1) * NOPE_DIM * sizeof(bfloat16_t)), 0};
     DataCopyPad(yGm[(head * t.rows + row) * NOPE_DIM], b0, writeQ);
     // Mode1 retains the original shared-b0 wait. Mode6 never overwrites
@@ -151,7 +156,9 @@ class XMlaSplitRopeKernel {
 
     DataCopyExtParams copyRope{static_cast<uint16_t>(headCount), ROPE_DIM * sizeof(bfloat16_t),
                                NOPE_DIM * sizeof(bfloat16_t), 0, 0};
-    if (overlapInput)
+    if (t.mode >= 32) {
+      // The full head is already in b0; the cast below extracts only RoPE.
+    } else if (overlapInput)
       DataCopyPad(b3, xGm[source + NOPE_DIM], copyRope, noPad);
     else
       DataCopyPad(b0, xGm[source + NOPE_DIM], copyRope, noPad);
@@ -160,7 +167,10 @@ class XMlaSplitRopeKernel {
     Sync<HardEvent::MTE2_V>();
     const uint32_t count = headCount * ROPE_DIM;
     const uint32_t halfCount = count / 2;
-    if (overlapInput)
+    if (t.mode >= 32)
+      Cast(f0, b0[NOPE_DIM], RoundMode::CAST_NONE, static_cast<uint64_t>(ROPE_DIM),
+           static_cast<uint8_t>(headCount), UnaryRepeatParams(1, 1, 8, 12));
+    else if (overlapInput)
       Cast(f0, b3, RoundMode::CAST_NONE, count);
     else
       Cast(f0, b0, RoundMode::CAST_NONE, count);
