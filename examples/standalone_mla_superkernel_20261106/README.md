@@ -26,7 +26,9 @@ python scripts/run_study.py --backend v3_nz --mode S2 --batch 1 --output outputs
 python scripts/run_study.py --backend torch_matmul_nz --mode S2 --batch 1 --output outputs/torch-matmul-nz-S2-B1 --profile
 ```
 
-`scripts/build.sh` 仅编四个 MLA Vector 原型和 Torch 绑定。底层 CANN 构建支持可能下载 json、abseil、protobuf、makeself；需要可访问官方源的网络及受信任 CA。离线环境可设置 `MLASK_DEPENDENCY_DIR=/absolute/path/to/prepared/third_party`；这是第三方构建依赖目录，不是 vLLM 源码。必要的第三方依赖源/编译产物需可写；可先复制到本项目内。不得关闭 TLS 验证。
+`scripts/build.sh` 使用当前 CANN 安装内的 `msopgen` 和 CMake 支持生成构建目录，再放入这里的四个 MLA Vector 源码并编译 Torch 绑定。通用构建框架来自本机 CANN 安装，不放入交付包。每次从新的 build 目录开始；构建是否通过见最终 `REPORT.md` 中的新环境验证记录。
+
+若已有我们原 R5 版本编译好的绑定和 OPP，验证 `torch.matmul` 接口时可直接设置 `MLASK_EXISTING_BINDING=/absolute/path/to/vllm_ascend_C.cpython-312-aarch64-linux-gnu.so`、对应的 `ASCEND_CUSTOM_OPP_PATH` 和 `LD_LIBRARY_PATH`，再运行研究脚本；无需为这一步重新编译 Vector 或安装 vLLM。该路径必须是自己的 R5 产物，研究结果会记录文件 hash。
 
 矩阵后端：
 

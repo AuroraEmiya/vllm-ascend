@@ -82,7 +82,7 @@ def main():
         result['loaded_binaries']={}
         for line in Path('/proc/self/maps').read_text().splitlines():
             file=Path(line.split()[-1])
-            if file.is_file() and file.suffix=='.so' and any(x in str(file) for x in ('mla_superkernel_native','mlask_transformer','libopapi','libnnopbase')):
+            if file.is_file() and file.suffix=='.so' and any(x in str(file) for x in ('mla_superkernel_native','vllm_ascend_C','serial_transformer','mlask_transformer','libopapi','libnnopbase')):
                 result['loaded_binaries'][str(file)]=hashlib.sha256(file.read_bytes()).hexdigest()
         result['status']='PASS' if result['initial_correctness']['pass'] and result['same_address_updates']['pass'] and result['addresses_preserved'] else 'CORRECTNESS_FAILURE'
         result['grouping']='REQUIRES_STATIC_METADATA_AND_DEVICE_TRACE_REVIEW'

@@ -5,15 +5,15 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 : "${ASCEND_HOME_PATH:?source the selected CANN set_env.sh first}"
 jobs=${MAX_JOBS:-4}
 mkdir -p "$root/build" "$root/install" "$root/outputs"
-args=(--pkg --ops=x_mla_vector,x_mla_norm_cache,x_mla_split_rope,x_mla_layout --soc=ascend910_93 --vendor_name=mlask --ccache false "-j$jobs")
-if [[ -n ${MLASK_DEPENDENCY_DIR:-} ]]; then
-    args+=("--cann_3rd_lib_path=$MLASK_DEPENDENCY_DIR")
-fi
-(
-    cd "$root/csrc"
-    bash build.sh "${args[@]}"
-)
-bash "$root/csrc/build_out/cann-ops-transformer-mlask_linux-aarch64.run" --quiet --install-path="$root/install"
+python "$root/scripts/prepare_build.py"
+project=$(cat "$root/build/opp-project-path.txt")
+cmake -S "$project" -B "$project/build_out" --preset=default \
+    -DASCEND_CANN_PACKAGE_PATH="$ASCEND_HOME_PATH" \
+    -DCMAKE_PREFIX_PATH="$ASCEND_HOME_PATH/tools/tikcpp/ascendc_kernel_cmake"
+cmake --build "$project/build_out" --target binary package -j"$jobs"
+mapfile -t packages < <(find "$project/build_out" -maxdepth 2 -type f -name '*.run')
+test "${#packages[@]}" -eq 1
+bash "${packages[0]}" --quiet --install-path="$root/install"
 source "$root/scripts/env.sh"
 python -c 'import mla_superkernel; print("STANDALONE_MLA_BINDING_READY")'
 find "$root/install" "$root/build/binding" -type f \( -name '*.so' -o -name '*.o' \) -exec sha256sum '{}' + > "$root/outputs/build-binaries.sha256"
