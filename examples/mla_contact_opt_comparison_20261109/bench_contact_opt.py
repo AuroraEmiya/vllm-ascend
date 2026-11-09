@@ -53,6 +53,8 @@ def main():
         result['environment'] = {'torch': torch.__version__, 'torch_npu': torch_npu.__version__,
             'device': str(torch.npu.get_device_properties(0)), 'soc': torch_npu._C._npu_get_soc_version(),
             'cann': os.environ['ASCEND_HOME_PATH'], 'custom_opp': os.environ['ASCEND_CUSTOM_OPP_PATH']}
+        result['fused_api_schemas'] = {name: str(getattr(torch.ops.npu, name).default._schema)
+            for name in ('npu_mla_prolog_v2', 'npu_mla_prolog_v3')}
         baseline_so = a.own_root / 'build/baseline-binding/mla_public_baseline.so'
         torch.ops.load_library(str(baseline_so))
         case = dict(batch=a.batch, sequence=a.sequence, hidden=a.hidden, heads=a.heads,
@@ -107,7 +109,7 @@ def main():
                 query, _ = torch.ops.cann_ops_transformer.mla_prolog_query_contact(
                     nt, False, a.batch, a.sequence, 3)
             return query, qr
-        labels = ['aclnnMlaProlog','MlaPrologV3','own_S0']
+        labels = ['aclnnMlaProlog','MlaPrologV2','MlaPrologV3','own_S0']
         if a.own_sk: labels += ['own_S2']
         labels += ['contact','contact_opt','contact_opt2','contact_opt3','contact_opt4',
                    'compose_norm_opt_opt4','compose_norm_opt2_opt4']
@@ -137,6 +139,8 @@ def main():
                 owner = None
                 if label == 'aclnnMlaProlog':
                     fn = lambda: torch.ops.mla_benchmark.fused_public(dev['x'],weights['wdq'],weights['wuq'],dev['wuk'],weights['wdkv'],dev['gq'],dev['gkv'],dev['sin'],dev['cos'],dev['index'],kv,kr)
+                elif label == 'MlaPrologV2':
+                    fn = lambda: torch_npu.npu_mla_prolog_v2(dev['x'],weights['wdq'],weights['wuq'],dev['wuk'],weights['wdkv'],dev['gq'],dev['gkv'],dev['sin'],dev['cos'],dev['index'],kv,kr,cache_mode='PA_BSND')
                 elif label == 'MlaPrologV3':
                     fn = lambda: torch_npu.npu_mla_prolog_v3(dev['x'],weights['wdq'],weights['wuq'],dev['wuk'],weights['wdkv'],dev['gq'],dev['gkv'],dev['sin'],dev['cos'],kv,kr,cache_index=dev['index'],cache_mode='PA_BSND',query_norm_flag=False,weight_quant_mode=0,kv_cache_quant_mode=0,query_quant_mode=0,ckvkr_repo_mode=0,quant_scale_repo_mode=0,tile_size=128,qc_qr_scale=1.,kc_scale=1.)
                 elif label.startswith('own_'):
@@ -158,7 +162,7 @@ def main():
                 graph.replay(); torch.npu.synchronize()
                 r['graph_precision'] = check_outputs(canonical(value,caches[label]),caches[label],reference,cpu,initial_kv,initial_kr)
                 r['raw_output_metadata'] = [{'shape':list(v.shape),'stride':list(v.stride()),'dtype':str(v.dtype)} for v in value]
-                if label.startswith('own_') or label == 'aclnnMlaProlog':
+                if label.startswith('own_') or label in ('aclnnMlaProlog', 'MlaPrologV2'):
                     r['returned_cache_alias'] = [value[i+2].data_ptr()==caches[label][i].data_ptr() for i in (0,1)]
                 if label.startswith('contact'):
                     r['unused_outputs_empty'] = [value[i].numel()==0 for i in (2,3,4)]
