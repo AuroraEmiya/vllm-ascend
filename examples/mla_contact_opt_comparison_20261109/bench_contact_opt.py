@@ -29,6 +29,7 @@ def main():
     p.add_argument('--own-sk', action='store_true')
     p.add_argument('--contact-rank', type=int, choices=[2, 3], default=2)
     p.add_argument('--profile', action='store_true')
+    p.add_argument('--norm-opt-build-failed', action='store_true')
     p.add_argument('--only', default='all')
     a = p.parse_args()
     out = a.output.resolve(); out.mkdir(parents=True, exist_ok=False)
@@ -48,7 +49,7 @@ def main():
         except ImportError:
             pass
         result['environment'] = {'torch': torch.__version__, 'torch_npu': torch_npu.__version__,
-            'device': str(torch.npu.get_device_properties(0)), 'soc': torch_npu._C._npu_getSocVersion(),
+            'device': str(torch.npu.get_device_properties(0)), 'soc': torch_npu._C._npu_get_soc_version(),
             'cann': os.environ['ASCEND_HOME_PATH'], 'custom_opp': os.environ['ASCEND_CUSTOM_OPP_PATH']}
         baseline_so = a.own_root / 'build/baseline-binding/mla_public_baseline.so'
         torch.ops.load_library(str(baseline_so))
@@ -115,6 +116,9 @@ def main():
                     value[1].view(a.batch,a.sequence,a.heads,64), *kvkr)
         for label in labels:
             r = {'status': 'STARTED', 'samples_us': []}; result['variants'][label] = r
+            if a.norm_opt_build_failed and label == 'compose_norm_opt_opt4':
+                r.update(status='SKIPPED_SOURCE_BUILD_FAILURE', reason='Latest norm_opt kernel has no function name at lines 144-145; original compile error preserved')
+                continue
             # The unmodified Contact V0 documents a T>=128 hang. Keep it as
             # unsupported coverage; do not silently replace it in opt1..4.
             if rows >= 128 and label in ('contact','contact_opt','contact_opt2','contact_opt3','contact_opt4'):
