@@ -30,6 +30,8 @@ def main():
     p.add_argument('--contact-rank', type=int, choices=[2, 3], default=2)
     p.add_argument('--profile', action='store_true')
     p.add_argument('--norm-opt-build-failed', action='store_true')
+    p.add_argument('--norm-opt2-timeout-guard', type=int, default=512,
+                   help='Exclude diagnostic composition at/above the observed 2026-11-09 T512 runtime stall; zero disables the guard')
     p.add_argument('--only', default='all')
     a = p.parse_args()
     out = a.output.resolve(); out.mkdir(parents=True, exist_ok=False)
@@ -116,8 +118,13 @@ def main():
                     value[1].view(a.batch,a.sequence,a.heads,64), *kvkr)
         for label in labels:
             r = {'status': 'STARTED', 'samples_us': []}; result['variants'][label] = r
+            result['current_variant'] = label
+            (out/'result-partial.json').write_text(json.dumps(result,indent=2)+'\n')
             if a.norm_opt_build_failed and label == 'compose_norm_opt_opt4':
                 r.update(status='SKIPPED_SOURCE_BUILD_FAILURE', reason='Latest norm_opt kernel has no function name at lines 144-145; original compile error preserved')
+                continue
+            if a.norm_opt2_timeout_guard and rows >= a.norm_opt2_timeout_guard and label == 'compose_norm_opt2_opt4':
+                r.update(status='SKIPPED_OBSERVED_STALL_GUARD', reason='Initial T512 full composition reported a three-minute runtime timeout and was terminated; larger cases excluded after this observed failure, not claimed to pass')
                 continue
             # The unmodified Contact V0 documents a T>=128 hang. Keep it as
             # unsupported coverage; do not silently replace it in opt1..4.
@@ -162,6 +169,7 @@ def main():
             except Exception as exc:
                 r.update(status='ERROR',error=str(exc),traceback=traceback.format_exc())
             print(json.dumps({'variant':label,'status':r['status']}),flush=True)
+            (out/'result-partial.json').write_text(json.dumps(result,indent=2)+'\n')
         rng = random.Random(20261109)
         for _ in range(a.samples):
             order = list(graphs); rng.shuffle(order)

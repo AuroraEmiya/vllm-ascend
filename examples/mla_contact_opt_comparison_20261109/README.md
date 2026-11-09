@@ -14,6 +14,12 @@ ops and remain separate from those unchanged default entries. They do not consum
 an optimization round. The documented original V0 T>=128 hang is retained as a
 coverage exclusion for unchanged full entries, not silently replaced.
 
+The initial 2026-11-09 norm_opt2+opt4 composition at T512 stalled and the runtime
+reported a three-minute synchronization timeout. Its original run log is kept.
+The follow-up harness defaults to an explicit T>=512 diagnostic-composition
+exclusion and writes partial status before every variant. It does not claim
+that the excluded larger cases passed. No production algorithm was changed.
+
 CPU FP64 independent oracle, whole-output fused comparison, untouched cache exact,
 and return/alias checks are outside timing. Profiling is also outside Event timing.
 No new production kernel or matrix implementation is introduced.
