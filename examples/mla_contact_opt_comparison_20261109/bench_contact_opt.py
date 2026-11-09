@@ -122,6 +122,9 @@ def main():
             r = {'status': 'STARTED', 'samples_us': []}; result['variants'][label] = r
             result['current_variant'] = label
             (out/'result-partial.json').write_text(json.dumps(result,indent=2)+'\n')
+            if label == 'MlaPrologV2' and a.sequence > 16:
+                r.update(status='SKIPPED_PUBLIC_V2_S_RANGE', reason='Installed Torch-NPU V2 public API doc limits rank3 S to 0..16; preserve this shape for other versions without claiming V2 support')
+                continue
             if a.norm_opt_build_failed and label == 'compose_norm_opt_opt4':
                 r.update(status='SKIPPED_SOURCE_BUILD_FAILURE', reason='Latest norm_opt kernel has no function name at lines 144-145; original compile error preserved')
                 continue

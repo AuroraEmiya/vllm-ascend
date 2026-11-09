@@ -30,3 +30,5 @@ paired Events under outputs/horizontal-v2. Earlier outputs/cases are retained as
 the earlier test batch; their medians are not merged into the expanded table.
 All 18 planned shapes include own S2 in this expansion. The same documented
 Contact exclusions and observed-stall guard remain active.
+Installed Torch-NPU V2 public documentation restricts rank3 S to 0..16;
+S>16 is explicitly excluded for V2 and retained for the other measured versions.
