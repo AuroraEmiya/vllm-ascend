@@ -4,7 +4,7 @@
   "scope": "PR20878 A3 baseline source and runner only",
   "sha256": {
     "baseline_kernels.py": "40a3957a7d4c78c84270f932d70f3170b87931382ff3450be515cf5ae264505c",
-    "benchmark.py": "20049ffadcff3816acfa96f1ff9e7110f7226abc97a8183eeef301e7d795acd7",
+    "benchmark.py": "9084a0570608b318964fd88735951e7e140ceb2e30e6ac799b0a27d53dc89eb2",
     "run_cases.py": "0922e4ede21b073337074463cdd389f3f400d9b90d8b6f9a0615c168f113c0ce",
     "cases-sort-native.csv": "a0d32167627716bf273c468c9a5a78e6c743e7065d3194bb4bd989b14b742f31",
     "cases-dcp.csv": "c21546ae7356421c05dba34d7159788e845828d18b782fcff85210e7cdcd841a",

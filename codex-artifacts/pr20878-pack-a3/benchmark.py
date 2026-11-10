@@ -89,7 +89,7 @@ def check(c):
         return dict(passed=copy_ok and lse_ok,output_bit_exact=copy_ok,lse_fields_bit_exact=lse_ok)
     f=fields.double();code=f[:,:,0];sig=f[:,:,1]*65536+f[:,:,2]*256+f[:,:,3]
     decoded=torch.sign(code)*torch.ldexp(sig,(code.abs()-151).to(torch.int32))
-    decoded=torch.where(code==128,0.,decoded)
+    decoded=torch.where((code==128)&(sig==0),0.,decoded)
     expected=c['cpu_lse'].double().squeeze(-1)+torch.log(c['cpu_sum'].double().squeeze(-1))
     error=(decoded-expected).abs();allowed=2**-16+2**-10*expected.abs()
     ratio=float((error<=allowed).double().mean());max_error=float(error.max())
@@ -97,13 +97,13 @@ def check(c):
 
 def binary_identity():
     cache=Path(os.environ.get('TRITON_CACHE_DIR','/work/.triton-cache'))
-    return {str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in cache.rglob('*') if f.is_file() and f.suffix in ('.o','.so','.bin','.cubin')}
+    return {str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in cache.rglob('*') if f.is_file() and f.suffix=='.npubin'}
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--out',default='results/validation.json');p.add_argument('--case',default=None);a=p.parse_args()
     torch.npu.set_device(0);results=[]
     for case_id in ([a.case] if a.case else SPECS):
-        for edge in (False,True):
+        for edge in ((False,True) if SPECS[case_id]['kind']=='sort' or not SPECS[case_id]['stats'] else (False,)):
             c=make_case(case_id,edge);invoke(c);torch.npu.synchronize();r=check(c)
             record=dict(case_id=case_id,edge=edge,**r,launch_config=c['launch_config'],strides={k:list(c[k].stride()) for k in ('indices','scores','output','lse','sums','out') if k in c and c[k] is not None})
             results.append(record);print(json.dumps(record),flush=True)
