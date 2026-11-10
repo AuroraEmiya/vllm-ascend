@@ -7,12 +7,13 @@
   "source_only": true,
   "sha256": {
     "candidate_kernels.py": "5225e6335e90c572a60490c0d6c466dbb636b5eed1955074938191fa1a70d7f8",
-    "general_benchmark.py": "c54204d50f63beb8afe65cc4317d11b27b90ced3f5b337b4367e750feb16cfe0",
+    "general_benchmark.py": "5509dd29dfe253e6cfc6627b11f8fc31f2f423f474bd90af965f90a0a783deb3",
     "general-cases.json": "3d5378b636d79fc9e675a32b1468050a2cbb55b3925623755c30a512070ba73c",
     "run_general.py": "ac8400bef239ef4792eb9916ac3be967ce5be6061b37d17365c79828777ab688",
     "cases-opt-actual.csv": "d11259f2108ab5dddced672a21b7aeea0079f94db108aa9c5ec857274464ad41",
     "cases-opt-sortactual.csv": "1420a1a23d0711c58656643375bcda3f7cb7fdc547cdefeab5c5aee432b4cd24",
     "cases-opt-sort.csv": "218a3bac4d87f97874aae3589059b505b25ac86d0dcda4c4c61a3ec79399e0af",
-    "cases-opt-dcp.csv": "f13d012cc576686fbba198e064de07cb4eb7ad92862e1d350f49bf4173fc0e84"
+    "cases-opt-dcp.csv": "f13d012cc576686fbba198e064de07cb4eb7ad92862e1d350f49bf4173fc0e84",
+    "write_admitted.py": "e97c792e8199de92575f9de0a807267ebb364ae5cee5b6df091abd6160ebd001"
   }
 }

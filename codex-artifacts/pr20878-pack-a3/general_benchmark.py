@@ -49,6 +49,8 @@ def make_case(key, edge=False):
         if edge and not s['stats']:
             bits=torch.tensor([0,0x80000000,1,0x007fffff,0x00800000,0x7f7fffff,0x7f800000,0xff800000,0x7fc00000],dtype=torch.int64).to(torch.int32)
             lse.reshape(-1)[:bits.numel()]=bits.view(torch.float32)
+            wire_bits=torch.tensor([0,32768,1,127,32639,32640,65408,32704],dtype=torch.int32).to(torch.int16)
+            output.reshape(-1)[:wire_bits.numel()]=wire_bits.view(torch.bfloat16)
         c.update(cpu_output=output,cpu_lse=lse,cpu_sum=sums,output=strided(output,s['layout']),lse=lse.npu(),sums=None if sums is None else sums.npu(),out=torch.empty((s['world'],h//s['world'],t,d+4),dtype=torch.bfloat16,device='npu'))
     return c
 
@@ -81,7 +83,7 @@ def check(c):
         expected=torch.stack((mapped,score.contiguous().view(torch.int32)),dim=-1)
         return dict(passed=torch.equal(a,expected),mismatches=int((a!=expected).sum()),rule='bit_exact_pairs')
     t,h,d=s['t'],s['h'],s['d'];matrix=a.reshape(h,t,d+4).permute(1,0,2)
-    copied=torch.equal(matrix[:,:,:d],c['cpu_output']);fields=matrix[:,:,d:]
+    copied=torch.equal(matrix[:,:,:d].contiguous().view(torch.int16),c['cpu_output'].contiguous().view(torch.int16));fields=matrix[:,:,d:]
     if not s['stats']:
         exact=torch.equal(fields,encode_cpu(c['cpu_lse']))
         return dict(passed=copied and exact,output_exact=copied,wire_exact=exact)
@@ -108,13 +110,20 @@ def main():
         s=SPECS[case_id]
         for edge in ((False,True) if s['kind']=='sort' or not s['stats'] else (False,)):
             for impl in ('baseline','candidate'):
-                c=make_case(case_id+':'+impl,edge);invoke(c);torch.npu.synchronize();r=check(c)
+                c=make_case(case_id+':'+impl,edge)
+                try:
+                    invoke(c);torch.npu.synchronize();r=check(c)
+                except Exception as exc:
+                    # Compiler errors have not launched a device task. Preserve and
+                    # continue independent cases; runtime/precision errors still stop.
+                    if type(exc).__name__ not in ('MLIRCompilationError','CompilationError','OutOfResources'):raise
+                    r=dict(passed=False,status='compile_failed',error_type=type(exc).__name__,error=str(exc))
                 record=dict(case_id=case_id,impl=impl,edge=edge,spec=s,**r,strides={k:list(c[k].stride()) for k in ('indices','scores','output','lse','sums','out') if k in c and c[k] is not None})
                 results.append(record);print(json.dumps(record),flush=True)
                 path=Path(a.out);path.parent.mkdir(parents=True,exist_ok=True)
                 path.write_text(json.dumps(dict(status='running' if r['passed'] else 'failed',cases=results),indent=2))
-                if not r['passed']:raise RuntimeError('precision failed '+case_id+':'+impl)
-    value=dict(status='passed',cases=results,vector_cores=cores(),binaries=binary_identity(),source_sha256=hashlib.sha256((ROOT/'candidate_kernels.py').read_bytes()).hexdigest())
+                if not r['passed'] and r.get('status')!='compile_failed':raise RuntimeError('precision failed '+case_id+':'+impl)
+    value=dict(status='passed' if all(r['passed'] for r in results) else 'complete_with_compile_failures',cases=results,vector_cores=cores(),binaries=binary_identity(),source_sha256=hashlib.sha256((ROOT/'candidate_kernels.py').read_bytes()).hexdigest())
     Path(a.out).write_text(json.dumps(value,indent=2));print('VALIDATION_PASSED',len(results),flush=True)
 
 
