@@ -59,15 +59,12 @@ def invoke(c):
         ix,sc=c['indices'],c['scores'];fn=base._pack_sorted_candidates if c['impl']=='baseline' else cand._pack_sorted_candidates_radix
         result=fn[(min(t,nc),)](ix,sc,c['out'],t,INDEX_ROW=ix.stride(0),INDEX_COL=ix.stride(1),SCORE_ROW=sc.stride(0),SCORE_COL=sc.stride(1),WORLD=s['world'],RANK=s['rank'],INTERLEAVE=s['interleave'],LOG_BLOCK=int(math.log2(s['k'])),multibuffer=False)
         c['compiled']=[result]
-    elif c['impl']=='baseline' or s['d']>1024:
+    else:
         def launch(fn,grid,*args,**kwargs):
+            if c['impl']!='baseline' and fn is base._pack_dcp_output_lse_batched_kernel:
+                fn=cand._pack_dcp_fields_fused
             c['compiled']=[fn[grid](*args,**kwargs)]
         base._launch_pack_dcp_output_lse(c['output'],c['lse'],c['sums'],c['out'],1,nc,launch)
-    else:
-        o,l,u=c['output'],c['lse'],c['sums']
-        if u is None:u=l
-        d=s['d'];br=max(1,1024//d);bd=1<<(d-1).bit_length();bp=1<<(br*(d+4)-1).bit_length()
-        c['compiled']=[cand._pack_dcp_packets[(min(nc,s['h']*((t+br-1)//br)),)](o,l,u,c['out'],*o.stride(),l.stride(0),l.stride(1),u.stride(0),u.stride(1),T=t,H=s['h'],D=d,FROM_STATS=s['stats'],BR=br,BD=bd,BP=bp,multibuffer=False)]
     return c['out']
 
 
@@ -98,8 +95,8 @@ def check(c):
 def kernel_name(params):
     case_id,impl=params.split(':');s=SPECS[case_id]
     if s['kind']=='sort':return '_pack_sorted_candidates' if impl=='baseline' else '_pack_sorted_candidates_radix'
-    if impl!='baseline' and s['d']<=1024:return '_pack_dcp_packets'
     batched=s['t']*s['h']>=8*cores() and (s['layout']!='feature2' or (s['d']==512 and s['t']>=128))
+    if impl!='baseline' and batched:return '_pack_dcp_fields_fused'
     return '_pack_dcp_output_lse_batched_kernel' if batched else '_pack_dcp_output_lse_kernel'
 
 

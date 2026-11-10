@@ -75,3 +75,94 @@ def _pack_dcp_packets(
         packed = tl.where(packet_col < D, copied, fields)
         active = (lane < BR * (D + 4)) & (start + lane // (D + 4) < T)
         tl.store(send + (head * T + start) * (D + 4) + lane, packed, active)
+
+# DCP iteration 3: fuse four field writes, keep affine output copy.
+@triton.jit
+def _pack_dcp_fields_fused(
+    output_ptr,
+    lse_ptr,
+    sum_ptr,
+    send_ptr,
+    output_stride_t,
+    output_stride_h,
+    output_stride_d,
+    lse_stride_t,
+    lse_stride_h,
+    sum_stride_t,
+    sum_stride_h,
+    send_stride_rank,
+    send_stride_scatter,
+    send_stride_replicated,
+    send_stride_d,
+    local_scatter_size,
+    head_dim,
+    num_heads,
+    total_rows,
+    SCATTER_TOKENS: tl.constexpr,
+    LSE_PACK_DIM: tl.constexpr,
+    FROM_STATS: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_ROWS: tl.constexpr,
+    OUTPUT_HEAD_MAJOR: tl.constexpr = False,
+):
+    program_idx = tl.program_id(0)
+    num_programs = tl.num_programs(0)
+    d_offsets = tl.arange(0, BLOCK_D)[None, :]
+
+    if OUTPUT_HEAD_MAJOR:
+        num_tokens = total_rows // num_heads
+        token_tiles = tl.cdiv(num_tokens, BLOCK_ROWS)
+        tiles = token_tiles * num_heads
+    else:
+        tiles = tl.cdiv(total_rows, BLOCK_ROWS)
+    for tile in range(program_idx, tiles, num_programs):
+        if OUTPUT_HEAD_MAJOR:
+            # Keep each tile inside one head so both copies have affine strides.
+            head_idx = (tile // token_tiles).to(tl.int64)
+            token_idx = (tile % token_tiles) * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)[:, None]
+            row_mask = token_idx < num_tokens
+            token_idx = token_idx.to(tl.int64)
+        else:
+            linear_idx = tile * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)[:, None]
+            row_mask = linear_idx < total_rows
+            token_idx = (linear_idx // num_heads).to(tl.int64)
+            head_idx = (linear_idx % num_heads).to(tl.int64)
+
+        if OUTPUT_HEAD_MAJOR:
+            send_base = (head_idx * num_tokens + token_idx) * send_stride_replicated
+        else:
+            if SCATTER_TOKENS:
+                rank_idx = token_idx // local_scatter_size
+                scatter_idx = token_idx % local_scatter_size
+                replicated_idx = head_idx
+            else:
+                rank_idx = head_idx // local_scatter_size
+                scatter_idx = head_idx % local_scatter_size
+                replicated_idx = token_idx
+            send_base = (
+                rank_idx * send_stride_rank
+                + scatter_idx * send_stride_scatter
+                + replicated_idx * send_stride_replicated
+            )
+        output_offsets = token_idx * output_stride_t + head_idx * output_stride_h + d_offsets * output_stride_d
+        d_mask = (d_offsets < head_dim) & row_mask
+        output = tl.load(output_ptr + output_offsets, mask=d_mask, other=0.0)
+        tl.store(send_ptr + send_base + d_offsets * send_stride_d, output, mask=d_mask)
+
+        lse = tl.load(lse_ptr + token_idx * lse_stride_t + head_idx * lse_stride_h, mask=row_mask, other=0.0).to(
+            tl.float32
+        )
+        if FROM_STATS:
+            total = tl.load(sum_ptr + token_idx * sum_stride_t + head_idx * sum_stride_h, mask=row_mask, other=1.0).to(
+                tl.float32
+            )
+            lse = lse + tl.log(total)
+        if LSE_PACK_DIM == 1:
+            tl.store(send_ptr + send_base + head_dim * send_stride_d, lse.to(send_ptr.dtype.element_ty), mask=row_mask)
+        else:
+            exponent_code, significand_hi, significand_mid, significand_lo = _encode_lse_fields(lse)
+            # Interleave even/odd fields to preserve [code,hi,mid,lo] order.
+            fields = tl.reshape(tl.join(tl.join(exponent_code, significand_mid),
+                                        tl.join(significand_hi, significand_lo)), (BLOCK_ROWS, 4))
+            tl.store(send_ptr + send_base + (head_dim + tl.arange(0, 4)[None, :]) * send_stride_d,
+                     fields.to(send_ptr.dtype.element_ty), mask=row_mask)
