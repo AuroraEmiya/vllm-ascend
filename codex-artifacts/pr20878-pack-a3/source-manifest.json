@@ -1,0 +1,23 @@
+{
+  "repository": "Dawn952/vllm-ascend",
+  "ref": "25b9bd583f7b01e1b011df4459a194ee84fe81fe",
+  "capture_ref": "00f38bc483455a4ace930b0bdc799f29948d28da",
+  "definitions_ast_equal": true,
+  "sha256": {
+    "source\\tests\\test_dcp_a2a.py": "9033e71f489f666ed52c8c06993a68edaf57ca52af878593929f09dc7b530fdd",
+    "source\\tests\\test_dcp_candidates.py": "ad29a83127f48aa2791e034ee5f61aa7f9826375e2556b853558742d977dff2c",
+    "source\\vllm_ascend\\attention\\indexer.py": "e9f9b7875f7732a0bf8edfe953566ad7f737a3e8443c85cc15ea6e6271d1f0ec",
+    "source\\vllm_ascend\\attention\\context_parallel\\common_cp.py": "bf38549016f220413aeb8800958ac0d1d13236a6272f01fe23b67ab0f2a00338",
+    "source\\vllm_ascend\\attention\\context_parallel\\mla_cp.py": "10c820fc90a228efa8088c8e5e37ddef8621e8625c2fdfdca9c892e59d71f55c",
+    "source\\vllm_ascend\\attention\\context_parallel\\sfa_cp.py": "ad42e24519b1834237c8dc826a4b668d09e2b489f1067d56d44fc2cfa6fc8cc9",
+    "source\\vllm_ascend\\attention\\context_parallel\\sharded_indexer.py": "0a7e01b3006d277090e3589253596a6bc2c46e437cae3503d463d29564dfc54d",
+    "source\\vllm_ascend\\ops\\triton\\sharded_indexer.py": "49857caf73aecdd119d276fe807108d2777ea36f20adefad3067938f080f9de3",
+    "source\\vllm_ascend\\ops\\triton\\sparse_index_remap.py": "982ce5c44bc9e0cecad03815926f7932ed29446a17ea7d6d46535a38bb9dbbeb",
+    "source\\vllm_ascend\\ops\\triton\\triton_utils.py": "cd918c79138a5f93294a7b25a47a8e5fcda2f6291e726bca94c0a76237881225",
+    "source\\vllm_ascend\\ops\\triton\\dcp\\dcp_a2a.py": "40f1339048c1e61a6de11c5633d70755ccb47ffc15889524d4c6234a89cdd69e",
+    "source\\vllm_ascend\\ops\\triton\\dcp\\dcp_a2a_batched.py": "c52bea0afb870569288948fcf513e1b885c7e055b28a27900e338988ea36af31",
+    "source\\vllm_ascend\\ops\\triton\\dcp\\dcp_jit.py": "38fd5f35e3597dd839bda5bec02e5a4dfdfcf8d63069d167a30f7ecb1e6087c2",
+    "source\\vllm_ascend\\ops\\triton\\dcp\\sfa_dcp_exchange.py": "e16682dd200c41d9a4b4f90d8792218cd13313a8dfc62bb20c9b5d481c543da6",
+    "baseline_kernels.py": "60a3c3a6dad26396b5aec0a5721867cc6cb83276b545239e76a1183e3a9a09bf"
+  }
+}

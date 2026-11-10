@@ -1,0 +1,28 @@
+{
+  "upstream_repository": "Dawn952/vllm-ascend",
+  "upstream_commit": "25b9bd583f7b01e1b011df4459a194ee84fe81fe",
+  "scope": "PR20878 A3 baseline source and runner only",
+  "sha256": {
+    "baseline_kernels.py": "60a3c3a6dad26396b5aec0a5721867cc6cb83276b545239e76a1183e3a9a09bf",
+    "benchmark.py": "20049ffadcff3816acfa96f1ff9e7110f7226abc97a8183eeef301e7d795acd7",
+    "run_cases.py": "90ac679d1f841e0f4f9093e682cf56c4abc8056446c3eb23feadc1c6fb9d6cf1",
+    "cases-sort-native.csv": "b1d95d3f12dea29c13e6b5e4ef0cb5b1956264a8fda5bb424da55f7cf4136637",
+    "cases-dcp.csv": "c6d0b7781f69bebe42953d1d01e9284ad427670d0f25c56d3166ee4cef7c799d",
+    "cases-sort-reference.csv": "47b10ecb3f0342ba1ba10c9887dd427805b122dde36e89bf3bf1b805e2c6b670",
+    "kernel-source-index.json": "7fc7cf7ce558e05d115f1d33a1a2ae2e145217ffed97b61c6ee1ef559c26674b",
+    "source-manifest.json": "c7cd018b4a2953eec7bbf85690d12cdc9c61b463e50e5d8e94b23239fe7795c0",
+    "tools/collect_perf_application.py": "1ab77c2eacf614bedd0063042c4941d33aadf14982921c94503fcc95072a67ac",
+    "tools/get_npu_arch.py": "42e8322c7b7949fba507218a3e473cb54229ea0096552ced5279704261409486",
+    "tools/check_env.sh": "bcabb1806fca9ccd24072047c2396675e77503fdd5d9a57425bccfae7e669aed",
+    "ops_profiling_warmup_ext/build.sh": "ba07d37d54e99befa41c17300c5a7a769ef96b3ff4425825438018f977643c64",
+    "ops_profiling_warmup_ext/CMakeLists.txt": "85d951b9af82aaa9f5baf748fe3fe8778111057fffd8f8346ff1425c141c9cad",
+    "ops_profiling_warmup_ext/csrc/extension.cpp": "ee65c6b338fef2bcd267edf5c4570d1f7210c8eb012376634a5c2a6324c9512c",
+    "ops_profiling_warmup_ext/ops_profiling_warmup/__init__.py": "527b9d5aaecf7ac1677e2808b00977012919f05715b7f118105dba58cb5f4905",
+    "ops_profiling_warmup_ext/csrc/op_kernel/compiled_warmup_kernel.cpp": "11574e8ce4347d24d5593f0bf0489d4086c7c2ec181f0e83ac37d05a3cfffd82",
+    "ops_profiling_warmup_ext/csrc/op_kernel/compiled_warmup_launch.h": "a7315a6e3b3b89c7eece62b32b999f1a199647930d43069f0afa9e1349e83ed1",
+    "ops_profiling_warmup_ext/csrc/op_plugin/compiled_warmup_plugin.cpp": "e8782ad145f476c42f6d8c1b946071b0e7fcae96da246b455d0e1437697622c6",
+    "source/vllm_ascend/ops/triton/sharded_indexer.py": "49857caf73aecdd119d276fe807108d2777ea36f20adefad3067938f080f9de3",
+    "source/vllm_ascend/ops/triton/dcp/dcp_a2a.py": "40f1339048c1e61a6de11c5633d70755ccb47ffc15889524d4c6234a89cdd69e",
+    "source/vllm_ascend/ops/triton/dcp/dcp_a2a_batched.py": "c52bea0afb870569288948fcf513e1b885c7e055b28a27900e338988ea36af31"
+  }
+}

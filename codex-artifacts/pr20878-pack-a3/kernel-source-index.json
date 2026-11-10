@@ -1,0 +1,58 @@
+[
+  {
+    "function": "_sort_candidate_pairs",
+    "source": "vllm_ascend/ops/triton/sharded_indexer.py",
+    "start_line": 125,
+    "end_line": 142,
+    "sha256": "6a5d4d8b0572bd7260f48f77d69537a85999beb3ef43db9d634d91091f9cedbe"
+  },
+  {
+    "function": "_radix_sort_candidate_pairs",
+    "source": "vllm_ascend/ops/triton/sharded_indexer.py",
+    "start_line": 145,
+    "end_line": 169,
+    "sha256": "7e6e3aacdd5c02c33a11cafa0c16f545dbacb026304d73e83d1b7b44db94c5ed"
+  },
+  {
+    "function": "_pack_sorted_candidates",
+    "source": "vllm_ascend/ops/triton/sharded_indexer.py",
+    "start_line": 172,
+    "end_line": 218,
+    "sha256": "3b5ba6710b1e93f608afb2179df882037bfc2e7cde3efe5fad5c4c6a79cd1d36"
+  },
+  {
+    "function": "_encode_lse_fields",
+    "source": "vllm_ascend/ops/triton/dcp/dcp_a2a_batched.py",
+    "start_line": 13,
+    "end_line": 33,
+    "sha256": "16072ec61881d632688453695097d0345599b3e65c636aac31856c0b14c3fe36"
+  },
+  {
+    "function": "_pack_dcp_output_lse_batched_kernel",
+    "source": "vllm_ascend/ops/triton/dcp/dcp_a2a_batched.py",
+    "start_line": 36,
+    "end_line": 139,
+    "sha256": "770a32355836a2d33d72867ff77518746013aa338c3f7ad1663ec809a1859ebb"
+  },
+  {
+    "function": "_pack_dcp_output_lse_kernel",
+    "source": "vllm_ascend/ops/triton/dcp/dcp_a2a.py",
+    "start_line": 22,
+    "end_line": 99,
+    "sha256": "dd2a85a5e8c907cf42db2966ac7d5b3286326819568ed5a6ea9f31caf55ec17d"
+  },
+  {
+    "function": "_lse_pack_dim",
+    "source": "vllm_ascend/ops/triton/dcp/dcp_a2a.py",
+    "start_line": 235,
+    "end_line": 240,
+    "sha256": "b900c5544400a123e89fb7e82c78a0b00409c481020571c4b2675ab94cbbf3a7"
+  },
+  {
+    "function": "_launch_pack_dcp_output_lse",
+    "source": "vllm_ascend/ops/triton/dcp/dcp_a2a.py",
+    "start_line": 318,
+    "end_line": 383,
+    "sha256": "3d53e78f88d5af0f52c1116469198a0f67aa5e88ef349ade8d79641a83c068b2"
+  }
+]
