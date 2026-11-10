@@ -39,7 +39,7 @@ def make_case(key, edge=False):
         if edge:
             ids[:,4:8]=torch.tensor([8388607,8388608,16777215,16777216],dtype=torch.int32)
             if dtype==torch.float32:
-                bits=torch.tensor([0x3f800000,0x3f800001,0x3f800002,0xbf800001,0x00800000,0x7f7fffff],dtype=torch.int32)
+                bits=torch.tensor([0x3f800000,0x3f800001,0x3f800002,0xbf800001,0x00800000,0x7f7fffff],dtype=torch.int64).to(torch.int32)
                 scores[:,8:14]=bits.view(torch.float32)
         c.update(cpu_ids=ids,cpu_scores=scores,indices=strided(ids,s['layout']),scores=strided(scores,s['layout']),out=torch.empty((t,k,2),device='npu',dtype=torch.int32))
     else:
