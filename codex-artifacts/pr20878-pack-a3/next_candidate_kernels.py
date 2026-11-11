@@ -128,7 +128,7 @@ def _merge_owner_adaptive(
 
 
 @triton.jit
-def _fused_dcp_lse_combine_online(
+def _fused_dcp_lse_combine_rank_reduce(
     recv_ptr,
     output_ptr,
     local_output_ptr,
@@ -154,60 +154,49 @@ def _fused_dcp_lse_combine_online(
     HAS_LOCAL: tl.constexpr = True,
     RANK_UNROLL: tl.constexpr = 1,
 ):
-    # Online weighted merge: one LSE decode per rank, D stays innermost.
-    # FP32 state maintains (running max, scaled numerator, scaled denominator).
-    d_offsets = tl.arange(0, BLOCK_D)[None, :]
-    for row_start in range(tl.program_id(0) * BLOCK_ROWS, total_rows, tl.num_programs(0) * BLOCK_ROWS):
-        linear_idx = row_start + tl.arange(0, BLOCK_ROWS)[:, None]
-        row_mask = linear_idx < total_rows
-        token_idx = (linear_idx // num_heads).to(tl.int64)
-        head_idx = (linear_idx % num_heads).to(tl.int64)
-        d_mask = (d_offsets < head_dim) & row_mask
-        lse_max = tl.full((BLOCK_ROWS, 1), -float("inf"), tl.float32)
-        weight_sum = tl.zeros((BLOCK_ROWS, 1), tl.float32)
-        merged = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
+    # Parallel rank reduction: decode once and remove per-rank scalar extracts.
+    # Bound the wide FP32 tile independently of traced T/H: at most8192 values.
+    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE)
+    TILE_ROWS: tl.constexpr = min(BLOCK_ROWS, max(1, 8192 // (BLOCK_RANKS * BLOCK_D)))
+    ranks = tl.arange(0, BLOCK_RANKS)
+    bounded_ranks = tl.minimum(ranks, DCP_SIZE - 1)
+    d = tl.arange(0, BLOCK_D)
+    for row_start in range(tl.program_id(0) * TILE_ROWS, total_rows, tl.num_programs(0) * TILE_ROWS):
+        rows = row_start + tl.arange(0, TILE_ROWS)
+        row_mask = rows < total_rows
+        tokens = (rows // num_heads).to(tl.int64)
+        heads = (rows % num_heads).to(tl.int64)
+        bases = bounded_ranks[:, None] * recv_stride_rank + heads[None, :] * recv_stride_scatter + tokens[None, :] * recv_stride_replicated
+        rank_row_mask = (ranks[:, None] < DCP_SIZE) & row_mask[None, :]
+        packed = tl.load(
+            recv_ptr + bases[:, :, None] + (head_dim + tl.arange(0, 4)[None, None, :]) * recv_stride_d,
+            rank_row_mask[:, :, None], 0.0,
+        ).to(tl.float32)
+        even, odd = tl.split(tl.reshape(packed, (BLOCK_RANKS, TILE_ROWS, 2, 2)))
+        code, mid = tl.split(even)
+        hi, lo = tl.split(odd)
+        significand = hi * 65536.0 + mid * 256.0 + lo
+        lse_bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
+        lse_bits = tl.where(significand != 0.0, lse_bits, 0)
+        lses = tl.where(code < 0.0, -1.0, 1.0) * lse_bits.to(tl.float32, bitcast=True)
+        valid = rank_row_mask & (code != 0.0) & (tl.abs(lses) < float("inf"))
+        maximum = tl.max(tl.where(valid, lses, -float("inf")), 0)
         if HAS_LOCAL:
-            local_lse = tl.load(local_lse_ptr + token_idx * local_lse_stride_t + head_idx * local_lse_stride_h, row_mask, 0.0).to(tl.float32)
+            local_lse = tl.load(local_lse_ptr + tokens * local_lse_stride_t + heads * local_lse_stride_h, row_mask, 0.0).to(tl.float32)
             local_valid = tl.abs(local_lse) < float("inf")
-            lse_max = tl.where(local_valid, local_lse, -float("inf"))
-            local_offsets = token_idx * local_output_stride_t + head_idx * local_output_stride_h + d_offsets * local_output_stride_d
-            local_output = tl.load(local_output_ptr + local_offsets, d_mask, 0.0).to(tl.float32)
-            merged = tl.where(local_valid, local_output, 0.0)
-            weight_sum = local_valid.to(tl.float32)
-        for rank_idx in tl.range(0, DCP_SIZE, loop_unroll_factor=RANK_UNROLL):
-            recv_base = (
-                rank_idx * recv_stride_rank + head_idx * recv_stride_scatter + token_idx * recv_stride_replicated
-            )
-            packed = tl.load(
-                recv_ptr + recv_base + (head_dim + tl.arange(0, 4)[None, :]) * recv_stride_d,
-                mask=row_mask,
-                other=0.0,
-            ).to(tl.float32)
-            even, odd = tl.split(tl.reshape(packed, (BLOCK_ROWS, 2, 2)))
-            code, mid = tl.split(even)
-            hi, lo = tl.split(odd)
-            exponent_code = code[:, None]
-            significand_hi = hi[:, None]
-            significand_mid = mid[:, None]
-            significand_lo = lo[:, None]
-            packed_valid = exponent_code != 0.0
-            sign = tl.where(exponent_code < 0.0, -1.0, 1.0)
-            exponent_magnitude = tl.where(exponent_code < 0.0, -exponent_code, exponent_code)
-            significand = significand_hi * 65536.0 + significand_mid * 256.0 + significand_lo
-            # Reconstruct IEEE FP32 bits directly, including subnormals.
-            magnitude = exponent_magnitude.to(tl.int32)
-            lse_bits = (tl.maximum(magnitude - 2, 0) << 23) + significand.to(tl.int32)
-            lse_bits = tl.where(significand != 0.0, lse_bits, 0)
-            lse = sign * lse_bits.to(tl.float32, bitcast=True)
-            valid_lse = packed_valid & (lse == lse) & (lse != float("inf")) & (lse != -float("inf"))
-            new_max = tl.maximum(lse_max, tl.where(valid_lse, lse, -float("inf")))
-            safe_max = tl.where(new_max != -float("inf"), new_max, 0.0)
-            old_scale = tl.where(lse_max != -float("inf"), tl.exp(lse_max - safe_max), 0.0)
-            weight = tl.where(valid_lse, tl.exp(lse - safe_max), 0.0)
-            values = tl.load(recv_ptr + recv_base + d_offsets * recv_stride_d, d_mask, 0.0).to(tl.float32)
-            merged = merged * old_scale + tl.where(valid_lse, values, 0.0) * weight
-            weight_sum = weight_sum * old_scale + weight
-            lse_max = new_max
-        merged /= tl.where(weight_sum > 0.0, weight_sum, 1.0)
-        output_offsets = token_idx * output_stride_t + head_idx * output_stride_h + d_offsets * output_stride_d
-        tl.store(output_ptr + output_offsets, merged, d_mask)
+            maximum = tl.maximum(maximum, tl.where(local_valid, local_lse, -float("inf")))
+        maximum = tl.where(maximum != -float("inf"), maximum, 0.0)
+        weights = tl.where(valid, tl.exp(lses - maximum[None, :]), 0.0)
+        values = tl.load(recv_ptr + bases[:, :, None] + d[None, None, :] * recv_stride_d,
+                         rank_row_mask[:, :, None] & (d[None, None, :] < head_dim), 0.0).to(tl.float32)
+        numerator = tl.sum(tl.where(valid[:, :, None], values, 0.0) * weights[:, :, None], 0)
+        denominator = tl.sum(weights, 0)
+        if HAS_LOCAL:
+            local_weight = tl.where(local_valid, tl.exp(local_lse - maximum), 0.0)
+            local_values = tl.load(local_output_ptr + tokens[:, None] * local_output_stride_t + heads[:, None] * local_output_stride_h + d[None, :] * local_output_stride_d,
+                                   row_mask[:, None] & (d[None, :] < head_dim), 0.0).to(tl.float32)
+            numerator += tl.where(local_valid[:, None], local_values, 0.0) * local_weight[:, None]
+            denominator += local_weight
+        result = numerator / tl.where(denominator > 0.0, denominator, 1.0)[:, None]
+        out_offsets = tokens[:, None] * output_stride_t + heads[:, None] * output_stride_h + d[None, :] * output_stride_d
+        tl.store(output_ptr + out_offsets, result, row_mask[:, None] & (d[None, :] < head_dim))
