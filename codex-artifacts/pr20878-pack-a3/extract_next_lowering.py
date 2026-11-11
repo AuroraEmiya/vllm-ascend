@@ -10,6 +10,9 @@ import json
 import re
 from pathlib import Path
 
+import torch
+import torch_npu
+
 from triton.backends.ascend import compiler
 
 root = Path('results/optimization/next/selected-ir')
@@ -30,7 +33,7 @@ for entry in selected:
             cmd.append('--mlir-print-ir-after-all')
             (directory / 'compiler-command.json').write_text(json.dumps(cmd, indent=2))
             result = real_run(cmd, *pos, **kwargs)
-            text = (result.stdout or b'').decode(errors='replace') + (result.stderr or b'').decode(errors='replace')
+            text = ''.join(v.decode(errors='replace') if isinstance(v, bytes) else (v or '') for v in (result.stdout, result.stderr))
             (directory / 'full-pass-dump.log').write_text(text)
             # Keep the latest valid HIVM/LLVM block, and its exact pass marker.
             blocks = re.split(r'(?=// -----// IR Dump After)', text)
