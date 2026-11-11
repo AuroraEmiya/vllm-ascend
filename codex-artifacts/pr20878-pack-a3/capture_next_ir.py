@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import next_benchmark as bench
 
-out = Path('results/optimization/next/selected-ir')
+out = Path('results/optimization/next/selected-ir-gather')
 out.mkdir(exist_ok=True)
 records = []
 torch.npu.set_device(0)

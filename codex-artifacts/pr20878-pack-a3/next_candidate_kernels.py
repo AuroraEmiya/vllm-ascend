@@ -52,8 +52,8 @@ def _merge_owner_parallel(
             pivot_score = tl.load(own + pivot * 2 + 1).to(tl.float32, bitcast=True)
             pivot_valid = (pivot_id >= 0) & (tl.abs(pivot_score) < float("inf"))
             count = pivot.to(tl.float32)
-            # All peers evaluate this pivot together. Inactive peers stop loading
-            # after their first partial tile; the shared cursor remains bounded.
+            # All peers evaluate this pivot together. Inactive peers stop counting
+            # after their first partial tile; bounded loads still cover all peers.
             active = (ranks < WORLD) & (ranks != OWNER)
             start = tl.full((), 0, tl.int32)
             peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
@@ -107,7 +107,7 @@ def _merge_owner_parallel(
         tl.store(output + row * K + col, result)
 
 @triton.jit
-def _fused_dcp_lse_combine_cached(
+def _fused_dcp_lse_combine_cached_gather(
     recv_ptr, output_ptr, local_output_ptr, local_lse_ptr,
     local_output_stride_t, local_output_stride_h, local_output_stride_d: tl.constexpr,
     local_lse_stride_t: tl.constexpr, local_lse_stride_h: tl.constexpr,
@@ -149,8 +149,10 @@ def _fused_dcp_lse_combine_cached(
         merged = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
         d_mask = mask[:, None] & (d_offsets < head_dim)
         for rank in tl.range(0, DCP_SIZE, loop_unroll_factor=RANK_UNROLL):
-            weight = tl.sum(tl.where(ranks == rank, weights, 0.0), 1)[:, None]
-            rank_valid = tl.sum((valid & (ranks == rank)).to(tl.int32), 1)[:, None] > 0
+            # Rank selection must not reduce all ranks once for every rank.
+            rank_index = tl.full((BLOCK_ROWS, 1), rank, tl.int32)
+            weight = tl.gather(weights, rank_index, 1)
+            rank_valid = tl.gather(valid.to(tl.float32), rank_index, 1) > 0.0
             recv_base = rank * recv_stride_rank + heads[:, None] * recv_stride_scatter + tokens[:, None] * recv_stride_replicated
             values = tl.load(recv_ptr + recv_base + d_offsets * recv_stride_d, d_mask, 0).to(tl.float32)
             merged += tl.where(rank_valid, values, 0.0) * weight

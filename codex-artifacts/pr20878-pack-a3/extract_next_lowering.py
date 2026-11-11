@@ -15,7 +15,7 @@ import torch_npu
 
 from triton.backends.ascend import compiler
 
-root = Path('results/optimization/next/selected-ir')
+root = Path('results/optimization/next/selected-ir-gather')
 selected = json.loads((root / 'selection.json').read_text())
 real_run = compiler.subprocess.run
 records = []
