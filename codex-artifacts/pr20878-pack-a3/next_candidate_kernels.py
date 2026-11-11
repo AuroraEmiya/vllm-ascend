@@ -1,7 +1,7 @@
 from vllm.triton_utils import triton, tl
 
 @triton.jit(do_not_specialize=["ROWS"])
-def _merge_owner_parallel(
+def _merge_owner_adaptive(
     packed,
     output,
     ROWS,
@@ -16,6 +16,8 @@ def _merge_owner_parallel(
     K: tl.constexpr = 1 << LOG_BLOCK
     col = tl.arange(0, K)
     lanes = tl.arange(0, 2 * TILE)
+    SKEW_TILE: tl.constexpr = min(K, triton.next_power_of_2(2 * K // WORLD))
+    skew_lanes = tl.arange(0, 2 * SKEW_TILE)
     ranks = tl.arange(0, BLOCK_RANKS)
     for row in range(tl.program_id(0), ROWS, tl.num_programs(0)):
         own = packed + (OWNER * ROWS + row) * K * 2
@@ -52,24 +54,42 @@ def _merge_owner_parallel(
             pivot_score = tl.load(own + pivot * 2 + 1).to(tl.float32, bitcast=True)
             pivot_valid = (pivot_id >= 0) & (tl.abs(pivot_score) < float("inf"))
             count = pivot.to(tl.float32)
-            # All peers evaluate this pivot together. Inactive peers stop counting
-            # after their first partial tile; bounded loads still cover all peers.
-            active = (ranks < WORLD) & (ranks != OWNER)
-            start = tl.full((), 0, tl.int32)
-            peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
-            while (start < K) & (tl.sum(active.to(tl.int32), 0) > 0):
-                offsets = ((peer_rank[:, None] * ROWS + row) * K + start) * 2 + lanes[None, :]
-                pair = tl.load(packed + offsets)
-                raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, TILE, 2)))
-                ids = raw_ids.to(tl.float32)
-                scores = bits.to(tl.float32, bitcast=True)
-                valid = active[:, None] & (ids >= 0) & (tl.abs(scores) < float("inf"))
-                better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
-                amount = tl.sum(better.to(tl.float32), 1)
-                peer_count += amount
-                active = active & (amount == TILE)
-                start += TILE
-            count += tl.sum(peer_count, 0)
+            if skewed:
+                for rank in range(WORLD):
+                    if rank != OWNER:
+                        start = tl.full((), 0, tl.int32)
+                        amount = tl.full((), SKEW_TILE, tl.float32)
+                        # Sorted peers cannot have a better candidate after
+                        # the first tile containing any non-better candidate.
+                        while (start < K) & (amount == SKEW_TILE):
+                            pair = tl.load(packed + (rank * ROWS + row) * K * 2 + start * 2 + skew_lanes)
+                            raw_ids, bits = tl.split(tl.reshape(pair, (SKEW_TILE, 2)))
+                            ids = raw_ids.to(tl.float32)
+                            scores = bits.to(tl.float32, bitcast=True)
+                            valid = (ids >= 0) & (tl.abs(scores) < float("inf"))
+                            better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
+                            amount = tl.sum(better.to(tl.float32), 0)
+                            count += amount
+                            start += SKEW_TILE
+            else:
+                # All peers evaluate this pivot together. Inactive peers stop counting
+                # after their first partial tile; bounded loads still cover all peers.
+                active = (ranks < WORLD) & (ranks != OWNER)
+                start = tl.full((), 0, tl.int32)
+                peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
+                while (start < K) & (tl.sum(active.to(tl.int32), 0) > 0):
+                    offsets = ((peer_rank[:, None] * ROWS + row) * K + start) * 2 + lanes[None, :]
+                    pair = tl.load(packed + offsets)
+                    raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, TILE, 2)))
+                    ids = raw_ids.to(tl.float32)
+                    scores = bits.to(tl.float32, bitcast=True)
+                    valid = active[:, None] & (ids >= 0) & (tl.abs(scores) < float("inf"))
+                    better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
+                    amount = tl.sum(better.to(tl.float32), 1)
+                    peer_count += amount
+                    active = active & (amount == TILE)
+                    start += TILE
+                count += tl.sum(peer_count, 0)
             selected = pivot_valid & (count < K)
             # Let S be the number of better peer entries. Monotonicity
             # makes K-S an upper bound after a selected pivot, or a lower
@@ -106,62 +126,132 @@ def _merge_owner_parallel(
         result = tl.where(col.to(tl.float32) < lower.to(tl.float32), local, -1)
         tl.store(output + row * K + col, result)
 
+
 @triton.jit
-def _fused_dcp_lse_combine_cached_gather(
-    recv_ptr, output_ptr, local_output_ptr, local_lse_ptr,
-    local_output_stride_t, local_output_stride_h, local_output_stride_d: tl.constexpr,
-    local_lse_stride_t: tl.constexpr, local_lse_stride_h: tl.constexpr,
-    recv_stride_rank: tl.constexpr, recv_stride_scatter: tl.constexpr,
-    recv_stride_replicated: tl.constexpr, recv_stride_d: tl.constexpr,
-    output_stride_t: tl.constexpr, output_stride_h: tl.constexpr, output_stride_d: tl.constexpr,
-    head_dim: tl.constexpr, num_heads: tl.constexpr, total_rows,
-    DCP_SIZE: tl.constexpr, BLOCK_D: tl.constexpr, BLOCK_ROWS: tl.constexpr,
-    HAS_LOCAL: tl.constexpr = True, RANK_UNROLL: tl.constexpr = 1,
+def _fused_dcp_lse_combine_rowvec(
+    recv_ptr,
+    output_ptr,
+    local_output_ptr,
+    local_lse_ptr,
+    local_output_stride_t,
+    local_output_stride_h,
+    local_output_stride_d,
+    local_lse_stride_t,
+    local_lse_stride_h,
+    recv_stride_rank,
+    recv_stride_scatter,
+    recv_stride_replicated,
+    recv_stride_d,
+    output_stride_t,
+    output_stride_h,
+    output_stride_d,
+    head_dim,
+    num_heads,
+    total_rows,
+    DCP_SIZE: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_ROWS: tl.constexpr,
+    HAS_LOCAL: tl.constexpr = True,
+    RANK_UNROLL: tl.constexpr = 1,
 ):
-    # Cache only the small LSE matrix; keep the wide output streaming by rank.
-    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE)
-    ranks = tl.arange(0, BLOCK_RANKS)[None, :]
-    d_offsets = tl.arange(0, BLOCK_D)[None, :]
-    for row_start in range(tl.program_id(0) * BLOCK_ROWS, total_rows, tl.num_programs(0) * BLOCK_ROWS):
-        rows = row_start + tl.arange(0, BLOCK_ROWS)
-        tokens = rows // num_heads
-        heads = rows % num_heads
-        mask = rows < total_rows
-        bases = ranks * recv_stride_rank + heads[:, None] * recv_stride_scatter + tokens[:, None] * recv_stride_replicated
-        packed = tl.load(recv_ptr + bases[:, :, None] + (head_dim + tl.arange(0, 4)[None, None, :]) * recv_stride_d,
-                         mask[:, None, None] & (ranks[:, :, None] < DCP_SIZE), 0).to(tl.float32)
-        even, odd = tl.split(tl.reshape(packed, (BLOCK_ROWS * BLOCK_RANKS, 2, 2)))
-        code, mid = tl.split(even)
-        hi, lo = tl.split(odd)
-        significand = hi * 65536.0 + mid * 256.0 + lo
-        lse_bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
-        lse_bits = tl.where(significand != 0.0, lse_bits, 0)
-        lses = tl.reshape(tl.where(code < 0.0, -1.0, 1.0) * lse_bits.to(tl.float32, bitcast=True), (BLOCK_ROWS, BLOCK_RANKS))
-        valid = tl.reshape(code != 0.0, (BLOCK_ROWS, BLOCK_RANKS)) & (ranks < DCP_SIZE) & (tl.abs(lses) < float("inf"))
-        max_lse = tl.max(tl.where(valid, lses, -float("inf")), 1)
+    # Put row coefficients on the inner compute axis to avoid per-row scalar
+    # coefficient extraction in broadcast math; retain the rank-streaming math.
+    # Each received row therefore ends with four packed LSE values.
+    program_idx = tl.program_id(0)
+    num_programs = tl.num_programs(0)
+    d_offsets = tl.arange(0, BLOCK_D)[:, None]
+
+    for row_start in range(program_idx * BLOCK_ROWS, total_rows, num_programs * BLOCK_ROWS):
+        linear_idx = row_start + tl.arange(0, BLOCK_ROWS)[None, :]
+        row_mask = linear_idx < total_rows
+        token_idx = (linear_idx // num_heads).to(tl.int64)
+        head_idx = (linear_idx % num_heads).to(tl.int64)
+
+        # Coalesced four-slot loads use the upstream streaming-rank
+        # formulation; only one output accumulator stays live.
+        lse_max = tl.full((1, BLOCK_ROWS), -float("inf"), tl.float32)
         if HAS_LOCAL:
-            local_lse = tl.load(local_lse_ptr + tokens * local_lse_stride_t + heads * local_lse_stride_h, mask, 0).to(tl.float32)
+            local_lse = tl.load(
+                local_lse_ptr + token_idx * local_lse_stride_t + head_idx * local_lse_stride_h,
+                mask=row_mask,
+                other=0.0,
+            ).to(tl.float32)
             local_valid = tl.abs(local_lse) < float("inf")
-            max_lse = tl.maximum(max_lse, tl.where(local_valid, local_lse, -float("inf")))
-        safe_max = tl.where(max_lse != -float("inf"), max_lse, 0.0)
-        weights = tl.where(valid, tl.exp(lses - safe_max[:, None]), 0.0)
-        weight_sum = tl.sum(weights, 1)[:, None]
-        merged = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
-        d_mask = mask[:, None] & (d_offsets < head_dim)
-        for rank in tl.range(0, DCP_SIZE, loop_unroll_factor=RANK_UNROLL):
-            # Rank selection must not reduce all ranks once for every rank.
-            rank_index = tl.full((BLOCK_ROWS, 1), rank, tl.int32)
-            weight = tl.gather(weights, rank_index, 1)
-            rank_valid = tl.gather(valid.to(tl.float32), rank_index, 1) > 0.0
-            recv_base = rank * recv_stride_rank + heads[:, None] * recv_stride_scatter + tokens[:, None] * recv_stride_replicated
-            values = tl.load(recv_ptr + recv_base + d_offsets * recv_stride_d, d_mask, 0).to(tl.float32)
-            merged += tl.where(rank_valid, values, 0.0) * weight
-        if HAS_LOCAL:
-            weight = tl.where(local_valid, tl.exp(local_lse - safe_max), 0.0)[:, None]
-            local_base = tokens[:, None] * local_output_stride_t + heads[:, None] * local_output_stride_h
-            values = tl.load(local_output_ptr + local_base + d_offsets * local_output_stride_d, d_mask, 0).to(tl.float32)
-            merged += tl.where(local_valid[:, None], values, 0.0) * weight
+            lse_max = tl.where(local_valid, local_lse, -float("inf"))
+        for rank_idx in tl.range(0, DCP_SIZE, loop_unroll_factor=RANK_UNROLL):
+            recv_base = (
+                rank_idx * recv_stride_rank + head_idx * recv_stride_scatter + token_idx * recv_stride_replicated
+            )
+            packed = tl.load(
+                recv_ptr + recv_base + (head_dim + tl.arange(0, 4)[:, None]) * recv_stride_d,
+                mask=row_mask,
+                other=0.0,
+            ).to(tl.float32)
+            even, odd = tl.split(tl.reshape(tl.trans(packed), (BLOCK_ROWS, 2, 2)))
+            code, mid = tl.split(even)
+            hi, lo = tl.split(odd)
+            exponent_code = code[None, :]
+            significand_hi = hi[None, :]
+            significand_mid = mid[None, :]
+            significand_lo = lo[None, :]
+            packed_valid = exponent_code != 0.0
+            sign = tl.where(exponent_code < 0.0, -1.0, 1.0)
+            exponent_magnitude = tl.where(exponent_code < 0.0, -exponent_code, exponent_code)
+            significand = significand_hi * 65536.0 + significand_mid * 256.0 + significand_lo
+            # Reconstruct IEEE FP32 bits directly, including subnormals.
+            magnitude = exponent_magnitude.to(tl.int32)
+            lse_bits = (tl.maximum(magnitude - 2, 0) << 23) + significand.to(tl.int32)
+            lse_bits = tl.where(significand != 0.0, lse_bits, 0)
+            lse = sign * lse_bits.to(tl.float32, bitcast=True)
+            valid_lse = packed_valid & (lse == lse) & (lse != float("inf")) & (lse != -float("inf"))
+            lse_max = tl.maximum(lse_max, tl.where(valid_lse, lse, -float("inf")))
+        any_valid_lse = lse_max != -float("inf")
+        safe_lse_max = tl.where(any_valid_lse, lse_max, 0.0)
+        weight_sum = tl.zeros((1, BLOCK_ROWS), tl.float32)
+        merged = tl.zeros([BLOCK_D, BLOCK_ROWS], dtype=tl.float32)
+        d_mask = (d_offsets < head_dim) & row_mask
+        for rank_idx in tl.range(0, DCP_SIZE, loop_unroll_factor=RANK_UNROLL):
+            recv_base = (
+                rank_idx * recv_stride_rank + head_idx * recv_stride_scatter + token_idx * recv_stride_replicated
+            )
+            packed = tl.load(
+                recv_ptr + recv_base + (head_dim + tl.arange(0, 4)[:, None]) * recv_stride_d,
+                mask=row_mask,
+                other=0.0,
+            ).to(tl.float32)
+            even, odd = tl.split(tl.reshape(tl.trans(packed), (BLOCK_ROWS, 2, 2)))
+            code, mid = tl.split(even)
+            hi, lo = tl.split(odd)
+            exponent_code = code[None, :]
+            significand_hi = hi[None, :]
+            significand_mid = mid[None, :]
+            significand_lo = lo[None, :]
+            packed_valid = exponent_code != 0.0
+            sign = tl.where(exponent_code < 0.0, -1.0, 1.0)
+            exponent_magnitude = tl.where(exponent_code < 0.0, -exponent_code, exponent_code)
+            significand = significand_hi * 65536.0 + significand_mid * 256.0 + significand_lo
+            # Reconstruct IEEE FP32 bits directly, including subnormals.
+            magnitude = exponent_magnitude.to(tl.int32)
+            lse_bits = (tl.maximum(magnitude - 2, 0) << 23) + significand.to(tl.int32)
+            lse_bits = tl.where(significand != 0.0, lse_bits, 0)
+            lse = sign * lse_bits.to(tl.float32, bitcast=True)
+            valid_lse = packed_valid & (lse == lse) & (lse != float("inf")) & (lse != -float("inf"))
+            weight = tl.where(valid_lse, tl.exp(lse - safe_lse_max), 0.0)
+            partial_output = tl.load(recv_ptr + recv_base + d_offsets * recv_stride_d, mask=d_mask, other=0.0).to(
+                tl.float32
+            )
+            partial_output = tl.where(valid_lse, partial_output, 0.0)
+            merged += partial_output * weight
             weight_sum += weight
-        merged /= tl.where(weight_sum > 0.0, weight_sum, 1.0)
-        out = tokens[:, None] * output_stride_t + heads[:, None] * output_stride_h + d_offsets * output_stride_d
-        tl.store(output_ptr + out, merged, d_mask)
+        if HAS_LOCAL:
+            local_weight = tl.where(local_valid, tl.exp(local_lse - safe_lse_max), 0.0)
+            local_offsets = (
+                token_idx * local_output_stride_t + head_idx * local_output_stride_h + d_offsets * local_output_stride_d
+            )
+            local_output = tl.load(local_output_ptr + local_offsets, mask=d_mask, other=0.0).to(tl.float32)
+            merged += tl.where(local_valid, local_output, 0.0) * local_weight
+            weight_sum += local_weight
+        denominator = tl.where(weight_sum > 0.0, weight_sum, 1.0)
+        merged /= denominator
+        output_offsets = token_idx * output_stride_t + head_idx * output_stride_h + d_offsets * output_stride_d
+        tl.store(output_ptr + output_offsets, merged, mask=d_mask)

@@ -121,14 +121,14 @@ def make_case(key, edge=False):
 def invoke(c):
     s = c['spec']
     if s['kind'] == 'owner':
-        fn = base._merge_owner_prefix if c['impl'] == 'baseline' else cand._merge_owner_parallel
+        fn = base._merge_owner_prefix if c['impl'] == 'baseline' else cand._merge_owner_adaptive
         tile = min(2048, 2 ** math.ceil(math.log2(max(1, (2 if c['impl'] == 'baseline' else 1) * 2048 // s['world']))))
         binary = fn[(min(s['t'], c['vector_cores']),)](c['packed'], c['out'], s['t'], WORLD=s['world'], OWNER=s['owner'], INTERLEAVE=768, LOG_BLOCK=11, TILE=tile, BLOCK_RANKS=2 ** math.ceil(math.log2(s['world'])), multibuffer=False)
         c['compiled'] = [binary]
     else:
         def launch(fn, grid, *args, **kwargs):
             assert fn is base._fused_dcp_lse_combine_batched_kernel
-            if c['impl'] != 'baseline' and (c['local_output'] is None or c['local_output'].stride(1) == s['d']): fn = cand._fused_dcp_lse_combine_cached_gather
+            if c['impl'] != 'baseline': fn = cand._fused_dcp_lse_combine_rowvec
             c['compiled'] = [fn[grid](*args, **kwargs)]
         base._launch_fused_dcp_lse_combine(c['recv'], c['out'], s['d'], 1, False, c['local_output'], c['local_lse'], c['vector_cores'], launch)
     return c['out']
@@ -147,8 +147,8 @@ def check(c):
 
 def kernel_name(params):
     key, impl = params.split(':')
-    if SPECS[key]['kind'] == 'owner': return '_merge_owner_prefix' if impl == 'baseline' else '_merge_owner_parallel'
-    return '_fused_dcp_lse_combine_batched_kernel' if impl == 'baseline' or SPECS[key]['layout'] != 'contiguous' else '_fused_dcp_lse_combine_cached_gather'
+    if SPECS[key]['kind'] == 'owner': return '_merge_owner_prefix' if impl == 'baseline' else '_merge_owner_adaptive'
+    return '_fused_dcp_lse_combine_batched_kernel' if impl == 'baseline' else '_fused_dcp_lse_combine_rowvec'
 
 
 def main():
