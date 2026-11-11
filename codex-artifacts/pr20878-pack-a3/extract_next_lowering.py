@@ -15,7 +15,7 @@ import torch_npu
 
 from triton.backends.ascend import compiler
 
-root = Path('results/optimization/next/selected-ir-rank-reduce')
+root = Path('results/optimization/next/selected-ir-row-weights')
 selected = json.loads((root / 'selection.json').read_text())
 real_run = compiler.subprocess.run
 records = []
