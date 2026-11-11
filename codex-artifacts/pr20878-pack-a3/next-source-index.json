@@ -1,0 +1,22 @@
+[
+  {
+    "function": "_merge_owner_prefix",
+    "source": "sharded_indexer.py",
+    "sha256": "88bd3ea0db349c8798fc32eb3feb50454665be86b9986895a51312bc81609a3a"
+  },
+  {
+    "function": "_fused_dcp_lse_combine_batched_kernel",
+    "source": "dcp/dcp_a2a_batched.py",
+    "sha256": "e0492f9a5f30fffd306453a392a4f40ccf970d06244bfd973aad4d6dc0775e13"
+  },
+  {
+    "function": "_fused_dcp_lse_combine_kernel",
+    "source": "dcp/dcp_a2a.py",
+    "sha256": "4ae04d13b384afd2dfef0fd3b7374f5cdb1b451679192d268e1ead2dc0c2ccb3"
+  },
+  {
+    "function": "_launch_fused_dcp_lse_combine",
+    "source": "dcp/dcp_a2a.py",
+    "sha256": "1b804c941304c7efb60c52fa2f15661748b96441773ec7a732704069c7400fa5"
+  }
+]
