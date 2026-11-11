@@ -4,7 +4,7 @@ from pathlib import Path
 from next_benchmark import SPECS
 
 p = Path('results/optimization/next')
-values = [json.loads((p / f).read_text()) for f in ('owner4-validation.json', 'combine6-validation.json')]
+values = [json.loads((p / f).read_text()) for f in ('owner4-validation.json', 'combine7-validation.json')]
 v = dict(cases=sum([x['cases'] for x in values], []), binaries={k:v for x in values for k,v in x['binaries'].items()}, source_sha256=[x['source_sha256'] for x in values])
 admitted = []
 for key in SPECS:
