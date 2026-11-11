@@ -5,7 +5,8 @@ import torch
 import torch_npu
 import baseline_kernels as base
 import candidate_kernels as cand
-import dcp_iter6
+import dcp_iter5
+import dcp_iter7
 from benchmark import cores, encode_cpu, binary_identity
 
 ROOT = Path(__file__).resolve().parent
@@ -65,8 +66,7 @@ def invoke(c):
     else:
         def launch(fn,grid,*args,**kwargs):
             if c['impl']!='baseline' and fn is base._pack_dcp_output_lse_batched_kernel:
-                fn=dcp_iter6._pack_dcp_larger_tile
-                kwargs['BLOCK_ROWS'] *= 2
+                fn=dcp_iter7._pack_dcp_rectangular if kwargs['OUTPUT_HEAD_MAJOR'] else dcp_iter5._pack_dcp_metadata_static
             c['compiled']=[fn[grid](*args,**kwargs)]
         base._launch_pack_dcp_output_lse(c['output'],c['lse'],c['sums'],c['out'],1,nc,launch)
     return c['out']
@@ -100,7 +100,7 @@ def kernel_name(params):
     case_id,impl=params.split(':');s=SPECS[case_id]
     if s['kind']=='sort':return '_pack_sorted_candidates' if impl=='baseline' else '_pack_sorted_candidates_radix'
     batched=s['t']*s['h']>=8*cores() and (s['layout']!='feature2' or (s['d']==512 and s['t']>=128))
-    if impl!='baseline' and batched:return '_pack_dcp_larger_tile'
+    if impl!='baseline' and batched:return '_pack_dcp_rectangular' if s['d']==512 else '_pack_dcp_metadata_static'
     return '_pack_dcp_output_lse_batched_kernel' if batched else '_pack_dcp_output_lse_kernel'
 
 
@@ -125,7 +125,7 @@ def main():
                 path=Path(a.out);path.parent.mkdir(parents=True,exist_ok=True)
                 path.write_text(json.dumps(dict(status='running' if r['passed'] else 'failed',cases=results),indent=2))
                 if not r['passed'] and r.get('status')!='compile_failed':raise RuntimeError('precision failed '+case_id+':'+impl)
-    value=dict(status='passed' if all(r['passed'] for r in results) else 'complete_with_compile_failures',cases=results,vector_cores=cores(),binaries=binary_identity(),source_sha256=hashlib.sha256((ROOT/'dcp_iter6.py').read_bytes()).hexdigest(), source_files_sha256={f:hashlib.sha256((ROOT/f).read_bytes()).hexdigest() for f in ('baseline_kernels.py','candidate_kernels.py','dcp_iter6.py','general_benchmark.py')})
+    value=dict(status='passed' if all(r['passed'] for r in results) else 'complete_with_compile_failures',cases=results,vector_cores=cores(),binaries=binary_identity(),source_sha256=hashlib.sha256((ROOT/'dcp_iter7.py').read_bytes()).hexdigest(), source_files_sha256={f:hashlib.sha256((ROOT/f).read_bytes()).hexdigest() for f in ('baseline_kernels.py','candidate_kernels.py','dcp_iter5.py','dcp_iter7.py','general_benchmark.py')})
     Path(a.out).write_text(json.dumps(value,indent=2));print('VALIDATION_'+value['status'].upper(),len(results),flush=True)
 
 
