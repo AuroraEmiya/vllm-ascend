@@ -1,4 +1,4 @@
-"""PR20878 A3 algorithm candidates; iteration 1 per kernel, baseline stays frozen."""
+"""PR20878 A3 algorithm candidates; baseline stays frozen, see iteration ledger."""
 import triton
 import triton.language as tl
 from baseline_kernels import _radix_sort_candidate_pairs, _encode_lse_fields

@@ -5,6 +5,7 @@ import torch
 import torch_npu
 import baseline_kernels as base
 import candidate_kernels as cand
+import dcp_iter4
 from benchmark import cores, encode_cpu, binary_identity
 
 ROOT = Path(__file__).resolve().parent
@@ -64,7 +65,7 @@ def invoke(c):
     else:
         def launch(fn,grid,*args,**kwargs):
             if c['impl']!='baseline' and fn is base._pack_dcp_output_lse_batched_kernel:
-                fn=cand._pack_dcp_fields_fused
+                fn=dcp_iter4._pack_dcp_recurrence
             c['compiled']=[fn[grid](*args,**kwargs)]
         base._launch_pack_dcp_output_lse(c['output'],c['lse'],c['sums'],c['out'],1,nc,launch)
     return c['out']
@@ -98,7 +99,7 @@ def kernel_name(params):
     case_id,impl=params.split(':');s=SPECS[case_id]
     if s['kind']=='sort':return '_pack_sorted_candidates' if impl=='baseline' else '_pack_sorted_candidates_radix'
     batched=s['t']*s['h']>=8*cores() and (s['layout']!='feature2' or (s['d']==512 and s['t']>=128))
-    if impl!='baseline' and batched:return '_pack_dcp_fields_fused'
+    if impl!='baseline' and batched:return '_pack_dcp_recurrence'
     return '_pack_dcp_output_lse_batched_kernel' if batched else '_pack_dcp_output_lse_kernel'
 
 
@@ -123,8 +124,8 @@ def main():
                 path=Path(a.out);path.parent.mkdir(parents=True,exist_ok=True)
                 path.write_text(json.dumps(dict(status='running' if r['passed'] else 'failed',cases=results),indent=2))
                 if not r['passed'] and r.get('status')!='compile_failed':raise RuntimeError('precision failed '+case_id+':'+impl)
-    value=dict(status='passed' if all(r['passed'] for r in results) else 'complete_with_compile_failures',cases=results,vector_cores=cores(),binaries=binary_identity(),source_sha256=hashlib.sha256((ROOT/'candidate_kernels.py').read_bytes()).hexdigest())
-    Path(a.out).write_text(json.dumps(value,indent=2));print('VALIDATION_PASSED',len(results),flush=True)
+    value=dict(status='passed' if all(r['passed'] for r in results) else 'complete_with_compile_failures',cases=results,vector_cores=cores(),binaries=binary_identity(),source_sha256=hashlib.sha256((ROOT/'dcp_iter4.py').read_bytes()).hexdigest(), source_files_sha256={f:hashlib.sha256((ROOT/f).read_bytes()).hexdigest() for f in ('baseline_kernels.py','candidate_kernels.py','dcp_iter4.py','general_benchmark.py')})
+    Path(a.out).write_text(json.dumps(value,indent=2));print('VALIDATION_'+value['status'].upper(),len(results),flush=True)
 
 
 if __name__=='__main__':main()
