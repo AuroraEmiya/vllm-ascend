@@ -59,7 +59,7 @@ def _merge_owner_parallel(
             peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
             while (start < K) & (tl.sum(active.to(tl.int32), 0) > 0):
                 offsets = ((peer_rank[:, None] * ROWS + row) * K + start) * 2 + lanes[None, :]
-                pair = tl.load(packed + offsets, active[:, None], 0)
+                pair = tl.load(packed + offsets)
                 raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, TILE, 2)))
                 ids = raw_ids.to(tl.float32)
                 scores = bits.to(tl.float32, bitcast=True)
@@ -109,7 +109,7 @@ def _merge_owner_parallel(
 @triton.jit
 def _fused_dcp_lse_combine_cached(
     recv_ptr, output_ptr, local_output_ptr, local_lse_ptr,
-    local_output_stride_t: tl.constexpr, local_output_stride_h: tl.constexpr, local_output_stride_d: tl.constexpr,
+    local_output_stride_t, local_output_stride_h, local_output_stride_d: tl.constexpr,
     local_lse_stride_t: tl.constexpr, local_lse_stride_h: tl.constexpr,
     recv_stride_rank: tl.constexpr, recv_stride_scatter: tl.constexpr,
     recv_stride_replicated: tl.constexpr, recv_stride_d: tl.constexpr,
