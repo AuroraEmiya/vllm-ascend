@@ -5,6 +5,8 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton._tile_templates import gate_factor
+
 
 @triton.jit
 def _engram_gate_kernel(
@@ -39,9 +41,7 @@ def _engram_gate_kernel(
     rstd = tl.rsqrt(tl.sum(h * h, 0) / DIM + EPS)
     rstd *= tl.rsqrt(tl.sum(key * key, 0) / DIM + EPS)
     dot = tl.sum((h * (qw * kw)) * key, 0) * rstd * (DIM**-0.5)
-    magnitude = tl.sqrt(tl.maximum(tl.abs(dot), 1e-6))
-    negative = (dot.to(tl.int32, bitcast=True) & -2147483648) != 0
-    gate = tl.sigmoid(tl.where(negative, -magnitude, magnitude))
+    gate = gate_factor(dot, ACTIVATION=2)
     active = tl.load(mask + token * mask_stride) != 0
     gate = tl.where(active, gate, 0.0)
     value = tl.load(kv + token * kv_stride_t + HC * DIM + col, valid, 0).to(tl.float32)

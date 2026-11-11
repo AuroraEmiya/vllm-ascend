@@ -18,6 +18,7 @@
 
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton._tile_templates import packed_mask_tile
 from vllm_ascend.ops.triton.triton_utils import (
     get_vectorcore_num,
     init_device_properties_triton,
@@ -70,7 +71,7 @@ def _apply_grammar_bitmask_kernel_impl(
             mask=bitmask_offset < bitmask_stride,
             other=0,
         )
-        blocked = (packed_bitmask[:, None] & bit_mask[None, :]) == 0
+        blocked = packed_mask_tile(packed_bitmask, bit_mask, BLOCK_SIZE, WORD_BITS=32, PACK=False)
         blocked = blocked.reshape(BLOCK_SIZE)
 
         block_offset = block_id * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)

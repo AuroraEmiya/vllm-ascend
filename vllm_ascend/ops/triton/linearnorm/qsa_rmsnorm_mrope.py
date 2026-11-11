@@ -2,6 +2,8 @@ import torch
 from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
 
+from vllm_ascend.ops.triton._tile_templates import normalize_tile
+
 
 @triton.jit
 def _qsa_rmsnorm_mrope_kernel(
@@ -32,8 +34,8 @@ def _qsa_rmsnorm_mrope_kernel(
     values = tl.load(input_row + offsets, mask=mask, other=0.0).to(tl.float32)
     weight = tl.load(weight_ptr + offsets, mask=mask, other=0.0).to(tl.float32) + 1.0
     variance = tl.sum(values * values, axis=0) / head_dim
-    reciprocal_std = tl.rsqrt(variance + eps)
-    normalized = (values * reciprocal_std * weight).to(tl.bfloat16)
+    normalized, reciprocal_std = normalize_tile(values, variance, eps, RETURN_SCALE=True)
+    normalized = (normalized * weight).to(tl.bfloat16)
 
     half_rope_dim: tl.constexpr = rope_dim // 2
     rotary_offsets = tl.arange(0, half_rope_dim)

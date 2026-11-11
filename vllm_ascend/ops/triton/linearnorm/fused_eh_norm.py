@@ -3,14 +3,16 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton._tile_templates import normalize_tile
+
 
 @triton.jit
 def _rms_norm(x, w, eps, HIDDEN_SIZE: tl.constexpr):
     x = x.to(tl.float32)
     mean_sq = tl.sum(x * x, axis=0) / HIDDEN_SIZE
-    rrms = tl.rsqrt(mean_sq + eps)
+    normalized = normalize_tile(x, mean_sq, eps)
     w = w.to(tl.float32)
-    return (x * rrms) * w
+    return normalized * w
 
 
 @triton.jit

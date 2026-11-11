@@ -11,6 +11,7 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton._tile_templates import normalize_tile
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num
 
 
@@ -26,9 +27,9 @@ def l2norm_fwd_kernel2_loop(X, Y, eps, M, N: tl.constexpr, MBLOCK: tl.constexpr,
         xs = tl.load(X + (rindex + N * row_idx), mask=xmask, other=0.0).to(tl.float32)
         square = xs * xs
         square_sum = tl.sum(square, 1)[:, None]
-        rsqrt = tl.rsqrt(square_sum + eps)
+        normalized = normalize_tile(xs, square_sum, eps)
 
-        tl.store(Y + (rindex + N * row_idx), xs * rsqrt, xmask)
+        tl.store(Y + (rindex + N * row_idx), normalized, xmask)
 
 
 def l2norm_fwd(x: torch.Tensor, eps: float = 1e-6, output_dtype: torch.dtype | None = None):

@@ -9,6 +9,8 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton._tile_templates import gate_factor
+
 _ACTIVATION_SWISH = 0
 _ACTIVATION_SIGMOID = 1
 
@@ -78,10 +80,7 @@ def _layer_norm_fwd_1pass_kernel_npu(
         z_ptrs = Z + rows[:, None] * stride_z_row + cols[None, :] + group * N
         z = tl.load(z_ptrs, mask=row_mask[:, None] & col_mask[None, :]).to(tl.float32)
         if not NORM_BEFORE_GATE:
-            if ACTIVATION == 0:
-                x *= z * tl.sigmoid(z)
-            else:
-                x *= tl.sigmoid(z)
+            x *= gate_factor(z, ACTIVATION=ACTIVATION)
 
     # Compute statistics per row
     if not IS_RMS_NORM:
@@ -108,10 +107,7 @@ def _layer_norm_fwd_1pass_kernel_npu(
 
     # Post-gate
     if HAS_Z and NORM_BEFORE_GATE:
-        if ACTIVATION == 0:
-            y *= z * tl.sigmoid(z)
-        else:
-            y *= tl.sigmoid(z)
+        y *= gate_factor(z, ACTIVATION=ACTIVATION)
 
     # Store output
     y_ptrs = Y + rows[:, None] * stride_y_row + cols[None, :] + group * N
