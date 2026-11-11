@@ -128,7 +128,7 @@ def invoke(c):
     else:
         def launch(fn, grid, *args, **kwargs):
             assert fn is base._fused_dcp_lse_combine_batched_kernel
-            if c['impl'] != 'baseline': fn = cand._fused_dcp_lse_combine_rowvec
+            if c['impl'] != 'baseline' and (c['local_output'] is None or c['local_output'].stride(1) == s['d']): fn = cand._fused_dcp_lse_combine_rowvec
             c['compiled'] = [fn[grid](*args, **kwargs)]
         base._launch_fused_dcp_lse_combine(c['recv'], c['out'], s['d'], 1, False, c['local_output'], c['local_lse'], c['vector_cores'], launch)
     return c['out']
@@ -148,7 +148,7 @@ def check(c):
 def kernel_name(params):
     key, impl = params.split(':')
     if SPECS[key]['kind'] == 'owner': return '_merge_owner_prefix' if impl == 'baseline' else '_merge_owner_adaptive'
-    return '_fused_dcp_lse_combine_batched_kernel' if impl == 'baseline' else '_fused_dcp_lse_combine_rowvec'
+    return '_fused_dcp_lse_combine_batched_kernel' if impl == 'baseline' or SPECS[key]['layout'] != 'contiguous' else '_fused_dcp_lse_combine_rowvec'
 
 
 def main():

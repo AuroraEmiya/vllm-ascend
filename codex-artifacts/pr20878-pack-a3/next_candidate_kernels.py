@@ -54,7 +54,7 @@ def _merge_owner_adaptive(
             pivot_score = tl.load(own + pivot * 2 + 1).to(tl.float32, bitcast=True)
             pivot_valid = (pivot_id >= 0) & (tl.abs(pivot_score) < float("inf"))
             count = pivot.to(tl.float32)
-            if skewed:
+            if (WORLD <= 4) | skewed:
                 for rank in range(WORLD):
                     if rank != OWNER:
                         start = tl.full((), 0, tl.int32)
