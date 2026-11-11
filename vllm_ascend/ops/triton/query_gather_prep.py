@@ -20,6 +20,7 @@ import torch
 from vllm.triton_utils import tl, triton
 from vllm.utils.math_utils import next_power_of_2
 
+from vllm_ascend.ops.triton.memory_tile_ops import copy_tile
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num, init_device_properties_triton
 
 
@@ -81,13 +82,17 @@ def _q_gather_prep_head_major_kernel(
         if nope_dim > 0:
             offs_n = tl.arange(0, BLOCK_N)[None, :]
             n_mask = row_mask & (offs_n < nope_dim)
-            qn = tl.load(qn_ptr + src_base_n + offs_n * qn_stride_d, mask=n_mask, other=0)
-            tl.store(out_ptr + dst_base + offs_n, qn, mask=n_mask)
+            copy_tile(qn_ptr + src_base_n + offs_n * qn_stride_d, out_ptr + dst_base + offs_n, n_mask, n_mask, OTHER=0)
         if rope_dim > 0:
             offs_p = tl.arange(0, BLOCK_R)[None, :]
             p_mask = row_mask & (offs_p < rope_dim)
-            qp = tl.load(qp_ptr + src_base_p + offs_p * qp_stride_d, mask=p_mask, other=0)
-            tl.store(out_ptr + dst_base + nope_dim + offs_p, qp, mask=p_mask)
+            copy_tile(
+                qp_ptr + src_base_p + offs_p * qp_stride_d,
+                out_ptr + dst_base + nope_dim + offs_p,
+                p_mask,
+                p_mask,
+                OTHER=0,
+            )
 
 
 def prep_query_head_major(

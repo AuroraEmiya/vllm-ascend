@@ -5,6 +5,7 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.gate_tile_ops import softplus_tile
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num
 
 UNIFIED_BUFFER_SIZE = 1572864
@@ -46,7 +47,7 @@ def fused_gdn_gating_kernel(
             blk_bias = tl.load(dt_bias + head_off, mask=head_mask)
 
             x = blk_a.to(tl.float32) + blk_bias.to(tl.float32)[None, :]
-            softplus_x = tl.where(beta * x <= threshold, (1 / beta) * tl.log(1 + tl.exp(beta * x)), x)
+            softplus_x = softplus_tile(x, beta * x, beta, threshold, LINEAR_WHEN_GT=False)
 
             blk_g = -tl.exp(blk_A_log.to(tl.float32)) * softplus_x
             tl.store(g + off, blk_g.to(g.dtype.element_ty), mask=mask)

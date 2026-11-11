@@ -19,6 +19,8 @@ import torch
 from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
 
+from vllm_ascend.ops.triton.rotary_tile_ops import rotate_pair
+from vllm_ascend.ops.triton.tile_ops import square_sum_tile
 from vllm_ascend.ops.triton.triton_utils import extract_slice, get_element, get_vectorcore_num, insert_slice
 
 
@@ -113,8 +115,7 @@ def split_qkv_rmsnorm_rope_kernel(
         )
 
         normalized_values = values_tmp1.to(tl.float32)
-        normalized_values = normalized_values * normalized_values
-        normalized_values = tl.sum(normalized_values, axis=1) / HEAD_DIM
+        normalized_values = square_sum_tile(normalized_values, AXIS=1) / HEAD_DIM
         normalized_values = 1 / tl.sqrt(normalized_values + eps).reshape(qk_head_nums_per_iter_per_vec, 1)
         normalized_values = values_tmp1 * normalized_values
 
@@ -144,16 +145,17 @@ def split_qkv_rmsnorm_rope_kernel(
             sizes=(batch_size_per_iter_per_vec, q_head_num, HALF_ROPE_DIM),
             strides=(1, 1, 1),
         )
+        rotated_first, rotated_second = rotate_pair(x1, x2, cos, sin)
         values_tmp = insert_slice(
             values_tmp,
-            x1 * cos - x2 * sin,
+            rotated_first,
             offsets=(0, 0, 0),
             sizes=(batch_size_per_iter_per_vec, q_head_num, HALF_ROPE_DIM),
             strides=(1, 1, 1),
         )
         values_tmp = insert_slice(
             values_tmp,
-            x2 * cos + x1 * sin,
+            rotated_second,
             offsets=(0, 0, HALF_ROPE_DIM),
             sizes=(batch_size_per_iter_per_vec, q_head_num, HALF_ROPE_DIM),
             strides=(1, 1, 1),
@@ -207,16 +209,17 @@ def split_qkv_rmsnorm_rope_kernel(
             sizes=(batch_size_per_iter_per_vec, kv_head_num, HALF_ROPE_DIM),
             strides=(1, 1, 1),
         )
+        rotated_first, rotated_second = rotate_pair(x1, x2, cos, sin)
         values_tmp2 = insert_slice(
             values_tmp2,
-            x1 * cos - x2 * sin,
+            rotated_first,
             offsets=(0, 0, 0),
             sizes=(batch_size_per_iter_per_vec, kv_head_num, HALF_ROPE_DIM),
             strides=(1, 1, 1),
         )
         values_tmp2 = insert_slice(
             values_tmp2,
-            x2 * cos + x1 * sin,
+            rotated_second,
             offsets=(0, 0, HALF_ROPE_DIM),
             sizes=(batch_size_per_iter_per_vec, kv_head_num, HALF_ROPE_DIM),
             strides=(1, 1, 1),

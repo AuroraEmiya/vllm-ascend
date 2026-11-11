@@ -10,6 +10,7 @@ from vllm.model_executor.warmup.jit_warmup_triton_helper import (
 from vllm.triton_utils import tl, triton
 
 from vllm_ascend.ops.triton.ascend_jit_warmup import AscendTritonJitKernel
+from vllm_ascend.ops.triton.tile_ops import square_sum_tile
 from vllm_ascend.ops.triton.triton_utils import get_ub_size_bytes
 
 
@@ -42,7 +43,7 @@ def triton_rms_kernel(
 
         x = tl.load(hidden_state_ptr + offset_hidden, mask=mask_row)
 
-        variance = tl.sum(x * x, axis=-1) / DIM
+        variance = square_sum_tile(x, AXIS=-1) / DIM
         output = x * tl.rsqrt(variance[:, None] + variance_epsilon)
 
         tl.store(norm_output_ptr + offset_hidden, output, mask=mask_row)

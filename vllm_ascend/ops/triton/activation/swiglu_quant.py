@@ -1,6 +1,7 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.activation.tile_ops import line_reduce_absmax, quantize_segment, silu_tile
 from vllm_ascend.ops.triton.triton_utils import extract_slice, get_vectorcore_num
 
 
@@ -42,17 +43,16 @@ def _swiglu_quant_kernel(
         cur_x = tl.load(x_ptr + x_offsets)
         x1 = extract_slice(cur_x, offsets=(0,), sizes=(HALF_COLS,), strides=(1,))
         x2 = extract_slice(cur_x, offsets=(HALF_COLS,), sizes=(HALF_COLS,), strides=(1,))
-        out = x1 * tl.sigmoid(x1.to(tl.float32)) * x2
+        out = silu_tile(x1, x1.to(tl.float32)) * x2
 
         # quant
         if SCALE:
-            scale = tl.max(tl.abs(out)).to(tl.float32) / DTYPE_MAX
+            scale = line_reduce_absmax(out).to(tl.float32) / DTYPE_MAX
             # store scale
             tl.store(scale_ptr + row_idx, scale.to(scale_ptr.dtype.element_ty))
             for col_blk_idx in range(0, HALF_COLS, COL_BLOCK_SIZE):
                 tmp_out = extract_slice(out, offsets=(col_blk_idx,), sizes=(COL_BLOCK_SIZE,), strides=(1,))
-                tmp_out = (tmp_out.to(tl.float32) / scale).to(x_ptr.dtype.element_ty)
-                tmp_out = tmp_out.cast(tl.int8, overflow_mode="saturate")
+                tmp_out = quantize_segment(tmp_out, scale, x_ptr.dtype.element_ty)
 
                 o_offsets = row_idx * HALF_COLS + col_blk_idx + tl.arange(0, COL_BLOCK_SIZE)
                 mask = (col_blk_idx + tl.arange(0, COL_BLOCK_SIZE)) < HALF_COLS

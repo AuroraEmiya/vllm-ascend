@@ -5,6 +5,8 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.tile_ops import square_sum_tile
+
 
 @triton.jit
 def _engram_gate_kernel(
@@ -36,8 +38,8 @@ def _engram_gate_kernel(
     qw = tl.load(q + branch * q_stride_h + col * q_stride_d, valid, 0).to(tl.float32)
     kw = tl.load(k + branch * k_stride_h + col * k_stride_d, valid, 0).to(tl.float32)
     # Match the unfused FP32 operation order; do not contract the residual FMA.
-    rstd = tl.rsqrt(tl.sum(h * h, 0) / DIM + EPS)
-    rstd *= tl.rsqrt(tl.sum(key * key, 0) / DIM + EPS)
+    rstd = tl.rsqrt(square_sum_tile(h, AXIS=0) / DIM + EPS)
+    rstd *= tl.rsqrt(square_sum_tile(key, AXIS=0) / DIM + EPS)
     dot = tl.sum((h * (qw * kw)) * key, 0) * rstd * (DIM**-0.5)
     magnitude = tl.sqrt(tl.maximum(tl.abs(dot), 1e-6))
     negative = (dot.to(tl.int32, bitcast=True) & -2147483648) != 0

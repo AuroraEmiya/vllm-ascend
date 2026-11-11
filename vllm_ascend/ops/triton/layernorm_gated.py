@@ -9,6 +9,8 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.activation.tile_ops import silu_tile
+
 _ACTIVATION_SWISH = 0
 _ACTIVATION_SIGMOID = 1
 
@@ -79,7 +81,7 @@ def _layer_norm_fwd_1pass_kernel_npu(
         z = tl.load(z_ptrs, mask=row_mask[:, None] & col_mask[None, :]).to(tl.float32)
         if not NORM_BEFORE_GATE:
             if ACTIVATION == 0:
-                x *= z * tl.sigmoid(z)
+                x *= silu_tile(z, z)
             else:
                 x *= tl.sigmoid(z)
 
@@ -109,7 +111,7 @@ def _layer_norm_fwd_1pass_kernel_npu(
     # Post-gate
     if HAS_Z and NORM_BEFORE_GATE:
         if ACTIVATION == 0:
-            y *= z * tl.sigmoid(z)
+            y *= silu_tile(z, z)
         else:
             y *= tl.sigmoid(z)
 

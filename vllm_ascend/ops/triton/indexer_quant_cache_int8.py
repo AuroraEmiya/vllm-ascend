@@ -10,6 +10,8 @@ from vllm.model_executor.warmup.jit_warmup import kernel_launcher
 from vllm.model_executor.warmup.jit_warmup_triton_helper import LaunchSpec, TritonWarmupTensor
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.cache_tile_ops import slot_to_page_row
+from vllm_ascend.ops.triton.quant_tile_ops import line_absmax, round_clamp_int8
 from vllm_ascend.ops.triton.ascend_jit_warmup import AscendTritonJitKernel
 
 HEAD_DIM = 128
@@ -75,16 +77,14 @@ def _write_indexer_cache_block(
         active[:, None],
         other=0,
     ).to(tl.float32)
-    abs_max = tl.max(tl.abs(x), axis=1)
+    abs_max = line_absmax(x, AXIS=1)
     scale = tl.div_rn(abs_max, QUANT_MAX)
     # Quantize using the FP32 scale. Rounding it to FP16 before division
     # changes INT8 values and does not match the split DynamicQuant path.
     divisor = tl.where(scale > 0, scale, 1.0)
     normalized = tl.div_rn(x, divisor[:, None])
-    quantized = tl.extra.cann.libdevice.nearbyint(normalized)
-    quantized = tl.minimum(tl.maximum(quantized, -QUANT_MAX), QUANT_MAX).to(tl.int8)
-    page = first_slot // PAGE_SIZE
-    position = first_slot % PAGE_SIZE
+    quantized = round_clamp_int8(normalized, QUANT_MAX=QUANT_MAX)
+    page, position = slot_to_page_row(first_slot, PAGE_SIZE=PAGE_SIZE)
     key_start = tl.multiple_of(page * KEY_PAGE_STRIDE + position * HEAD_SIZE, 32)
     scale_start = tl.multiple_of(page * SCALE_PAGE_STRIDE + position, SCALES_PER_BLOCK)
     key_addresses = key_ptr + key_start + lanes[:, None] * HEAD_SIZE + columns[None, :]

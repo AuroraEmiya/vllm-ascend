@@ -18,6 +18,7 @@
 
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.bit_tile_ops import unpack_bits
 from vllm_ascend.ops.triton.triton_utils import (
     get_vectorcore_num,
     init_device_properties_triton,
@@ -46,8 +47,6 @@ def _apply_grammar_bitmask_kernel_impl(
     task_start = pid * tasks_per_program + tl.minimum(pid, remainder)
     task_end = task_start + tasks_per_program + tl.where(pid < remainder, 1, 0)
 
-    bit_mask = tl.full((32,), 1, tl.int32) << tl.arange(0, 32)
-
     for task_id in tl.range(task_start, task_end):
         bitmask_idx = task_id // NUM_VOCAB_BLOCKS
         block_id = task_id - bitmask_idx * NUM_VOCAB_BLOCKS
@@ -70,7 +69,7 @@ def _apply_grammar_bitmask_kernel_impl(
             mask=bitmask_offset < bitmask_stride,
             other=0,
         )
-        blocked = (packed_bitmask[:, None] & bit_mask[None, :]) == 0
+        blocked = unpack_bits(packed_bitmask, WORD_BITS=32)
         blocked = blocked.reshape(BLOCK_SIZE)
 
         block_offset = block_id * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)

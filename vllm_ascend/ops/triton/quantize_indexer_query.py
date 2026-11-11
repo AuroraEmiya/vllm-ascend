@@ -13,6 +13,7 @@ from vllm.model_executor.warmup.jit_warmup_triton_helper import (
 )
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.quant_tile_ops import line_absmax, round_clamp_int8
 from vllm_ascend.ops.triton.ascend_jit_warmup import AscendTritonJitKernel
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num
 
@@ -35,13 +36,12 @@ def _quantize_indexer_query_kernel(
         rows = (first_block + block) * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)
         offsets = rows[:, None] * HEAD_DIM + columns[None, :]
         query = tl.load(query_ptr + offsets, rows[:, None] < num_rows, other=0).to(tl.float32)
-        abs_max = tl.max(tl.abs(query), axis=1)
+        abs_max = line_absmax(query, AXIS=1)
         # Quantize with the rounded FP16 scale, not the original FP32 value.
         scale = tl.div_rn(abs_max, QUANT_MAX).to(tl.float16).to(tl.float32)
         scale = tl.maximum(scale, MIN_SCALE)
         normalized = tl.div_rn(query, scale[:, None])
-        quantized = tl.extra.cann.libdevice.nearbyint(normalized)
-        quantized = tl.minimum(tl.maximum(quantized, -QUANT_MAX), QUANT_MAX).to(tl.int8)
+        quantized = round_clamp_int8(normalized, QUANT_MAX=QUANT_MAX)
         tl.store(quantized_ptr + offsets, quantized, rows[:, None] < num_rows)
         tl.store(scale_ptr + rows, scale, rows < num_rows)
 

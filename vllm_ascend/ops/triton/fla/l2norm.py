@@ -11,6 +11,7 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.tile_ops import square_sum_tile
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num
 
 
@@ -24,8 +25,7 @@ def l2norm_fwd_kernel2_loop(X, Y, eps, M, N: tl.constexpr, MBLOCK: tl.constexpr,
         xmask = row_idx < M
 
         xs = tl.load(X + (rindex + N * row_idx), mask=xmask, other=0.0).to(tl.float32)
-        square = xs * xs
-        square_sum = tl.sum(square, 1)[:, None]
+        square_sum = square_sum_tile(xs, AXIS=1)[:, None]
         rsqrt = tl.rsqrt(square_sum + eps)
 
         tl.store(Y + (rindex + N * row_idx), xs * rsqrt, xmask)

@@ -9,6 +9,7 @@ from vllm.model_executor.warmup.jit_warmup import kernel_launcher
 from vllm.model_executor.warmup.jit_warmup_triton_helper import LaunchSpec, TritonWarmupTensor
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.gate_tile_ops import gated_multiply_tile
 from vllm_ascend.ops.triton.ascend_jit_warmup import AscendTritonJitKernel
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num, init_device_properties_triton
 
@@ -49,8 +50,8 @@ def _flash_attention_gate_kernel(
         values = tl.load(projected + projected_offsets, mask, other=0)
         gates = tl.load(gate + gate_offsets, mask, other=0).to(tl.float32)
         # Preserve the intermediate rounding of torch.sigmoid(gate).
-        scale = tl.sigmoid(gates).to(gate.dtype.element_ty)
-        tl.store(projected + projected_offsets, values * scale, mask)
+        output = gated_multiply_tile(values, gates, SIGMOID_OUTPUT_DTYPE=gate.dtype.element_ty)
+        tl.store(projected + projected_offsets, output, mask)
 
 
 def _flash_attention_gate_block_size(numel: int) -> int:

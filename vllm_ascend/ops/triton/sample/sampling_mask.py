@@ -10,6 +10,8 @@ import torch
 from vllm.logger import logger
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.bit_tile_ops import pack_bits
+
 if TYPE_CHECKING:
     from vllm.v1.worker.gpu.sample.output import SamplingMaskTensors
 
@@ -53,9 +55,7 @@ def _pack_sampling_mask_kernel_ascend(
         # so counts contains the number of finite logits, not the tile count.
         count += tl.sum(keep_i32)
 
-        bits = tl.trans(tl.reshape(keep_i32, (BLOCK_SIZE // 8, 8)))
-        bit_weights = (1 << tl.arange(0, 8))[:, None]
-        packed = tl.sum(bits * bit_weights, axis=0).to(tl.uint8)
+        packed = pack_bits(keep_i32, BLOCK_SIZE=BLOCK_SIZE, WORD_BITS=8)
         byte_offsets = start_idx // 8 + tl.arange(0, BLOCK_SIZE // 8)
         tl.store(
             packed_mask_ptr + output_row * packed_mask_row_stride + byte_offsets,

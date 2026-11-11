@@ -34,6 +34,7 @@ rope.py.
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.activation.tile_ops import silu_tile, step_clamp_pair
 from vllm_ascend.ops.triton.triton_utils import (
     extract_slice,
     get_vectorcore_num,
@@ -68,12 +69,9 @@ def _swiglustep_kernel(
         gate = extract_slice(x_row, offsets=(0,), sizes=(HALF_COLS,), strides=(1,)).to(tl.float32)
         up = extract_slice(x_row, offsets=(HALF_COLS,), sizes=(HALF_COLS,), strides=(1,)).to(tl.float32)
 
-        # silu(gate) then clamp upper bound only
-        s = gate * tl.sigmoid(gate)
-        s = tl.minimum(s, LIMIT)
-        # up clamp both sides
-        up = tl.minimum(up, LIMIT)
-        up = tl.maximum(-LIMIT, up)
+        # silu(gate) then clamp upper bound only; up clamp both sides
+        s = silu_tile(gate, gate)
+        s, up = step_clamp_pair(s, up, LIMIT)
         out = s * up
 
         tl.store(

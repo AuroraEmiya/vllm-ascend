@@ -2,6 +2,8 @@ import torch
 from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
 
+from vllm_ascend.ops.triton.tile_ops import square_sum_tile
+
 
 @triton.jit
 def _qsa_rmsnorm_mrope_kernel(
@@ -31,7 +33,7 @@ def _qsa_rmsnorm_mrope_kernel(
     input_row = input_ptr + token_id * input_stride_token + head_id * input_stride_head
     values = tl.load(input_row + offsets, mask=mask, other=0.0).to(tl.float32)
     weight = tl.load(weight_ptr + offsets, mask=mask, other=0.0).to(tl.float32) + 1.0
-    variance = tl.sum(values * values, axis=0) / head_dim
+    variance = square_sum_tile(values, AXIS=0) / head_dim
     reciprocal_std = tl.rsqrt(variance + eps)
     normalized = (values * reciprocal_std * weight).to(tl.bfloat16)
 

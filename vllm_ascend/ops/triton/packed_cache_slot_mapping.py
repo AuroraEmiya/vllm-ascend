@@ -7,6 +7,8 @@ from __future__ import annotations
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.cache_tile_ops import slot_to_page_row
+
 
 @triton.jit(
     do_not_specialize=[
@@ -57,8 +59,9 @@ def _build_packed_cache_slot_mapping_kernel(
 
     safe_physical = tl.maximum(physical, 0)
     flat_slots = tl.where(valid, physical, -1)
-    pages = tl.where(valid, safe_physical // PAGE_SIZE, -1)
-    rows = tl.where(valid, safe_physical % PAGE_SIZE, -1)
+    page, row = slot_to_page_row(safe_physical, PAGE_SIZE=PAGE_SIZE)
+    pages = tl.where(valid, page, -1)
+    rows = tl.where(valid, row, -1)
     tl.store(flat_slots_ptr + tokens, flat_slots, mask=mask)
     tl.store(coordinates_ptr + tokens * 2, pages, mask=mask)
     tl.store(coordinates_ptr + tokens * 2 + 1, rows, mask=mask)

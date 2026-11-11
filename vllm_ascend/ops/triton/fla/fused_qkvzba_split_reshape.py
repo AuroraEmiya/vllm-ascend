@@ -12,6 +12,7 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.memory_tile_ops import copy_tile
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num
 
 MAX_ROWS_PER_ITER = 64
@@ -85,8 +86,7 @@ def fused_qkvzba_split_reshape_cat_kernel(
             q_range = tl.arange(0, HEAD_QK)
             q_src = row_indices[:, None] * QKVZ_ROW_STRIDE + src_head_offset + q_range[None, :]
             q_dst = row_indices[:, None] * QKV_ROW_STRIDE + head_id * HEAD_QK + q_range[None, :]
-            q_data = tl.load(mixed_qkvz + q_src, mask=row_mask[:, None])
-            tl.store(mixed_qkv + q_dst, q_data, mask=row_mask[:, None])
+            copy_tile(mixed_qkvz + q_src, mixed_qkv + q_dst, row_mask[:, None], row_mask[:, None])
 
             # ----- K (Key) Extraction -----
             # Source layout: mixed_qkvz[row, head_id * QKVZ_DIM_T + HEAD_QK : +HEAD_QK]
@@ -94,8 +94,7 @@ def fused_qkvzba_split_reshape_cat_kernel(
             # K is stored after Q in the source; in dest, K starts after all Q heads
             k_src = row_indices[:, None] * QKVZ_ROW_STRIDE + src_head_offset + HEAD_QK + q_range[None, :]
             k_dst = row_indices[:, None] * QKV_ROW_STRIDE + Q_TOTAL + head_id * HEAD_QK + q_range[None, :]
-            k_data = tl.load(mixed_qkvz + k_src, mask=row_mask[:, None])
-            tl.store(mixed_qkv + k_dst, k_data, mask=row_mask[:, None])
+            copy_tile(mixed_qkvz + k_src, mixed_qkv + k_dst, row_mask[:, None], row_mask[:, None])
 
             # ----- V (Value) Extraction -----
             # Source layout: mixed_qkvz[row, head_id * QKVZ_DIM_T + HEAD_QK*2 : +V_DIM_PER_QK]
@@ -106,8 +105,7 @@ def fused_qkvzba_split_reshape_cat_kernel(
             v_dst = (
                 row_indices[:, None] * QKV_ROW_STRIDE + Q_TOTAL + K_TOTAL + head_id * V_DIM_PER_QK + v_range[None, :]
             )
-            v_data = tl.load(mixed_qkvz + v_src, mask=row_mask[:, None])
-            tl.store(mixed_qkv + v_dst, v_data, mask=row_mask[:, None])
+            copy_tile(mixed_qkvz + v_src, mixed_qkv + v_dst, row_mask[:, None], row_mask[:, None])
 
             # ----- Z Extraction -----
             # Source layout: mixed_qkvz[row, head_id * QKVZ_DIM_T + HEAD_QK*2 + V_DIM_PER_QK : ...]
@@ -117,8 +115,7 @@ def fused_qkvzba_split_reshape_cat_kernel(
                 row_indices[:, None] * QKVZ_ROW_STRIDE + src_head_offset + HEAD_QK * 2 + V_DIM_PER_QK + v_range[None, :]
             )
             z_dst = row_indices[:, None] * Z_ROW_STRIDE + head_id * V_DIM_PER_QK + v_range[None, :]
-            z_data = tl.load(mixed_qkvz + z_src, mask=row_mask[:, None])
-            tl.store(z + z_dst, z_data, mask=row_mask[:, None])
+            copy_tile(mixed_qkvz + z_src, z + z_dst, row_mask[:, None], row_mask[:, None])
 
             # ----- B Extraction -----
             # Source layout: mixed_ba[row, head_id * BA_DIM_T : +V_HEADS_PER_QK]
@@ -127,16 +124,14 @@ def fused_qkvzba_split_reshape_cat_kernel(
             ba_head_offset = head_id * BA_DIM_T
             b_src = row_indices[:, None] * BA_ROW_STRIDE + ba_head_offset + b_range[None, :]
             b_dst = row_indices[:, None] * BA_OUT_ROW_STRIDE + head_id * V_HEADS_PER_QK + b_range[None, :]
-            b_data = tl.load(mixed_ba + b_src, mask=row_mask[:, None])
-            tl.store(b + b_dst, b_data, mask=row_mask[:, None])
+            copy_tile(mixed_ba + b_src, b + b_dst, row_mask[:, None], row_mask[:, None])
 
             # ----- A Extraction -----
             # Source layout: mixed_ba[row, head_id * BA_DIM_T + V_HEADS_PER_QK : ...]
             # Dest layout: a[row, head_id * V_HEADS_PER_QK : ...] (same as b_dst)
             # A follows B in source; output layout is same as B
             a_src = row_indices[:, None] * BA_ROW_STRIDE + ba_head_offset + V_HEADS_PER_QK + b_range[None, :]
-            a_data = tl.load(mixed_ba + a_src, mask=row_mask[:, None])
-            tl.store(a + b_dst, a_data, mask=row_mask[:, None])
+            copy_tile(mixed_ba + a_src, a + b_dst, row_mask[:, None], row_mask[:, None])
 
         row_offset += ROWS_PER_ITER
 

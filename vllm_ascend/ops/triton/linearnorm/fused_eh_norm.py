@@ -3,11 +3,13 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.tile_ops import square_sum_tile
+
 
 @triton.jit
 def _rms_norm(x, w, eps, HIDDEN_SIZE: tl.constexpr):
     x = x.to(tl.float32)
-    mean_sq = tl.sum(x * x, axis=0) / HIDDEN_SIZE
+    mean_sq = square_sum_tile(x, AXIS=0) / HIDDEN_SIZE
     rrms = tl.rsqrt(mean_sq + eps)
     w = w.to(tl.float32)
     return (x * rrms) * w

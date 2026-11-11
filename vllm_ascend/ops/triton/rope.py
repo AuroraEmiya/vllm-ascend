@@ -17,6 +17,7 @@
 import torch
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.rotary_tile_ops import rotate_pair
 from vllm_ascend.ops.triton.triton_utils import get_ub_size_bytes, get_vectorcore_num
 
 _FP8_E4M3_MAX = 448.0
@@ -262,9 +263,8 @@ def _triton_rope(
                 q_tile_2 = tl.load(q_tile_start_ptr + second_half_q_offsets, mask=second_q_mask, other=0).to(
                     sin_row.dtype
                 )
-                new_q_tile_1 = q_tile_1 * cos_row - q_tile_2 * sin_row
+                new_q_tile_1, new_q_tile_2 = rotate_pair(q_tile_1, q_tile_2, cos_row, sin_row)
                 tl.store(q_tile_start_ptr + first_half_q_offsets, new_q_tile_1, mask=first_q_mask)
-                new_q_tile_2 = q_tile_2 * cos_row + q_tile_1 * sin_row
                 tl.store(q_tile_start_ptr + second_half_q_offsets, new_q_tile_2, mask=second_q_mask)
             else:
                 pair_offsets = (
@@ -277,8 +277,7 @@ def _triton_rope(
                 )
                 q_tile = tl.load(q_tile_start_ptr + pair_offsets, mask=pair_mask, other=0).to(sin_row.dtype)
                 q_tile_1, q_tile_2 = tl.split(q_tile)
-                new_q_tile_1 = q_tile_1 * cos_row - q_tile_2 * sin_row
-                new_q_tile_2 = q_tile_2 * cos_row + q_tile_1 * sin_row
+                new_q_tile_1, new_q_tile_2 = rotate_pair(q_tile_1, q_tile_2, cos_row, sin_row)
                 q_tile_out = tl.join(new_q_tile_1, new_q_tile_2)
                 tl.store(q_tile_start_ptr + pair_offsets, q_tile_out, mask=pair_mask)
 
@@ -301,9 +300,8 @@ def _triton_rope(
                 k_tile_2 = tl.load(k_tile_start_ptr + second_half_k_offsets, mask=second_k_mask, other=0).to(
                     sin_row.dtype
                 )
-                new_k_tile_1 = k_tile_1 * cos_row - k_tile_2 * sin_row
+                new_k_tile_1, new_k_tile_2 = rotate_pair(k_tile_1, k_tile_2, cos_row, sin_row)
                 tl.store(k_tile_start_ptr + first_half_k_offsets, new_k_tile_1, mask=first_k_mask)
-                new_k_tile_2 = k_tile_2 * cos_row + k_tile_1 * sin_row
                 tl.store(k_tile_start_ptr + second_half_k_offsets, new_k_tile_2, mask=second_k_mask)
             else:
                 pair_offsets = (
@@ -317,8 +315,7 @@ def _triton_rope(
                 k_tile = tl.load(k_tile_start_ptr + pair_offsets, mask=pair_mask, other=0).to(sin_row.dtype)
                 k_tile_1, k_tile_2 = tl.split(k_tile)
 
-                new_k_tile_1 = k_tile_1 * cos_row - k_tile_2 * sin_row
-                new_k_tile_2 = k_tile_2 * cos_row + k_tile_1 * sin_row
+                new_k_tile_1, new_k_tile_2 = rotate_pair(k_tile_1, k_tile_2, cos_row, sin_row)
                 k_tile_out = tl.join(new_k_tile_1, new_k_tile_2)
                 tl.store(k_tile_start_ptr + pair_offsets, k_tile_out, mask=pair_mask)
 
@@ -457,17 +454,18 @@ def _triton_rope_fp8(
                 mask=half_mask,
                 other=0,
             ).to(tl.float32)
+            rotated_first, rotated_second = rotate_pair(x1, x2, cos_row, sin_row)
             _store_fp8_e4m3(
                 out_base,
                 q_heads[:, None] * hd + half_offs[None, :],
-                x1 * cos_row - x2 * sin_row,
+                rotated_first,
                 half_mask,
                 FP8_MAX,
             )
             _store_fp8_e4m3(
                 out_base,
                 q_heads[:, None] * hd + half + half_offs[None, :],
-                x2 * cos_row + x1 * sin_row,
+                rotated_second,
                 half_mask,
                 FP8_MAX,
             )
@@ -507,17 +505,18 @@ def _triton_rope_fp8(
                 mask=half_mask,
                 other=0,
             ).to(tl.float32)
+            rotated_first, rotated_second = rotate_pair(x1, x2, cos_row, sin_row)
             _store_fp8_e4m3(
                 out_base,
                 k_heads[:, None] * hd + half_offs[None, :],
-                x1 * cos_row - x2 * sin_row,
+                rotated_first,
                 half_mask,
                 FP8_MAX,
             )
             _store_fp8_e4m3(
                 out_base,
                 k_heads[:, None] * hd + half + half_offs[None, :],
-                x2 * cos_row + x1 * sin_row,
+                rotated_second,
                 half_mask,
                 FP8_MAX,
             )

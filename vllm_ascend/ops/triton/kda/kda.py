@@ -21,6 +21,7 @@ import torch
 from vllm.triton_utils import tl, triton
 from vllm.utils.math_utils import cdiv, next_power_of_2
 
+from vllm_ascend.ops.triton.gate_tile_ops import softplus_tile
 from .chunk_delta_h import chunk_gated_delta_rule_fwd_h_kda
 from .cumsum import chunk_local_cumsum
 from .fused_recurrent_kda import fused_recurrent_gated_delta_rule_fwd_kernel
@@ -1481,8 +1482,7 @@ def kda_gate_fwd_kernel(
     # When beta * x > threshold, use linear approximation x
     # Use threshold to switch to linear when beta*x > threshold
     g_scaled = b_g * beta
-    use_linear = g_scaled > threshold
-    sp = tl.where(use_linear, b_g, (1.0 / beta) * tl.log(1.0 + tl.exp(g_scaled)))
+    sp = softplus_tile(b_g, g_scaled, beta, threshold, LINEAR_WHEN_GT=True)
     b_y = b_a * sp
 
     tl.store(y_ptr, b_y.to(y.dtype.element_ty), boundary_check=(0, 1))
