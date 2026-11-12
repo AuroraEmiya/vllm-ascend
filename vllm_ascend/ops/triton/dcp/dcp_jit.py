@@ -40,7 +40,7 @@ class DcpJitKernel(AscendTritonJitKernel["DcpJitKernel.CompileKey"]):
                 # Pointer dtype/alignment specialize Triton; tensor shape is
                 # expressed by the explicit scalar launch arguments instead.
                 inputs[name] = TritonWarmupTensor(value.dtype, aligned=value.aligned)
-            # All eight DCP kernels spell their constexpr parameters in
+            # DCP kernels spell their constexpr parameters in
             # uppercase; launch options such as multibuffer are booleans.
             elif type(value) is int and not name.isupper():
                 representative = triton_scalar_specialization_rep(value)

@@ -18,6 +18,7 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a import (
 from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
     _fused_dcp_lse_combine_batched_kernel,
     _pack_dcp_output_lse_batched_kernel,
+    _pack_dcp_output_lse_rectangular_kernel,
 )
 from vllm_ascend.ops.triton.dcp.dcp_jit import DcpJitKernel
 from vllm_ascend.ops.triton.dcp.sfa_dcp_exchange import (
@@ -36,6 +37,7 @@ from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num, init_device_
 _DCP_KERNELS = (
     DcpJitKernel(_pack_dcp_output_lse_kernel),
     DcpJitKernel(_pack_dcp_output_lse_batched_kernel),
+    DcpJitKernel(_pack_dcp_output_lse_rectangular_kernel),
     DcpJitKernel(_fused_dcp_lse_combine_kernel),
     DcpJitKernel(_fused_dcp_lse_combine_batched_kernel),
     DcpJitKernel(_pack_t1_peer),

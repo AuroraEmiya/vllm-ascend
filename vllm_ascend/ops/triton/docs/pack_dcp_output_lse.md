@@ -10,8 +10,8 @@
   1. Validate the NPU input shapes, dtype, scatter axis, and divisibility by `dcp_size`; allocate the contiguous payload `[P, local_scatter_size, replicated_size, D + lse_pack_dim]`.
   2. Flatten `(token, head)` into `total_rows = T * H` and launch `min(total_rows, get_vectorcore_num())` Triton programs. Each program walks its rows with a grid-stride loop.
   3. Read output and LSE through their explicit strides, calculate the destination rank and local scatter index, encode the LSE, and write one packed row. The feature tail beyond `D` is masked.
-  4. On eligible BF16 head-scatter shapes, process 32 rows per tile for contiguous-feature `D=512, T>=128` and eight otherwise in `_pack_dcp_output_lse_batched_kernel`; `row_mask` protects the last partial tile.
-  5. For BF16 head scatter with `D=512` and `T>=128`, each tile stays inside one head and traverses its tokens in destination order. This preserves affine copy strides and avoids per-row vector division, including strided input features. Output copy, LSE computation and encoding stay in one kernel without an intermediate concatenation or transpose.
+  4. On eligible BF16 head-scatter shapes with `D=512`, `_pack_dcp_output_lse_rectangular_kernel` copies a fixed four-token, eight-head tile. Other eligible dimensions use eight rows per tile in `_pack_dcp_output_lse_batched_kernel`. Masks protect token, head and feature tails.
+  5. Both optimized kernels use the allocated contiguous head-scatter layout directly: the packed row offset is `(head * T + token) * (D + 4)`. Output copy, optional LSE computation and four-field encoding stay in one kernel without an intermediate concatenation or transpose. The scalar kernel covers the other public modes.
 - **Supported modes**: A3 and A5 share scalar and batched kernels selected by dtype, shape and strides. The wrapper participates in eager execution and the registered `dcp_a2a_fused` custom op's FakeTensor shape propagation. Head-aligned packing is covered by the shared NPU operator tests.
 
 ## Parameters
@@ -29,7 +29,7 @@
 
 - `T`, `H`, and `D` must be positive. The selected scatter dimension must be divisible by `dcp_size`. `lse_pack_dim` is one for FP32 output and four for BF16/FP16 output.
 - The BF16/FP16 encoding uses integer fields exactly representable in both dtypes. The combine operator reconstructs finite LSE values; NaN and infinities are marked invalid rather than preserved as payload values.
-- The shared batched path requires BF16, `scatter_dim=1`, `D <= 2048`, `T * H >= 8 * get_vectorcore_num()`, and unit feature stride or `D=512, T>=128`. Other valid shapes use the scalar-row Triton kernel. `BLOCK_D = next_power_of_2(D)` and `BLOCK_ROWS` (32 for contiguous-feature `D=512, T>=128`, eight otherwise) are compile-time tile sizes. `OUTPUT_HEAD_MAJOR` selects destination-order traversal for `D=512`.
+- The optimized paths require BF16, `scatter_dim=1`, `D <= 2048`, `T * H >= 8 * get_vectorcore_num()`, and unit feature stride or `D=512, T>=128`. Other valid shapes use the scalar-row Triton kernel. The rectangular tile is fixed at `[4, 8, 512]`; the other batched tile is `[8, next_power_of_2(D)]`. Only the optional statistics calculation and the non-512 feature tile vary at compile time. Sizes and strides remain runtime scalars and participate in the normal Triton integer specialization keys. Both kernels are registered with the compile-only DCP warmup inventory.
 - The operator is for inference on NPU. The wrapper is called before the HCCL exchange; it does not execute a collective itself.
 
 ## Origin and Differences

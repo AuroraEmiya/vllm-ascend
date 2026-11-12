@@ -13,6 +13,7 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
     _encode_lse_fields,
     _fused_dcp_lse_combine_batched_kernel,
     _pack_dcp_output_lse_batched_kernel,
+    _pack_dcp_output_lse_rectangular_kernel,
 )
 from vllm_ascend.ops.triton.dcp.dcp_jit import _launch_kernel
 from vllm_ascend.ops.triton.dcp.sfa_dcp_exchange import can_exchange, exchange
@@ -333,8 +334,14 @@ def _launch_pack_dcp_output_lse(partial_output, softmax_lse, softmax_sum, send, 
         and (partial_output.stride(-1) == 1 or (head_dim == 512 and num_tokens >= 128))
     )
     if batched:
+        if head_dim == 512:
+            kernel = _pack_dcp_output_lse_rectangular_kernel
+            tile_kwargs = {}
+        else:
+            kernel = _pack_dcp_output_lse_batched_kernel
+            tile_kwargs = {"HEAD_DIM": head_dim, "BLOCK_D": triton.next_power_of_2(head_dim)}
         launch(
-            _pack_dcp_output_lse_batched_kernel,
+            kernel,
             (grid_size,),
             partial_output,
             softmax_lse,
@@ -345,17 +352,12 @@ def _launch_pack_dcp_output_lse(partial_output, softmax_lse, softmax_sum, send, 
             softmax_lse.stride(1),
             sum_input.stride(0),
             sum_input.stride(1),
-            *send.stride(),
-            local_scatter_size,
-            head_dim,
+            send.stride(2),
+            send.stride(3),
+            num_tokens,
             num_heads,
-            total_rows,
-            SCATTER_TOKENS=scatter_dim == 0,
-            LSE_PACK_DIM=lse_pack_dim,
             FROM_STATS=softmax_sum is not None,
-            BLOCK_D=triton.next_power_of_2(head_dim),
-            BLOCK_ROWS=32 if head_dim == 512 and num_tokens >= 128 and partial_output.stride(-1) == 1 else 8,
-            OUTPUT_HEAD_MAJOR=head_dim == 512,
+            **tile_kwargs,
         )
         return
     launch(
