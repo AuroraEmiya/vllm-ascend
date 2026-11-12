@@ -4,6 +4,7 @@
 import pytest
 import torch
 import torch_npu  # noqa: F401
+
 from tests.e2e.nightly.single_node.ops.singlecard_ops.triton.dcp_test_utils import local_to_global
 from vllm_ascend.ops.triton.sharded_indexer import pack_local_candidates
 

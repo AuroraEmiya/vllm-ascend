@@ -15,7 +15,7 @@ def cases():
     result = []
     for dtype in ("fp32", "bf16"):
         shapes = {(r, w) for r in (32, 64, 128) for w in (2, 6, 7, 8)}
-        shapes |= {(r, 8) for r in (1, 29, 30, 31, 39, 40, 41, 144, 152)}
+        shapes |= {(r, 8) for r in (1, 29, 30, 31, 35, 36, 37, 39, 40, 41, 47, 48, 49, 144, 152)}
         for rows, world in sorted(shapes):
             result.append(dict(name=f"r{rows}_w{world}_{dtype}_small", rows=rows,
                                world=world, dtype=dtype, ids="small", stride=1))
@@ -100,6 +100,8 @@ def main():
     p.add_argument("--side", choices=("both", "fused", "native"), default="both")
     p.add_argument("--device", type=int, default=0)
     p.add_argument("--replays", type=int, default=100)
+    p.add_argument("--capture-inner-repeats", type=int, default=32,
+                   help="Full preparation calls captured inside each graph; amortizes replay submission")
     p.add_argument("--expected-source-sha", default=SOURCE_SHA)
     args = p.parse_args()
     selected = cases()
@@ -111,8 +113,8 @@ def main():
     if args.list:
         print(json.dumps(selected, indent=2))
         return
-    if not args.output or args.replays < 1:
-        p.error("--output required and --replays must be positive")
+    if not args.output or args.replays < 1 or args.capture_inner_repeats < 1:
+        p.error("--output required; --replays and --capture-inner-repeats must be positive")
     import torch
     import torch_npu
     from vllm_ascend.ops.triton import sharded_indexer as op
@@ -125,7 +127,8 @@ def main():
     cores = op.get_vectorcore_num()
     report = dict(source=str(source), source_sha256=source_sha, torch=torch.__version__,
                   torch_npu=torch_npu.__version__, device=torch.npu.get_device_name(args.device),
-                  cores=cores, mode=args.mode, replays=args.replays, samples=10, cases=[])
+                  cores=cores, mode=args.mode, replays=args.replays,
+                  capture_inner_repeats=args.capture_inner_repeats, samples=10, cases=[])
     sides = ("fused", "native") if args.side == "both" else (args.side,)
     save(args.output, report)
     for case in selected:
@@ -168,7 +171,8 @@ def main():
                 if args.mode == "event":
                     graph = torch.npu.NPUGraph()
                     with torch.npu.graph(graph):
-                        kept.append(fn())
+                        for _ in range(args.capture_inner_repeats):
+                            kept.append(fn())
                     for _ in range(10):
                         graph.replay()
                     graphs[side] = graph
@@ -189,7 +193,8 @@ def main():
                             graphs[side].replay()
                         end.record()
                         end.synchronize()
-                        result = {"index": sample, "us": start.elapsed_time(end) * 1000 / args.replays}
+                        result = {"index": sample, "us": start.elapsed_time(end) * 1000
+                                  / (args.replays * args.capture_inner_repeats)}
                     else:
                         # External msprof must map the entire target sequence; wall timestamps are NOT latency.
                         torch.argmax(warmup)
