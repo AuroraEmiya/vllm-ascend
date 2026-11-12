@@ -21,13 +21,13 @@ import torch_npu
 from vllm_ascend.ops.triton.sharded_indexer import pack_local_candidates
 
 
-def measure(fn, iterations, repeats):
+def measure(fn, iterations, repeats, capture_inner_repeats):
     for _ in range(10):
         fn()
     torch.npu.synchronize()
     graph = torch.npu.NPUGraph()
     with torch.npu.graph(graph):
-        result = fn()
+        result = [fn() for _ in range(capture_inner_repeats)]
     for _ in range(10):
         graph.replay()
     torch.npu.synchronize()
@@ -40,7 +40,7 @@ def measure(fn, iterations, repeats):
             graph.replay()
         end.record()
         end.synchronize()
-        samples.append(start.elapsed_time(end) * 1000 / iterations)
+        samples.append(start.elapsed_time(end) * 1000 / (iterations * capture_inner_repeats))
     # Keep the captured output alive until all graph replays complete.
     del result
     graph.reset()
@@ -54,9 +54,10 @@ def main():
     parser.add_argument("--max-slowdown", type=float, default=1.10)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument("--capture-inner-repeats", type=int, default=32)
     args = parser.parse_args()
-    if args.iterations < 1 or args.repeats < 2 or args.max_slowdown <= 0:
-        parser.error("iterations >= 1, repeats >= 2 and max-slowdown > 0 are required")
+    if args.iterations < 1 or args.repeats < 2 or args.max_slowdown <= 0 or args.capture_inner_repeats < 1:
+        parser.error("iterations >= 1, repeats >= 2, capture-inner-repeats >= 1 and max-slowdown > 0 required")
     torch.npu.set_device(0)
     torch.manual_seed(20878)
     report = {
@@ -67,6 +68,7 @@ def main():
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "iterations": args.iterations,
         "repeats": args.repeats,
+        "capture_inner_repeats": args.capture_inner_repeats,
         "cases": {},
     }
     for rows in (1, 48, 127, 144, 152, 257):
@@ -80,11 +82,12 @@ def main():
                 ),
                 args.iterations,
                 args.repeats,
+                args.capture_inner_repeats,
             )
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if args.baseline:
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
-        for key in ("protocol", "device", "torch", "torch_npu", "iterations", "repeats"):
+        for key in ("protocol", "device", "torch", "torch_npu", "iterations", "repeats", "capture_inner_repeats"):
             if baseline[key] != report[key]:
                 raise RuntimeError(f"Incompatible comparison metadata: {key}")
         if baseline["cases"].keys() != report["cases"].keys():
