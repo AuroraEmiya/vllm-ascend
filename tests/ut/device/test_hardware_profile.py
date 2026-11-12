@@ -6,9 +6,9 @@ from typing import cast
 
 import pytest
 import torch
+
 from vllm_ascend.device.device_config import get_device_config
 from vllm_ascend.device.hardware import AscendDeviceType
-
 from vllm_ascend.device.hardware_profile import (
     AttentionBackendFamily,
     CPUBindingMode,
