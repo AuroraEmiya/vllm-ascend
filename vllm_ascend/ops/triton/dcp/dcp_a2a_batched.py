@@ -308,11 +308,9 @@ def _fused_dcp_lse_combine_row_weights(
     remainder = total_rows % programs
     start = program * quotient + tl.minimum(program, remainder)
     stop = start + quotient + (program < remainder).to(tl.int32)
-    num_tokens = total_rows // num_heads
     for row in range(start, stop):
-        # Receive rows are contiguous in token within each rank/head slice.
-        token = (row % num_tokens).to(tl.int64)
-        head = (row // num_tokens).to(tl.int64)
+        token = (row // num_heads).to(tl.int64)
+        head = (row % num_heads).to(tl.int64)
         bases = bounded_ranks * recv_stride_rank + head * recv_stride_scatter + token * recv_stride_replicated
         packed = tl.load(
             recv_ptr + bases[:, None] + (head_dim + tl.arange(0, 4)[None, :]) * recv_stride_d,
