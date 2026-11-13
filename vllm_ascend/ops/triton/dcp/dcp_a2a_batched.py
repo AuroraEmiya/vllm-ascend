@@ -90,7 +90,7 @@ def _pack_dcp_output_lse_batched_kernel(
             lse = lse + tl.log(total)
         exponent_code, significand_hi, significand_mid, significand_lo = _encode_lse_fields(lse)
         fields = tl.reshape(
-            tl.join(tl.join(exponent_code, significand_hi), tl.join(significand_mid, significand_lo)),
+            tl.join(tl.join(exponent_code, significand_mid), tl.join(significand_hi, significand_lo)),
             (TILE_T, TILE_H, 4),
         )
         tl.store(
