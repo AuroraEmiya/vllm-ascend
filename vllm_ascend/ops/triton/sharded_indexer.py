@@ -294,11 +294,13 @@ def _merge_owner_prefix(
             else:
                 # Sorted tile endpoints locate the only tile containing the
                 # lower bound; every peer uses two bounded reads per pivot.
-                chunks = tl.arange(0, K // TILE)
-                endpoint = (chunks + 1) * TILE - 1
-                offsets = ((peer_rank[:, None] * ROWS + row) * K + endpoint[None, :]) * 2
-                ids = tl.load(packed + offsets).to(tl.float32)
-                scores = tl.load(packed + offsets + 1).to(tl.float32, bitcast=True)
+                endpoint_lanes = tl.arange(0, 2 * (K // TILE))
+                endpoint = ((endpoint_lanes // 2 + 1) * TILE - 1) * 2 + endpoint_lanes % 2
+                offsets = (peer_rank[:, None] * ROWS + row) * K * 2 + endpoint[None, :]
+                pair = tl.load(packed + offsets)
+                raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, K // TILE, 2)))
+                ids = raw_ids.to(tl.float32)
+                scores = bits.to(tl.float32, bitcast=True)
                 valid = (ids >= 0) & (tl.abs(scores) < float("inf"))
                 better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
                 full_tiles = tl.sum(better.to(tl.int32), 1)
