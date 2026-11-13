@@ -297,7 +297,7 @@ def _fused_dcp_lse_combine_row_weights(
 ):
     # Follow the existing SFA merge pattern: rank weights stay a tiny vector,
     # get_element feeds one coefficient to the continuous D accumulator.
-    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE)
+    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE + HAS_LOCAL)
     ranks = tl.arange(0, BLOCK_RANKS)
     bounded_ranks = tl.minimum(ranks, DCP_SIZE - 1)
     d = tl.arange(0, BLOCK_D)
@@ -325,11 +325,12 @@ def _fused_dcp_lse_combine_row_weights(
         lse_bits = tl.where(significand != 0.0, lse_bits, 0)
         lses = tl.where(code < 0.0, -1.0, 1.0) * lse_bits.to(tl.float32, bitcast=True)
         valid = (ranks < DCP_SIZE) & (code != 0.0) & (tl.abs(lses) < float("inf"))
-        maximum = tl.max(tl.where(valid, lses, -float("inf")), 0)
         if HAS_LOCAL:
             local_lse = tl.load(local_lse_ptr + token * local_lse_stride_t + head * local_lse_stride_h).to(tl.float32)
             local_valid = tl.abs(local_lse) < float("inf")
-            maximum = tl.maximum(maximum, tl.where(local_valid, local_lse, -float("inf")))
+            lses = tl.where(ranks == DCP_SIZE, local_lse, lses)
+            valid = tl.where(ranks == DCP_SIZE, local_valid, valid)
+        maximum = tl.max(tl.where(valid, lses, -float("inf")), 0)
         maximum = tl.where(maximum != -float("inf"), maximum, 0.0)
         weights = tl.where(valid, tl.exp(lses - maximum), 0.0)
         denominator = tl.sum(weights, 0)
@@ -346,7 +347,7 @@ def _fused_dcp_lse_combine_row_weights(
             values = tl.load(recv_ptr + offsets, d < head_dim, 0.0).to(tl.float32)
             numerator += tl.where(finite, values, 0.0) * weight
         if HAS_LOCAL:
-            local_weight = tl.where(local_valid, tl.exp(local_lse - maximum), 0.0)
+            local_weight = get_element(weights, (DCP_SIZE,))
             local_values = tl.load(
                 local_output_ptr
                 + token * local_output_stride_t
@@ -356,7 +357,6 @@ def _fused_dcp_lse_combine_row_weights(
                 0.0,
             ).to(tl.float32)
             numerator += tl.where(local_valid, local_values, 0.0) * local_weight
-            denominator += local_weight
         result = numerator / tl.where(denominator > 0.0, denominator, 1.0)
         offsets = token * output_stride_t + head * output_stride_h + d * output_stride_d
         tl.store(output_ptr + offsets, result, d < head_dim)
