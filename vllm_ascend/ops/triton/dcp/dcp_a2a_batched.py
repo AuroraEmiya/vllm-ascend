@@ -54,9 +54,9 @@ def _pack_dcp_output_lse_batched_kernel(
     BLOCK_D: tl.constexpr,
     FROM_STATS: tl.constexpr,
 ):
-    """Pack BF16 head-scatter rows with one four-token, eight-head tile."""
-    TILE_T: tl.constexpr = 4
-    TILE_H: tl.constexpr = 8
+    """Pack BF16 head-scatter rows with one two-token, four-head tile."""
+    TILE_T: tl.constexpr = 2
+    TILE_H: tl.constexpr = 4
     token_tiles = tl.cdiv(num_tokens, TILE_T)
     head_tiles = tl.cdiv(num_heads, TILE_H)
     token_offsets = tl.arange(0, TILE_T)
