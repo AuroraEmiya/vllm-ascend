@@ -301,7 +301,14 @@ def _fused_dcp_lse_combine_row_weights(
     ranks = tl.arange(0, BLOCK_RANKS)
     bounded_ranks = tl.minimum(ranks, DCP_SIZE - 1)
     d = tl.arange(0, BLOCK_D)
-    for row in range(tl.program_id(0), total_rows, tl.num_programs(0)):
+    # Consecutive row intervals preserve single ownership and balanced counts.
+    program = tl.program_id(0)
+    programs = tl.num_programs(0)
+    quotient = total_rows // programs
+    remainder = total_rows % programs
+    start = program * quotient + tl.minimum(program, remainder)
+    stop = start + quotient + (program < remainder).to(tl.int32)
+    for row in range(start, stop):
         token = (row // num_heads).to(tl.int64)
         head = (row % num_heads).to(tl.int64)
         bases = bounded_ranks * recv_stride_rank + head * recv_stride_scatter + token * recv_stride_replicated
