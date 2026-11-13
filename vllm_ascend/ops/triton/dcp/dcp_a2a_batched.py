@@ -89,10 +89,15 @@ def _pack_dcp_output_lse_batched_kernel(
             )
             lse = lse + tl.log(total)
         exponent_code, significand_hi, significand_mid, significand_lo = _encode_lse_fields(lse)
-        tl.store(send_ptr + send_base + HEAD_DIM * send_stride_d, exponent_code, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 1) * send_stride_d, significand_hi, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 2) * send_stride_d, significand_mid, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 3) * send_stride_d, significand_lo, row_mask)
+        fields = tl.reshape(
+            tl.join(tl.join(exponent_code, significand_hi), tl.join(significand_mid, significand_lo)),
+            (TILE_T, TILE_H, 4),
+        )
+        tl.store(
+            send_ptr + send_base[:, :, None] + (HEAD_DIM + tl.arange(0, 4)[None, None, :]) * send_stride_d,
+            fields,
+            row_mask[:, :, None],
+        )
 
 
 @triton.jit

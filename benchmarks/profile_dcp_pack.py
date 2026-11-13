@@ -72,11 +72,11 @@ def main():
     parser.add_argument("--from-stats", action="store_true")
     parser.add_argument("--mode", choices=("public", "direct"), default="public")
     parser.add_argument("--layout", choices=("contiguous", "head_major", "feature_stride"), default="contiguous")
-    parser.add_argument("--invocations", type=int, default=30)
+    parser.add_argument("--invocations", type=int, default=1)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.invocations < 20:
-        parser.error("at least 20 invocations are required for warm-up=10, launch-count=10")
+    if args.invocations != 1:
+        parser.error("msprof op owns warmup/replay; exactly one target application call is required")
     torch.npu.set_device(0)
     tokens, heads, dim = CASES[args.case]
     layout = args.layout
@@ -187,7 +187,11 @@ def main():
             ["git", "-C", str(source.parent), "rev-parse", "HEAD"], text=True
         ).strip(),
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-        "strides": {"output": list(device_output.stride()), "lse": list(device_lse.stride())},
+        "strides": {
+            "output": list(device_output.stride()),
+            "lse": list(device_lse.stride()),
+            "sum": None if device_sums is None else list(device_sums.stride()),
+        },
         "compiled": compiled,
         "precision": {
             "passed": passed,
