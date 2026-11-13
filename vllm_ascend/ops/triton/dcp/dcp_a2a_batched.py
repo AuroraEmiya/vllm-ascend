@@ -46,8 +46,6 @@ def _pack_dcp_output_lse_batched_kernel(
     lse_stride_h,
     sum_stride_t,
     sum_stride_h,
-    send_stride_row,
-    send_stride_d,
     num_tokens,
     num_heads,
     HEAD_DIM: tl.constexpr,
@@ -79,7 +77,7 @@ def _pack_dcp_output_lse_batched_kernel(
         head = (head_start + head_offsets).to(tl.int64)
         row_mask = (token[:, None] < num_tokens) & (head[None, :] < num_heads)
         # The caller allocates contiguous [rank, local_head, token, D + 4].
-        send_base = (head[None, :] * num_tokens + token[:, None]) * send_stride_row
+        send_base = (head[None, :] * num_tokens + token[:, None]) * (HEAD_DIM + 4)
         for feature_start in range(0, HEAD_DIM, TILE_D):
             feature = feature_start + feature_offsets
             output_offsets = (
@@ -90,7 +88,7 @@ def _pack_dcp_output_lse_batched_kernel(
             mask = row_mask[:, :, None] & (feature[None, None, :] < HEAD_DIM)
             output = tl.load(output_ptr + output_offsets, mask, 0.0)
             tl.store(
-                send_ptr + send_base[:, :, None] + feature[None, None, :] * send_stride_d,
+                send_ptr + send_base[:, :, None] + feature[None, None, :],
                 output,
                 mask,
             )
@@ -103,10 +101,10 @@ def _pack_dcp_output_lse_batched_kernel(
             )
             lse = lse + tl.log(total)
         exponent_code, significand_hi, significand_mid, significand_lo = _encode_lse_fields(lse)
-        tl.store(send_ptr + send_base + HEAD_DIM * send_stride_d, exponent_code, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 1) * send_stride_d, significand_hi, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 2) * send_stride_d, significand_mid, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 3) * send_stride_d, significand_lo, row_mask)
+        tl.store(send_ptr + send_base + HEAD_DIM, exponent_code, row_mask)
+        tl.store(send_ptr + send_base + HEAD_DIM + 1, significand_hi, row_mask)
+        tl.store(send_ptr + send_base + HEAD_DIM + 2, significand_mid, row_mask)
+        tl.store(send_ptr + send_base + HEAD_DIM + 3, significand_lo, row_mask)
         token_start += TILE_T
         carry = token_start >= num_tokens
         token_start = tl.where(carry, 0, token_start)

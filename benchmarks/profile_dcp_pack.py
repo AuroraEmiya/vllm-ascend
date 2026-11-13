@@ -51,7 +51,9 @@ def direct_launch(output, lse, sums, send, vector_cores, record):
     )
     options = {"FROM_STATS": sums is not None, "BLOCK_D": 1 << (dim - 1).bit_length()}
     if "HEAD_DIM" in kernel.arg_names:
-        inputs += (send.stride(2), send.stride(3), tokens, heads)
+        if "send_stride_row" in kernel.arg_names:
+            inputs += (send.stride(2), send.stride(3))
+        inputs += (tokens, heads)
         options["HEAD_DIM"] = dim
     else:
         # Reproduce frozen main's batched launch configuration exactly.
