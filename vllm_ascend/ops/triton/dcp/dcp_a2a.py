@@ -13,7 +13,6 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
     _encode_lse_fields,
     _fused_dcp_lse_combine_batched_kernel,
     _pack_dcp_output_lse_batched_kernel,
-    _pack_dcp_output_lse_rectangular_kernel,
 )
 from vllm_ascend.ops.triton.dcp.dcp_jit import _launch_kernel
 from vllm_ascend.ops.triton.dcp.sfa_dcp_exchange import can_exchange, exchange
@@ -324,24 +323,17 @@ def _launch_pack_dcp_output_lse(partial_output, softmax_lse, softmax_sum, send, 
     lse_pack_dim = _lse_pack_dim(partial_output.dtype)
     total_rows = num_tokens * num_heads
     grid_size = total_rows if total_rows < vector_cores else vector_cores
-    # Keep enough row tiles to occupy the vector cores. Feature-strided
-    # loads can regress with batching, especially for wide heads.
+    # Preserve the existing dtype, scatter, feature-size and row-count
+    # eligibility. One rectangular kernel handles all input strides.
     batched = (
         partial_output.dtype == torch.bfloat16
         and scatter_dim == 1
         and head_dim <= 2048
         and total_rows >= 8 * vector_cores
-        and (partial_output.stride(-1) == 1 or (head_dim == 512 and num_tokens >= 128))
     )
     if batched:
-        if head_dim == 512:
-            kernel = _pack_dcp_output_lse_rectangular_kernel
-            tile_kwargs = {}
-        else:
-            kernel = _pack_dcp_output_lse_batched_kernel
-            tile_kwargs = {"HEAD_DIM": head_dim, "BLOCK_D": triton.next_power_of_2(head_dim)}
         launch(
-            kernel,
+            _pack_dcp_output_lse_batched_kernel,
             (grid_size,),
             partial_output,
             softmax_lse,
@@ -357,7 +349,8 @@ def _launch_pack_dcp_output_lse(partial_output, softmax_lse, softmax_sum, send, 
             num_tokens,
             num_heads,
             FROM_STATS=softmax_sum is not None,
-            **tile_kwargs,
+            HEAD_DIM=head_dim,
+            BLOCK_D=triton.next_power_of_2(head_dim),
         )
         return
     launch(

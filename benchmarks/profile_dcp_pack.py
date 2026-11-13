@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Deterministic public-API runner for paired ``msprof op`` DCP pack captures.
+"""Deterministic runner for paired ``msprof op`` DCP pack captures.
 
 Run this unchanged with either the baseline or candidate package on PYTHONPATH.
 The output JSON records precision and compiled-kernel identity, never timing.
@@ -17,17 +17,8 @@ import torch_npu  # noqa: F401
 
 from vllm_ascend.ops.triton.dcp import dcp_a2a
 
-CASES = {
-    "actual144": (144, 96, 512, "contiguous"),
-    "actual152": (152, 96, 512, "contiguous"),
-    "actual114": (114, 64, 512, "contiguous"),
-    "tail7": (7, 64, 512, "contiguous"),
-    "tail129": (129, 64, 512, "contiguous"),
-    "dim256": (41, 32, 256, "contiguous"),
-    "dim2048": (41, 32, 2048, "contiguous"),
-    "feature144": (144, 96, 512, "feature_stride"),
-    "head144": (144, 96, 512, "head_major"),
-}
+CASES = {f"t{tokens}": (tokens, 96, 512) for tokens in (2, 4, 8, 16, 32, 64, 128, 256, 512)}
+CASES.update({"profile144": (144, 96, 512), "profile152": (152, 96, 512), "profile114": (114, 64, 512)})
 
 
 def make_layout(value, layout):
@@ -38,17 +29,57 @@ def make_layout(value, layout):
     return value.npu()
 
 
+def direct_launch(output, lse, sums, send, vector_cores, record):
+    """Compare the batched algorithms even when the public row gate excludes T=2.
+
+    The signature check adapts the frozen main ABI to the candidate ABI. It
+    never selects an algorithm by feature dimension. Both use the public grid.
+    """
+    tokens, heads, dim = output.shape
+    kernel = dcp_a2a._pack_dcp_output_lse_batched_kernel
+    sum_input = lse if sums is None else sums
+    inputs = (
+        output,
+        lse,
+        sum_input,
+        send,
+        *output.stride(),
+        lse.stride(0),
+        lse.stride(1),
+        sum_input.stride(0),
+        sum_input.stride(1),
+    )
+    options = {"FROM_STATS": sums is not None, "BLOCK_D": 1 << (dim - 1).bit_length()}
+    if "HEAD_DIM" in kernel.arg_names:
+        inputs += (send.stride(2), send.stride(3), tokens, heads)
+        options["HEAD_DIM"] = dim
+    else:
+        # Reproduce frozen main's batched launch configuration exactly.
+        inputs += (*send.stride(), send.shape[1], dim, heads, tokens * heads)
+        options.update(
+            SCATTER_TOKENS=False,
+            LSE_PACK_DIM=4,
+            BLOCK_ROWS=32 if dim == 512 and tokens >= 128 and output.stride(-1) == 1 else 8,
+            OUTPUT_HEAD_MAJOR=dim == 512,
+        )
+    record(kernel, (min(tokens * heads, vector_cores),), *inputs, **options)
+    return send
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=CASES, required=True)
     parser.add_argument("--from-stats", action="store_true")
+    parser.add_argument("--mode", choices=("public", "direct"), default="public")
+    parser.add_argument("--layout", choices=("contiguous", "head_major", "feature_stride"), default="contiguous")
     parser.add_argument("--invocations", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.invocations < 20:
         parser.error("at least 20 invocations are required for warm-up=10, launch-count=10")
     torch.npu.set_device(0)
-    tokens, heads, dim, layout = CASES[args.case]
+    tokens, heads, dim = CASES[args.case]
+    layout = args.layout
     generator = torch.Generator().manual_seed(21586)
     output = torch.randn((tokens, heads, dim), generator=generator).bfloat16()
     output.flatten()[:5] = torch.tensor([torch.nan, torch.inf, -torch.inf, 0.0, -0.0], dtype=torch.bfloat16)
@@ -58,6 +89,21 @@ def main():
     device_output = make_layout(output, layout)
     device_lse = make_layout(lse, layout)
     device_sums = make_layout(sums, "feature_stride") if args.from_stats else None
+    send = torch.empty((8, heads // 8, tokens, dim + 4), dtype=device_output.dtype, device=device_output.device)
+    dcp_a2a.init_device_properties_triton()
+    vector_cores = dcp_a2a.get_vectorcore_num()
+    public_route = []
+    dcp_a2a._launch_pack_dcp_output_lse(
+        device_output,
+        device_lse,
+        device_sums,
+        send,
+        1,
+        vector_cores,
+        lambda kernel, grid, *inputs, **options: public_route.append(
+            {"name": kernel.__name__, "grid": grid, "options": options}
+        ),
+    )
     compiled = []
     original = dcp_a2a._launch_kernel
 
@@ -84,7 +130,10 @@ def main():
     try:
         packed = None
         for _ in range(args.invocations):
-            packed = dcp_a2a.pack_dcp_output_lse(device_output, device_lse, 8, 1, softmax_sum=device_sums)
+            if args.mode == "public":
+                packed = dcp_a2a.pack_dcp_output_lse(device_output, device_lse, 8, 1, softmax_sum=device_sums)
+            else:
+                packed = direct_launch(device_output, device_lse, device_sums, send, vector_cores, record)
         torch.npu.synchronize()
     finally:
         dcp_a2a._launch_kernel = original
@@ -124,6 +173,14 @@ def main():
         "shape": [tokens, heads, dim],
         "layout": layout,
         "from_stats": args.from_stats,
+        "mode": args.mode,
+        "vector_cores": vector_cores,
+        "public_route": public_route,
+        "scalar_settings": {"dcp_size": 8, "scatter_dim": 1},
+        "case_kind": "profile_derived_logical_shape" if args.case.startswith("profile") else "user_power_sweep",
+        "profile_scope": (
+            "Logical shape only; layout, scalar settings and stats mode are explicit reproduction settings."
+        ),
         "invocations": args.invocations,
         "package_source": str(source),
         "package_commit": subprocess.check_output(
@@ -145,7 +202,7 @@ def main():
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report), flush=True)
     if not passed:
-        raise RuntimeError("public API pack precision failed")
+        raise RuntimeError("DCP pack precision failed")
 
 
 if __name__ == "__main__":

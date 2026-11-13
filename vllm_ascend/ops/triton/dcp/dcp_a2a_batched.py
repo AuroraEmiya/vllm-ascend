@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Batch independent DCP rows while keeping DCP rank accumulation sequential.
 
-Eight D=512 rows use 16 KiB for the FP32 accumulator. The rank dimension
-is streamed, so it does not multiply the accumulator size.
+The combine kernel's eight D=512 rows use 16 KiB for the FP32 accumulator.
+Its rank dimension is streamed, so it does not multiply the accumulator size.
 """
 
 from vllm.triton_utils import tl, triton
@@ -34,66 +34,6 @@ def _encode_lse_fields(lse):
 
 
 @triton.jit
-def _pack_dcp_output_lse_rectangular_kernel(
-    output_ptr,
-    lse_ptr,
-    sum_ptr,
-    send_ptr,
-    output_stride_t,
-    output_stride_h,
-    output_stride_d,
-    lse_stride_t,
-    lse_stride_h,
-    sum_stride_t,
-    sum_stride_h,
-    send_stride_row,
-    send_stride_d,
-    num_tokens,
-    num_heads,
-    FROM_STATS: tl.constexpr,
-):
-    """Pack BF16 head-scatter rows with a fixed 4-token, 8-head, D512 tile."""
-    TILE_T: tl.constexpr = 4
-    TILE_H: tl.constexpr = 8
-    HEAD_DIM: tl.constexpr = 512
-    token_tiles = tl.cdiv(num_tokens, TILE_T)
-    head_tiles = tl.cdiv(num_heads, TILE_H)
-    token_offsets = tl.arange(0, TILE_T)
-    head_offsets = tl.arange(0, TILE_H)
-    feature_offsets = tl.arange(0, HEAD_DIM)
-    for tile in range(tl.program_id(0), token_tiles * head_tiles, tl.num_programs(0)):
-        token = (tile % token_tiles * TILE_T + token_offsets).to(tl.int64)
-        head = (tile // token_tiles * TILE_H + head_offsets).to(tl.int64)
-        row_mask = (token[:, None] < num_tokens) & (head[None, :] < num_heads)
-        output_offsets = (
-            token[:, None, None] * output_stride_t
-            + head[None, :, None] * output_stride_h
-            + feature_offsets[None, None, :] * output_stride_d
-        )
-        output = tl.load(output_ptr + output_offsets, row_mask[:, :, None], 0.0)
-        # The caller allocates contiguous [rank, local_head, token, D + 4].
-        send_base = (head[None, :] * num_tokens + token[:, None]) * send_stride_row
-        tl.store(
-            send_ptr + send_base[:, :, None] + feature_offsets[None, None, :] * send_stride_d,
-            output,
-            row_mask[:, :, None],
-        )
-        lse = tl.load(lse_ptr + token[:, None] * lse_stride_t + head[None, :] * lse_stride_h, row_mask, 0.0).to(
-            tl.float32
-        )
-        if FROM_STATS:
-            total = tl.load(sum_ptr + token[:, None] * sum_stride_t + head[None, :] * sum_stride_h, row_mask, 1.0).to(
-                tl.float32
-            )
-            lse = lse + tl.log(total)
-        exponent_code, significand_hi, significand_mid, significand_lo = _encode_lse_fields(lse)
-        tl.store(send_ptr + send_base + HEAD_DIM * send_stride_d, exponent_code, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 1) * send_stride_d, significand_hi, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 2) * send_stride_d, significand_mid, row_mask)
-        tl.store(send_ptr + send_base + (HEAD_DIM + 3) * send_stride_d, significand_lo, row_mask)
-
-
-@triton.jit
 def _pack_dcp_output_lse_batched_kernel(
     output_ptr,
     lse_ptr,
@@ -114,26 +54,37 @@ def _pack_dcp_output_lse_batched_kernel(
     BLOCK_D: tl.constexpr,
     FROM_STATS: tl.constexpr,
 ):
-    """Pack eight BF16 head-scatter rows; D512 uses the rectangular kernel."""
-    BLOCK_ROWS: tl.constexpr = 8
-    d_offsets = tl.arange(0, BLOCK_D)[None, :]
-    total_rows = num_tokens * num_heads
-    tiles = tl.cdiv(total_rows, BLOCK_ROWS)
-    for tile in range(tl.program_id(0), tiles, tl.num_programs(0)):
-        linear_idx = tile * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)[:, None]
-        row_mask = linear_idx < total_rows
-        token_idx = (linear_idx // num_heads).to(tl.int64)
-        head_idx = (linear_idx % num_heads).to(tl.int64)
-        send_base = (head_idx * num_tokens + token_idx) * send_stride_row
-        output_offsets = token_idx * output_stride_t + head_idx * output_stride_h + d_offsets * output_stride_d
-        d_mask = (d_offsets < HEAD_DIM) & row_mask
-        output = tl.load(output_ptr + output_offsets, mask=d_mask, other=0.0)
-        tl.store(send_ptr + send_base + d_offsets * send_stride_d, output, mask=d_mask)
-        lse = tl.load(lse_ptr + token_idx * lse_stride_t + head_idx * lse_stride_h, mask=row_mask, other=0.0).to(
+    """Pack BF16 head-scatter rows with one four-token, eight-head tile."""
+    TILE_T: tl.constexpr = 4
+    TILE_H: tl.constexpr = 8
+    token_tiles = tl.cdiv(num_tokens, TILE_T)
+    head_tiles = tl.cdiv(num_heads, TILE_H)
+    token_offsets = tl.arange(0, TILE_T)
+    head_offsets = tl.arange(0, TILE_H)
+    feature_offsets = tl.arange(0, BLOCK_D)
+    for tile in range(tl.program_id(0), token_tiles * head_tiles, tl.num_programs(0)):
+        token = (tile % token_tiles * TILE_T + token_offsets).to(tl.int64)
+        head = (tile // token_tiles * TILE_H + head_offsets).to(tl.int64)
+        row_mask = (token[:, None] < num_tokens) & (head[None, :] < num_heads)
+        output_offsets = (
+            token[:, None, None] * output_stride_t
+            + head[None, :, None] * output_stride_h
+            + feature_offsets[None, None, :] * output_stride_d
+        )
+        mask = row_mask[:, :, None] & (feature_offsets[None, None, :] < HEAD_DIM)
+        output = tl.load(output_ptr + output_offsets, mask, 0.0)
+        # The caller allocates contiguous [rank, local_head, token, D + 4].
+        send_base = (head[None, :] * num_tokens + token[:, None]) * send_stride_row
+        tl.store(
+            send_ptr + send_base[:, :, None] + feature_offsets[None, None, :] * send_stride_d,
+            output,
+            mask,
+        )
+        lse = tl.load(lse_ptr + token[:, None] * lse_stride_t + head[None, :] * lse_stride_h, row_mask, 0.0).to(
             tl.float32
         )
         if FROM_STATS:
-            total = tl.load(sum_ptr + token_idx * sum_stride_t + head_idx * sum_stride_h, mask=row_mask, other=1.0).to(
+            total = tl.load(sum_ptr + token[:, None] * sum_stride_t + head[None, :] * sum_stride_h, row_mask, 1.0).to(
                 tl.float32
             )
             lse = lse + tl.log(total)
