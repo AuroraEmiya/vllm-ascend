@@ -28,6 +28,13 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a import pack_dcp_output_lse
         (5, 96, 1024, 8),
         (41, 32, 256, 8),
         (41, 32, 2048, 8),
+        (3, 96, 512, 8),
+        (4, 96, 512, 8),
+        (5, 96, 512, 8),
+        (5, 96, 513, 8),
+        (5, 96, 769, 8),
+        (5, 96, 1536, 8),
+        (5, 96, 2047, 8),
     ],
 )
 @pytest.mark.parametrize("layout", ["contiguous", "head_major", "feature_stride"])
