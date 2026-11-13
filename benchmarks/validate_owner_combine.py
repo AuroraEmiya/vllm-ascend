@@ -21,10 +21,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kind", choices=("owner", "combine"), required=True)
     parser.add_argument("--oracle-file", type=Path, required=True)
-    parser.add_argument("--case", type=json.loads, required=True)
+    case_group = parser.add_mutually_exclusive_group(required=True)
+    case_group.add_argument("--case", type=json.loads)
+    case_group.add_argument("--owner-case", nargs=5, metavar=("ROWS", "WORLD", "OWNER", "INTERLEAVE", "DISTRIBUTION"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=10)
     args = parser.parse_args()
+    if args.owner_case is not None:
+        if args.kind != "owner":
+            parser.error("--owner-case requires --kind owner")
+        args.case = [int(value) for value in args.owner_case[:4]] + [args.owner_case[4]]
     torch.npu.set_device(0)
     spec = importlib.util.spec_from_file_location("validation_oracle", args.oracle_file)
     oracle = importlib.util.module_from_spec(spec)
