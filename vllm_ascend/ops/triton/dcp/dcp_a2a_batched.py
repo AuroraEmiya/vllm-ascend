@@ -57,29 +57,33 @@ def _pack_dcp_output_lse_batched_kernel(
     """Pack BF16 head-scatter rows with one two-token, four-head tile."""
     TILE_T: tl.constexpr = 2
     TILE_H: tl.constexpr = 4
+    # Bound the feature-strided address and copy working set for wide rows.
+    TILE_D: tl.constexpr = min(BLOCK_D, 512)
     token_tiles = tl.cdiv(num_tokens, TILE_T)
     head_tiles = tl.cdiv(num_heads, TILE_H)
     token_offsets = tl.arange(0, TILE_T)
     head_offsets = tl.arange(0, TILE_H)
-    feature_offsets = tl.arange(0, BLOCK_D)
+    feature_offsets = tl.arange(0, TILE_D)
     for tile in range(tl.program_id(0), token_tiles * head_tiles, tl.num_programs(0)):
         token = (tile % token_tiles * TILE_T + token_offsets).to(tl.int64)
         head = (tile // token_tiles * TILE_H + head_offsets).to(tl.int64)
         row_mask = (token[:, None] < num_tokens) & (head[None, :] < num_heads)
-        output_offsets = (
-            token[:, None, None] * output_stride_t
-            + head[None, :, None] * output_stride_h
-            + feature_offsets[None, None, :] * output_stride_d
-        )
-        mask = row_mask[:, :, None] & (feature_offsets[None, None, :] < HEAD_DIM)
-        output = tl.load(output_ptr + output_offsets, mask, 0.0)
         # The caller allocates contiguous [rank, local_head, token, D + 4].
         send_base = (head[None, :] * num_tokens + token[:, None]) * send_stride_row
-        tl.store(
-            send_ptr + send_base[:, :, None] + feature_offsets[None, None, :] * send_stride_d,
-            output,
-            mask,
-        )
+        for feature_start in range(0, HEAD_DIM, TILE_D):
+            feature = feature_start + feature_offsets
+            output_offsets = (
+                token[:, None, None] * output_stride_t
+                + head[None, :, None] * output_stride_h
+                + feature[None, None, :] * output_stride_d
+            )
+            mask = row_mask[:, :, None] & (feature[None, None, :] < HEAD_DIM)
+            output = tl.load(output_ptr + output_offsets, mask, 0.0)
+            tl.store(
+                send_ptr + send_base[:, :, None] + feature[None, None, :] * send_stride_d,
+                output,
+                mask,
+            )
         lse = tl.load(lse_ptr + token[:, None] * lse_stride_t + head[None, :] * lse_stride_h, row_mask, 0.0).to(
             tl.float32
         )
