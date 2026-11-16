@@ -247,23 +247,27 @@ def _owner_cached_boundaries(
         b_hi = tl.where(b_active & ~before_b, b_mid, b_hi)
     a_start = tl.minimum(lower + a_lo * TILE, upper)
     b_start = tl.minimum(lower + b_lo * TILE, upper)
-    col = tl.arange(0, TILE)
-    a_pos = a_start[:, None] + col[None, :]
-    b_pos = b_start[:, None] + col[None, :]
+    # Clamp one tile base per peer; keep every pair load contiguous and in-bounds.
+    pair_col = tl.arange(0, 2 * TILE)
+    a_load = tl.minimum(a_start, K - TILE)
+    b_load = tl.minimum(b_start, K - TILE)
+    a_pair = tl.load(packed_ptr + peer_base[:, None] + a_load[:, None] * 2 + pair_col[None, :])
+    b_pair = tl.load(packed_ptr + peer_base[:, None] + b_load[:, None] * 2 + pair_col[None, :])
+    a_id, a_bits = tl.split(tl.reshape(a_pair, (lower.shape[0], TILE, 2)))
+    b_id, b_bits = tl.split(tl.reshape(b_pair, (lower.shape[0], TILE, 2)))
     if BY_ID:
-        a_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(a_pos, K - 1) * 2)
-        b_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(b_pos, K - 1) * 2)
-        before_a, before_b = a_value < pivot, b_value <= pivot
+        before_a, before_b = a_id < pivot, b_id <= pivot
     else:
-        a_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(a_pos, K - 1) * 2 + 1).to(
-            tl.float32, bitcast=True
-        )
-        b_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(b_pos, K - 1) * 2 + 1).to(
-            tl.float32, bitcast=True
-        )
+        a_value = a_bits.to(tl.float32, bitcast=True)
+        b_value = b_bits.to(tl.float32, bitcast=True)
         before_a, before_b = a_value > pivot, b_value >= pivot
-    a = a_start + tl.sum(((a_pos < upper[:, None]) & before_a).to(tl.int32), 1)
-    b = b_start + tl.sum(((b_pos < upper[:, None]) & before_b).to(tl.int32), 1)
+    col = tl.arange(0, TILE)
+    a_pos = a_load[:, None] + col[None, :]
+    b_pos = b_load[:, None] + col[None, :]
+    a_valid = (a_pos >= a_start[:, None]) & (a_pos < upper[:, None])
+    b_valid = (b_pos >= b_start[:, None]) & (b_pos < upper[:, None])
+    a = a_start + tl.sum((a_valid & before_a).to(tl.int32), 1)
+    b = b_start + tl.sum((b_valid & before_b).to(tl.int32), 1)
     return a, b
 
 

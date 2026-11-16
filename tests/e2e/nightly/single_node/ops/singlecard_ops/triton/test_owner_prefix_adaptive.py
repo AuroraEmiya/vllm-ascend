@@ -35,7 +35,7 @@ CASES = [
 ]
 
 
-def make_inputs(rows, world, owner, interleave, distribution, edge):
+def make_inputs(rows, world, owner, interleave, distribution, edge, id_offset=0, constant_score=False):
     k = 2048
     generator = torch.Generator().manual_seed(21584 + rows)
     local = torch.arange(k, dtype=torch.int64)
@@ -46,7 +46,11 @@ def make_inputs(rows, world, owner, interleave, distribution, edge):
         .expand(world, rows, k)
         .clone()
     )
+    ids += id_offset
     scores = torch.randn(ids.shape, generator=generator)
+    if constant_score:
+        scores.zero_()
+        scores[..., ::2] = -0.0
     if distribution == "ties":
         scores = scores.round()
     elif distribution == "own_high":
@@ -136,3 +140,31 @@ def test_owner_prefix_changed_graph_input():
         device.copy_(changed)
         graph.replay()
         assert torch.equal(output.cpu(), expected)
+
+
+@pytest.mark.parametrize(
+    "world,owner,interleave,distribution",
+    [
+        (3, 2, 1, "random"),
+        (8, 0, 768, "random"),
+        (8, 7, 768, "random"),
+        (17, 0, 1, "random"),
+        (17, 16, 1, "random"),
+        (8, 3, 768, "short"),
+    ],
+)
+def test_owner_prefix_exact_large_int32_ties(world, owner, interleave, distribution):
+    torch.npu.set_device(0)
+    offset = (2**24 // (world * interleave) + 17) * world * interleave
+    packed, expected = make_inputs(41, world, owner, interleave, distribution, False, offset, True)
+    actual = merge_packed_candidates(
+        packed.npu(),
+        41,
+        world,
+        2048,
+        local_rank=owner,
+        interleave=interleave,
+        presorted=True,
+        owner_sharded=True,
+    )
+    assert torch.equal(actual.cpu(), expected)

@@ -140,7 +140,12 @@ def check_tile_partition(rng):
                 else:
                     hi = mid
             start = min(begin + lo * tile, end)
-            actual = start + sum(v <= pivot if inclusive else v < pivot for v in values[start : min(start + tile, end)])
+            physical_start = min(start, max(0, len(values) - tile))
+            actual = start + sum(
+                (v <= pivot if inclusive else v < pivot)
+                for pos, v in enumerate(values[physical_start : physical_start + tile], physical_start)
+                if start <= pos < end
+            )
             expected = (bisect.bisect_right if inclusive else bisect.bisect_left)(values, pivot, begin, end)
             assert actual == expected
 
