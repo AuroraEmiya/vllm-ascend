@@ -47,3 +47,55 @@ The single-card nightly test compares the result against an independent FP32 sof
 pytest -sv tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_a2a.py
 pytest -sv tests/e2e/nightly/single_node/ops/multicard_ops_a3/test_dcp_a2a.py
 ```
+
+## Row-weighted implementation
+
+The public `fused_dcp_lse_combine` wrapper dispatches the row-weighted kernel
+inside the existing batched domain. It additionally requires the hardware policy
+`prefer_row_weighted_dcp_combine` (currently A3), `D >= 256`, `P >= 8`, and a
+contiguous local head row when local output is present. Thus the complete domain
+is BF16, head scatter, `256 <= D <= 512`, at least four rows per vector core,
+unit local feature stride, no returned LSE, and the additional conditions above.
+Other valid inputs retain the existing batched or scalar implementation.
+
+Each program receives a balanced contiguous row interval. For one row, the kernel
+decodes the received LSE fields once and places the optional local LSE in the same
+small rank vector. It computes one maximum, exponent vector and denominator,
+then streams each rank's output into one FP32 feature accumulator. The optional
+local output uses its already-computed vector weight. Invalid contributions are
+masked before multiplication; all-invalid rows produce zeros. The caller's
+inputs are unchanged and the allocated output is fully written.
+
+### Specialization and warmup
+
+`DCP_SIZE`, `BLOCK_D` and `HAS_LOCAL` determine rank-vector shape, feature lanes
+and the optional contribution, so they remain compile-time parameters. The
+rank vector is `next_power_of_2(DCP_SIZE + HAS_LOCAL)`. `BLOCK_ROWS` and
+`RANK_UNROLL` are absent from this row-wise kernel because it does not use them.
+The launcher supplies them only to the original batched kernel.
+
+Sizes and strides remain runtime scalars, subject to ordinary Triton integer
+specialization classes; pointer dtype/alignment and compiler options can also
+create variants. Tensor contents and the grid alone do not create variants.
+The existing DCP warmup uses the same production launcher and now includes
+`_fused_dcp_lse_combine_row_weights` in its wrapper inventory. The added unit test
+checks both hardware-policy states. This does not imply that all serving
+variants have been observed: model compilation counts remain unmeasured.
+
+### Row-weighted validation
+
+`test_dcp_combine_row_weights.py` compares public output with independently
+encoded inputs and CPU FP64 weighted reduction. It includes trace-derived logical
+shapes `(144,12,512,8)`, `(152,12,512,8)` and `(114,8,512,8)` as well as smaller
+worlds, D384, non-power-of-two worlds, invalid/extreme LSE and strided local data.
+The test requires at least 99% of BF16 elements to satisfy
+`abs_error <= 2e-5 + 0.004 * abs(reference)`, with maximum absolute error at most
+0.02 and every output finite. Invalid-LSE cases are handled explicitly. These are reconstructed inputs, not model payload
+replay. A5, distributed HCCL and model-level validation remain outstanding.
+
+```bash
+pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_combine_row_weights.py
+pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_a2a.py
+pytest -q tests/ut/device/test_hardware_profile.py
+pytest -q tests/ut/model_executor/warmup/test_kernel_warmup.py
+```

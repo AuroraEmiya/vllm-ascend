@@ -6,6 +6,7 @@ is streamed, so it does not multiply the accumulator size.
 """
 
 from vllm.triton_utils import tl, triton
+
 from vllm_ascend.ops.triton.triton_utils import get_element
 
 MAX_UNROLLED_COMBINE_ELEMENTS = 36 * 1024
@@ -292,38 +293,49 @@ def _fused_dcp_lse_combine_row_weights(
     total_rows,
     DCP_SIZE: tl.constexpr,
     BLOCK_D: tl.constexpr,
-    BLOCK_ROWS: tl.constexpr,
     HAS_LOCAL: tl.constexpr = True,
-    RANK_UNROLL: tl.constexpr = 1,
 ):
     # Follow the existing SFA merge pattern: rank weights stay a tiny vector,
     # get_element feeds one coefficient to the continuous D accumulator.
-    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE)
+    # The wire format stores an exponent code and three base-256 significand bytes.
+    LSE_FIELDS: tl.constexpr = 4
+    FP32_FRACTION_BITS: tl.constexpr = 23
+    BYTE_RADIX: tl.constexpr = 256.0
+    HIGH_BYTE_SCALE: tl.constexpr = 65536.0
+    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE + HAS_LOCAL)
     ranks = tl.arange(0, BLOCK_RANKS)
     bounded_ranks = tl.minimum(ranks, DCP_SIZE - 1)
     d = tl.arange(0, BLOCK_D)
-    for row in range(tl.program_id(0), total_rows, tl.num_programs(0)):
+    # Consecutive row intervals preserve single ownership and balanced counts.
+    program = tl.program_id(0)
+    programs = tl.num_programs(0)
+    quotient = total_rows // programs
+    remainder = total_rows % programs
+    start = program * quotient + tl.minimum(program, remainder)
+    stop = start + quotient + (program < remainder).to(tl.int32)
+    for row in range(start, stop):
         token = (row // num_heads).to(tl.int64)
         head = (row % num_heads).to(tl.int64)
         bases = bounded_ranks * recv_stride_rank + head * recv_stride_scatter + token * recv_stride_replicated
         packed = tl.load(
-            recv_ptr + bases[:, None] + (head_dim + tl.arange(0, 4)[None, :]) * recv_stride_d,
+            recv_ptr + bases[:, None] + (head_dim + tl.arange(0, LSE_FIELDS)[None, :]) * recv_stride_d,
             (ranks < DCP_SIZE)[:, None],
             0.0,
         ).to(tl.float32)
         even, odd = tl.split(tl.reshape(packed, (BLOCK_RANKS, 2, 2)))
         code, mid = tl.split(even)
         hi, lo = tl.split(odd)
-        significand = hi * 65536.0 + mid * 256.0 + lo
-        lse_bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
+        significand = hi * HIGH_BYTE_SCALE + mid * BYTE_RADIX + lo
+        lse_bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << FP32_FRACTION_BITS) + significand.to(tl.int32)
         lse_bits = tl.where(significand != 0.0, lse_bits, 0)
         lses = tl.where(code < 0.0, -1.0, 1.0) * lse_bits.to(tl.float32, bitcast=True)
         valid = (ranks < DCP_SIZE) & (code != 0.0) & (tl.abs(lses) < float("inf"))
-        maximum = tl.max(tl.where(valid, lses, -float("inf")), 0)
         if HAS_LOCAL:
             local_lse = tl.load(local_lse_ptr + token * local_lse_stride_t + head * local_lse_stride_h).to(tl.float32)
             local_valid = tl.abs(local_lse) < float("inf")
-            maximum = tl.maximum(maximum, tl.where(local_valid, local_lse, -float("inf")))
+            lses = tl.where(ranks == DCP_SIZE, local_lse, lses)
+            valid = tl.where(ranks == DCP_SIZE, local_valid, valid)
+        maximum = tl.max(tl.where(valid, lses, -float("inf")), 0)
         maximum = tl.where(maximum != -float("inf"), maximum, 0.0)
         weights = tl.where(valid, tl.exp(lses - maximum), 0.0)
         denominator = tl.sum(weights, 0)
@@ -340,7 +352,7 @@ def _fused_dcp_lse_combine_row_weights(
             values = tl.load(recv_ptr + offsets, d < head_dim, 0.0).to(tl.float32)
             numerator += tl.where(finite, values, 0.0) * weight
         if HAS_LOCAL:
-            local_weight = tl.where(local_valid, tl.exp(local_lse - maximum), 0.0)
+            local_weight = get_element(weights, (DCP_SIZE,))
             local_values = tl.load(
                 local_output_ptr
                 + token * local_output_stride_t
@@ -350,7 +362,6 @@ def _fused_dcp_lse_combine_row_weights(
                 0.0,
             ).to(tl.float32)
             numerator += tl.where(local_valid, local_values, 0.0) * local_weight
-            denominator += local_weight
         result = numerator / tl.where(denominator > 0.0, denominator, 1.0)
         offsets = token * output_stride_t + head * output_stride_h + d * output_stride_d
         tl.store(output_ptr + offsets, result, d < head_dim)

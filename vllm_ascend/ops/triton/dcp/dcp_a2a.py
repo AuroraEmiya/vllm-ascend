@@ -7,9 +7,6 @@ import torch.distributed as dist
 from vllm.distributed.parallel_state import GroupCoordinator, _groups
 from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
-from vllm_ascend.ops.triton.dcp.dcp_jit import _launch_kernel
-from vllm_ascend.ops.triton.dcp.sfa_dcp_exchange import can_exchange, exchange
-from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num, init_device_properties_triton
 
 from vllm_ascend.device.hardware_profile import get_current_hardware_profile
 from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
@@ -19,6 +16,9 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
     _fused_dcp_lse_combine_row_weights,
     _pack_dcp_output_lse_batched_kernel,
 )
+from vllm_ascend.ops.triton.dcp.dcp_jit import _launch_kernel
+from vllm_ascend.ops.triton.dcp.sfa_dcp_exchange import can_exchange, exchange
+from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num, init_device_properties_triton
 
 
 @triton.jit
@@ -466,17 +466,7 @@ def _launch_fused_dcp_lse_combine(
         and not return_lse
     )
     if batched:
-        block_rows = 8
         block_d = triton.next_power_of_2(head_dim)
-        # Unrolling amortizes loop overhead when cores process multiple tiles.
-        # Bound its live output tiles; larger worlds use the same streaming math.
-        rank_unroll = (
-            dcp_size
-            if total_rows >= 2 * block_rows * vector_cores
-            and dcp_size * block_rows * block_d <= MAX_UNROLLED_COMBINE_ELEMENTS
-            else 1
-        )
-        grid_size = min(vector_cores, triton.cdiv(total_rows, block_rows))
         # Rank weights amortize decoding on wide rows with many contributors.
         # Keep narrow rows and small worlds on the existing batched path.
         row_weights = (
@@ -487,9 +477,23 @@ def _launch_fused_dcp_lse_combine(
             and (local_output is None or local_output.stride(1) == head_dim)
         )
         if row_weights:
+            kernel = _fused_dcp_lse_combine_row_weights
             grid_size = min(vector_cores, total_rows)
+            kernel_options = {}
+        else:
+            kernel = _fused_dcp_lse_combine_batched_kernel
+            block_rows = 8
+            # Bound the batched path's live output tiles when unrolling ranks.
+            rank_unroll = (
+                dcp_size
+                if total_rows >= 2 * block_rows * vector_cores
+                and dcp_size * block_rows * block_d <= MAX_UNROLLED_COMBINE_ELEMENTS
+                else 1
+            )
+            grid_size = min(vector_cores, triton.cdiv(total_rows, block_rows))
+            kernel_options = {"BLOCK_ROWS": block_rows, "RANK_UNROLL": rank_unroll}
         launch(
-            _fused_dcp_lse_combine_row_weights if row_weights else _fused_dcp_lse_combine_batched_kernel,
+            kernel,
             (grid_size,),
             recv,
             output,
@@ -504,9 +508,8 @@ def _launch_fused_dcp_lse_combine(
             total_rows,
             DCP_SIZE=dcp_size,
             HAS_LOCAL=local_output is not None,
-            RANK_UNROLL=rank_unroll,
             BLOCK_D=block_d,
-            BLOCK_ROWS=block_rows,
+            **kernel_options,
             multibuffer=False,
         )
         return
