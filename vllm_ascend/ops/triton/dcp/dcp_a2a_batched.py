@@ -52,11 +52,11 @@ def _pack_dcp_output_lse_batched_kernel(
     BLOCK_D: tl.constexpr,
     FROM_STATS: tl.constexpr,
 ):
-    """Pack BF16 head-scatter rows with one two-token, four-head tile."""
+    """Pack BF16 head-scatter rows with one four-token, four-head tile."""
     # Four wire fields carry FP32 LSE; cap feature tiles to bound strided UB use.
     LSE_FIELDS: tl.constexpr = 4
     MAX_FEATURE_TILE: tl.constexpr = 512
-    TILE_T: tl.constexpr = 2
+    TILE_T: tl.constexpr = 4
     TILE_H: tl.constexpr = 4
     # Bound the feature-strided address and copy working set for wide rows.
     TILE_D: tl.constexpr = min(BLOCK_D, MAX_FEATURE_TILE)
