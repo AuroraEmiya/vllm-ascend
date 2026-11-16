@@ -130,7 +130,9 @@ class XMlaSplitRopeKernel {
     DataCopy(qrGm[static_cast<uint64_t>(row * tilingData.heads + head) * ROPE_DIM], ropeOutputBf16, count);
   }
   TPipe pipe;
-  TBuf<TPosition::VECCALC> headInputBf16Buffer, sinBf16Buffer, cosBf16Buffer, ropeOutputBf16Buffer, valuesOrSinProductsBuffer, sinFp32Buffer, cosFp32Buffer, evenOddFp32Buffer, ropeResultFp32Buffer;
+  TBuf<TPosition::VECCALC> headInputBf16Buffer, sinBf16Buffer, cosBf16Buffer, ropeOutputBf16Buffer;
+  TBuf<TPosition::VECCALC> valuesOrSinProductsBuffer, sinFp32Buffer, cosFp32Buffer;
+  TBuf<TPosition::VECCALC> evenOddFp32Buffer, ropeResultFp32Buffer;
   LocalTensor<bfloat16_t> headInputBf16, sinBf16, cosBf16, ropeOutputBf16;
   LocalTensor<float> valuesOrSinProducts, sinFp32, cosFp32, evenOddFp32, ropeResultFp32;
   GlobalTensor<bfloat16_t> xGm, sinGm, cosGm, yGm, qrGm;

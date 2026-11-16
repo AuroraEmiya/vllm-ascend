@@ -182,7 +182,9 @@ class XMlaNormCacheKernel {
   }
   uint32_t cachedGammaWidth, cachedGammaKinds, outputSlot;
   TPipe pipe;
-  TBuf<TPosition::VECCALC> inputBf16Buffer, gammaOrSinBf16Buffer, cosBf16Buffer, outputBf16Buffer, valuesFp32Buffer, gammaOrSinFp32Buffer, reduceOrCosFp32Buffer, reduceOrRotatedFp32Buffer, productsFp32Buffer, indexBuf;
+  TBuf<TPosition::VECCALC> inputBf16Buffer, gammaOrSinBf16Buffer, cosBf16Buffer, outputBf16Buffer;
+  TBuf<TPosition::VECCALC> valuesFp32Buffer, gammaOrSinFp32Buffer, reduceOrCosFp32Buffer;
+  TBuf<TPosition::VECCALC> reduceOrRotatedFp32Buffer, productsFp32Buffer, indexBuf;
   LocalTensor<bfloat16_t> inputBf16, gammaOrSinBf16, cosBf16, outputBf16;
   LocalTensor<float> valuesFp32, gammaOrSinFp32, reduceOrCosFp32, reduceOrRotatedFp32, productsFp32;
   LocalTensor<int64_t> idx;
