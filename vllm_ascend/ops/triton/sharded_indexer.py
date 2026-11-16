@@ -219,6 +219,30 @@ def _pack_sorted_candidates(
         tl.store(packed + row * BLOCK * 2 + lanes, pair)
 
 
+@triton.jit
+def _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot, K: tl.constexpr, BY_ID: tl.constexpr):
+    # Addresses are clamped and unmasked: the A3 backend rejects loop-carried
+    # masks on indirect loads. Inactive lanes contribute through bounds only.
+    a_lo, a_hi = lower, upper
+    b_lo, b_hi = lower, upper
+    while tl.sum(((a_lo < a_hi) | (b_lo < b_hi)).to(tl.int32), 0) > 0:
+        a_mid, b_mid = (a_lo + a_hi) // 2, (b_lo + b_hi) // 2
+        if BY_ID:
+            a_value = tl.load(packed_ptr + peer_base + tl.minimum(a_mid, K - 1) * 2)
+            b_value = tl.load(packed_ptr + peer_base + tl.minimum(b_mid, K - 1) * 2)
+            before_a, before_b = a_value < pivot, b_value <= pivot
+        else:
+            a_value = tl.load(packed_ptr + peer_base + tl.minimum(a_mid, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
+            b_value = tl.load(packed_ptr + peer_base + tl.minimum(b_mid, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
+            before_a, before_b = a_value > pivot, b_value >= pivot
+        a_active, b_active = a_lo < a_hi, b_lo < b_hi
+        a_lo = tl.where(a_active & before_a, a_mid + 1, a_lo)
+        a_hi = tl.where(a_active & ~before_a, a_mid, a_hi)
+        b_lo = tl.where(b_active & before_b, b_mid + 1, b_lo)
+        b_hi = tl.where(b_active & ~before_b, b_mid, b_hi)
+    return a_lo, b_lo
+
+
 @triton.jit(do_not_specialize=["num_rows"])
 def _merge_owner_prefix(
     packed_ptr,
@@ -232,126 +256,78 @@ def _merge_owner_prefix(
     BLOCK_RANKS: tl.constexpr,
     PARALLEL_PEERS: tl.constexpr = False,
 ):
-    """Select an owner's exact sorted prefix without sorting other owners."""
-    # Two interpolated updates precede bisection; four spare probes bound the search.
-    INTERPOLATION_UPDATES: tl.constexpr = 2
-    SEARCH_MARGIN: tl.constexpr = 4
+    """Find the global score boundary, then the exact integer ID tie boundary."""
     K: tl.constexpr = 1 << LOG_BLOCK
     col = tl.arange(0, K)
-    lanes = tl.arange(0, 2 * TILE)
-    SERIAL_TILE: tl.constexpr = min(K, triton.next_power_of_2(2 * K // WORLD)) if PARALLEL_PEERS else TILE
-    serial_lanes = tl.arange(0, 2 * SERIAL_TILE)
     ranks = tl.arange(0, BLOCK_RANKS)
+    peer_rank = tl.minimum(ranks, WORLD - 1)
     for row in range(tl.program_id(0), num_rows, tl.num_programs(0)):
-        owner_ptr = packed_ptr + (OWNER * num_rows + row) * K * 2
-        own_pair = tl.load(owner_ptr + tl.arange(0, 2 * K))
-        own_ids, own_bits = tl.split(tl.reshape(own_pair, (K, 2)))
-        own_scores = own_bits.to(tl.float32, bitcast=True)
-        own_valid = (own_ids.to(tl.float32) >= 0) & (tl.abs(own_scores) < float("inf"))
-        upper = tl.sum(own_valid.to(tl.float32), 0).to(tl.int32)
-        tail_id = tl.load(owner_ptr + (upper - 1) * 2, upper > 0, -1).to(tl.float32)
-        tail_score = tl.load(owner_ptr + (upper - 1) * 2 + 1, upper > 0, 0).to(tl.float32, bitcast=True)
-        head_score = tl.load(owner_ptr + 1, upper > 0, 0).to(tl.float32, bitcast=True)
-        equal_scores = (upper > 0) & (head_score == tail_score)
-        head_mask = (ranks.to(tl.float32) < WORLD) & (ranks != OWNER) & (upper > 0)
-        # A3's strided masked loads can still fault on padded peer addresses.
-        # Bound the addresses as well as the mask for non-power-of-two worlds.
-        peer_rank = tl.minimum(ranks, WORLD - 1)
-        peer_id = tl.load(packed_ptr + (peer_rank * num_rows + row) * K * 2, head_mask, -1).to(tl.float32)
-        peer_score = tl.load(packed_ptr + (peer_rank * num_rows + row) * K * 2 + 1, head_mask, 0).to(
-            tl.float32, bitcast=True
-        )
-        peer_valid = (peer_id >= 0) & (tl.abs(peer_score) < float("inf"))
-        before_tail = peer_valid & ((peer_score > tail_score) | ((peer_score == tail_score) & (peer_id < tail_id)))
-        # If even the worst owner_ptr candidate precedes every peer head, all owner_ptr
-        # valid entries are winners. Other rows search their exact cutoff.
-        lower = tl.where(tl.sum(before_tail.to(tl.float32), 0) == 0.0, upper, 0)
-        peer_peak = tl.max(tl.where(peer_valid, peer_score, -float("inf")), 0)
-        # A peer head beyond the owner's observed score span hints at skew.
-        # This chooses a probe only; exact counts still establish all bounds.
-        skewed = (peer_peak - head_score) > (head_score - tail_score)
-        pivot = tl.where(skewed, 0, tl.minimum(tl.full((), K // WORLD, tl.int32), upper - 1))
-        # Three interpolation probes are followed by enough bisections for
-        # every possible boundary. Estimates affect work only, never selection.
-        iteration = tl.full((), 0, tl.int32)
-        while (lower < upper) & (iteration < LOG_BLOCK + SEARCH_MARGIN):
-            pivot_id = tl.load(owner_ptr + pivot * 2).to(tl.float32)
-            pivot_score = tl.load(owner_ptr + pivot * 2 + 1).to(tl.float32, bitcast=True)
-            pivot_valid = (pivot_id >= 0) & (tl.abs(pivot_score) < float("inf"))
-            count = pivot.to(tl.float32)
-            if not PARALLEL_PEERS or skewed:
-                for rank in range(WORLD):
-                    # K better entries before the first owner entry prove an
-                    # empty owner prefix. A partial count is sufficient only
-                    # for pivot zero, where the existing bounds close at zero.
-                    if (rank != OWNER) & ((pivot != 0) | (count < K)):
-                        start = tl.full((), 0, tl.int32)
-                        amount = tl.full((), SERIAL_TILE, tl.float32)
-                        # Sorted peers cannot have a better candidate after
-                        # the first tile containing any non-better candidate.
-                        while (start < K) & (amount == SERIAL_TILE):
-                            pair = tl.load(packed_ptr + (rank * num_rows + row) * K * 2 + start * 2 + serial_lanes)
-                            raw_ids, bits = tl.split(tl.reshape(pair, (SERIAL_TILE, 2)))
-                            ids = raw_ids.to(tl.float32)
-                            scores = bits.to(tl.float32, bitcast=True)
-                            valid = (ids >= 0) & (tl.abs(scores) < float("inf"))
-                            better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
-                            amount = tl.sum(better.to(tl.float32), 0)
-                            count += amount
-                            start += SERIAL_TILE
-            else:
-                # All peers evaluate this pivot together. Inactive peers stop counting
-                # after their first partial tile; bounded loads still cover all peers.
-                active = (ranks < WORLD) & (ranks != OWNER)
-                start = tl.full((), 0, tl.int32)
-                peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
-                while (start < K) & (tl.sum(active.to(tl.int32), 0) > 0):
-                    offsets = ((peer_rank[:, None] * num_rows + row) * K + start) * 2 + lanes[None, :]
-                    pair = tl.load(packed_ptr + offsets)
-                    raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, TILE, 2)))
-                    ids = raw_ids.to(tl.float32)
-                    scores = bits.to(tl.float32, bitcast=True)
-                    valid = active[:, None] & (ids >= 0) & (tl.abs(scores) < float("inf"))
-                    better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
-                    amount = tl.sum(better.to(tl.float32), 1)
-                    peer_count += amount
-                    active = active & (amount == TILE)
-                    start += TILE
-                count += tl.sum(peer_count, 0)
-            selected = pivot_valid & (count < K)
-            # Let S be the number of better peer entries. Monotonicity
-            # makes K-S an upper bound after a selected pivot, or a lower
-            # bound after a rejected valid pivot. Invalid pivots only
-            # reduce the upper bound.
-            jump = (K - count + pivot.to(tl.float32)).to(tl.int32)
-            lower = tl.where(selected, pivot + 1, tl.where(pivot_valid, tl.maximum(lower, jump), lower))
-            upper = tl.where(selected, tl.minimum(upper, jump), pivot)
-            if equal_scores & pivot_valid & (lower < upper):
-                block_begin = pivot_id.to(tl.int32) // INTERLEAVE * INTERLEAVE
-                block_last = block_begin + INTERLEAVE - 1
-                block_start = tl.sum(
-                    (own_valid & (own_ids.to(tl.float32) < block_begin.to(tl.float32))).to(tl.float32), 0
-                ).to(tl.int32)
-                block_end = tl.sum(
-                    (own_valid & (own_ids.to(tl.float32) <= block_last.to(tl.float32))).to(tl.float32), 0
-                ).to(tl.int32)
-                # No peer can insert an equal-score ID inside this owner's
-                # interleave block. K-S either solves the boundary in this
-                # block or proves that the entire block can be skipped.
-                if (jump >= block_start) & (jump <= block_end):
-                    lower, upper = jump, jump
-                else:
-                    lower = tl.where(jump > block_end, tl.maximum(lower, block_end), lower)
-                    upper = tl.where(jump < block_start, tl.minimum(upper, block_start), upper)
-            if iteration < INTERPOLATION_UPDATES:
-                estimate = (pivot.to(tl.float32) + (K - count) / WORLD).to(tl.int32)
-                pivot = tl.minimum(tl.maximum(estimate, lower), upper - 1)
-            else:
-                pivot = (lower + upper) // 2
-            iteration += 1
+        peer_base = (peer_rank * num_rows + row) * K * 2
+        tail_id = tl.load(packed_ptr + peer_base + (K - 1) * 2)
+        tail_score = tl.load(packed_ptr + peer_base + (K - 1) * 2 + 1).to(tl.float32, bitcast=True)
+        full = (ranks < WORLD) & (tail_id >= 0) & (tl.abs(tail_score) < float("inf"))
+        valid_lo = tl.where(full, K, 0)
+        valid_hi = tl.where(ranks < WORLD, K, 0)
+        while tl.sum((valid_lo < valid_hi).to(tl.int32), 0) > 0:
+            mid = (valid_lo + valid_hi) // 2
+            idx = tl.load(packed_ptr + peer_base + tl.minimum(mid, K - 1) * 2)
+            score = tl.load(packed_ptr + peer_base + tl.minimum(mid, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
+            valid = (idx >= 0) & (tl.abs(score) < float("inf"))
+            active = valid_lo < valid_hi
+            valid_lo = tl.where(active & valid, mid + 1, valid_lo)
+            valid_hi = tl.where(active & ~valid, mid, valid_hi)
+        selected_count = tl.sum(tl.where(ranks == OWNER, valid_lo, 0), 0)
+        total = tl.sum(valid_lo, 0)
+        if total > K:
+            lower = tl.zeros((BLOCK_RANKS,), tl.int32)
+            upper = valid_lo
+            found = tl.full((), False, tl.int1)
+            iteration = tl.full((), 0, tl.int32)
+            a, b = lower, upper
+            while ~found:
+                width = upper - lower
+                max_width = tl.max(width, 0)
+                pivot_rank = tl.min(tl.where(width == max_width, ranks, BLOCK_RANKS), 0)
+                mid = lower + width // 2
+                mid = tl.where(iteration == 0, tl.minimum(upper - 1, K // WORLD), mid)
+                sample = tl.load(packed_ptr + peer_base + tl.maximum(0, tl.minimum(mid, K - 1)) * 2 + 1).to(tl.float32, bitcast=True)
+                pivot = tl.sum(tl.where(ranks == pivot_rank, sample, 0.0), 0)
+                residual = K - tl.sum(lower, 0)
+                # At most WORLD remaining winners: consume the nearest score
+                # group and reuse every peer's already established boundary.
+                if residual <= WORLD:
+                    head = tl.load(packed_ptr + peer_base + tl.minimum(lower, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
+                    pivot = tl.max(tl.where(width > 0, head, -float("inf")), 0)
+                elif tl.sum(width, 0) - residual < WORLD:
+                    tail = tl.load(packed_ptr + peer_base + tl.maximum(upper - 1, 0) * 2 + 1).to(tl.float32, bitcast=True)
+                    pivot = tl.min(tl.where(width > 0, tail, float("inf")), 0)
+                a, b = _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot, K, False)
+                greater, through = tl.sum(a, 0), tl.sum(b, 0)
+                found = (greater < K) & (K <= through)
+                upper = tl.where(K <= greater, a, upper)
+                lower = tl.where(K > through, b, lower)
+                iteration += 1
+            selected_count = tl.sum(tl.where(ranks == OWNER, b, 0), 0)
+            if tl.sum(b, 0) > K:
+                lower, upper = a, b
+                found = tl.full((), False, tl.int1)
+                while ~found:
+                    width = upper - lower
+                    max_width = tl.max(width, 0)
+                    pivot_rank = tl.min(tl.where(width == max_width, ranks, BLOCK_RANKS), 0)
+                    mid = lower + width // 2
+                    sample = tl.load(packed_ptr + peer_base + tl.minimum(mid, K - 1) * 2)
+                    pivot_id = tl.sum(tl.where(ranks == pivot_rank, sample, 0), 0)
+                    a, b = _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot_id, K, True)
+                    less, through = tl.sum(a, 0), tl.sum(b, 0)
+                    found = (less < K) & (K <= through)
+                    upper = tl.where(K <= less, a, upper)
+                    lower = tl.where(K > through, b, lower)
+                selected_count = tl.sum(tl.where(ranks == OWNER, b, 0), 0)
+        own_ids = tl.load(packed_ptr + (OWNER * num_rows + row) * K * 2 + col * 2)
         block = own_ids // INTERLEAVE
         local = block // WORLD * INTERLEAVE + own_ids - block * INTERLEAVE
-        result = tl.where(col.to(tl.float32) < lower.to(tl.float32), local, -1)
+        result = tl.where(col < selected_count, local, -1)
         tl.store(output_ptr + row * K + col, result)
 
 
