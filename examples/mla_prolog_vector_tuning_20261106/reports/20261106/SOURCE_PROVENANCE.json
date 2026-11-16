@@ -1,0 +1,257 @@
+{
+  "source_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+  "public_equivalent": "22152aaf24c8c6d870e6367b5e0ef0338ac7efe4",
+  "source_tree": "885adca6d90c64b1fe350a2f6498b02dc076b76d",
+  "records": [
+    {
+      "path": "csrc/attention/mla_prolog_serial/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "e11390c0dbce1abb813585263da86581d3c5d9b4e30d18a4428dd8a6bb3b2490"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "4ac0245282554ea488f31461bb5c85c5620ab5cbc5d13dc7889139b313305917"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "38ed7a056e5a960d1dfe002ca577c564a669787a006b93db9b2fae62823ed601"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_def.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "19e9a83cce48ca953f3c0790fdeae54b15e4e5d1e0b7d0990a802d3202b68cd9"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_infershape.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "7c4886df78c89202b3dd9e1f7e26fd775c5d7c321d172ec13aaf310d46e89f43"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_tiling.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "a7b64d8e4a5abc611acbcf773fc6343fdcaec408db8ce652ee912b02524077ae"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_host/x_mla_vector_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "13b24b915520caefc92398d611af488f6f05501bb59e63566f9f215d44027629"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_kernel/x_mla_vector.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "102b61a8aba2bec94a3da733e61c1a8928ce643207fefb01951b785a4cb3f9b8"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/op_kernel/x_mla_vector_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "85414c376b6f1cb8b78e4bb6722c13277294b56097b196b6278faa3aa60ed89f"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/legacy/x_mla_vector/README.md",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "c6fc7dfb78d66c277c95e273ff2e523f0006930f5d373dc928215b8130803aab"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/README.md",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "679c306964e509602f631c89ca445fd82baf2b772065da7c2434f7f82a7e1268"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/torch_adpt.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "12f86344190ce5b04a74ddaba3811dfb616fde2f56071765706644c4174cdd71"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "2637eac2daaf698d4fb9cacc757c21aaffce49bdae4125b4d3ecd5505c437f8a"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "870b7f8a5395185eab22da417e0da68b47edd713c9b1534533023dba7c42c493"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_def.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "20f5edff4d8c0db7173618b03402b9c7d7d3d4ec4d79ef8314918196a8abcf86"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_infershape.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "206c255a4cdb9e08823840bcbdf06b719c95816d6b570e2b0e498c4c132e05b8"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_tiling.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "a9bfd2d5305f26e54360b87564d118065204620d23c34b967c9e0665f1600e99"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_host/x_mla_layout_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "38766f89912b8dcc576a7d258deb63616af5093ac6f6650fe331afb1c2257ccb"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_kernel/x_mla_layout.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "0733750fd507dca4096958759a5b76f9ee78d9f087d8a05ef982bb9435a44a47"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_layout/op_kernel/x_mla_layout_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "ea61bbe19ac2fea8e328e3c8e17d36fe0aa369bdf9632a32b3e9ef02f9b45d78"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "2637eac2daaf698d4fb9cacc757c21aaffce49bdae4125b4d3ecd5505c437f8a"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "65cfe251ed74adea8f023655ff76b8e4b2ad94adb97e57844a0f8baff1163b20"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_def.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "b86f14b6b7b9e7e732de8e2ed2de206fbc41bc739df67ea70c64db78d4352dda"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_infershape.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "5142e6cade286c36d9144cbaeb12eb1c9bcd51ba34cd0e78db2ba9c48b2e94aa"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_tiling.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "1716fd9895d58d0c32595e3dfd14957f30177bfb408415b98844ed4fbb24ffa9"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_host/x_mla_norm_cache_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "76aaaa8f0f262d8dd672106159db6ac9f9ff16a024bde222ced9a7fe6c2017d2"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_kernel/x_mla_norm_cache.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "8b37e268b4ea43ff1cc066f8cf413917bc69a0ce8e5eb6869f5f94ae90c8903e"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_norm_cache/op_kernel/x_mla_norm_cache_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "3ad2706a346d9cab2e46a9c0d7dffc5356a192ddff2d6a0e7e127559b9458d57"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "2637eac2daaf698d4fb9cacc757c21aaffce49bdae4125b4d3ecd5505c437f8a"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/CMakeLists.txt",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "df8ebd9488c86512f2c928c973bf3ef59b94b62c3e9b6f1a1491bc1a96478206"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_def.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "7ec71215e26fb7d3935295a07fe6299b04a705f0b8e5051108fbb663b7781948"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_infershape.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "3d47688723565e4efda02ffdd377e54650180da2208e78d996d10a441c8526e7"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_tiling.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "0e8c39d30796a01d81f1b283790dd3bbbcd7f8580893575a2ac9c2a19f87590a"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_host/x_mla_split_rope_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "77697594f0917fe7a37d83ca6d17199120c7e8eab1c0e70bd75bf195432ad7d0"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_kernel/x_mla_split_rope.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "21bec5e24a7217c713f7df67d56cac5878310d59fa5a6f80243c0ec80e89c2b8"
+    },
+    {
+      "path": "csrc/attention/mla_prolog_serial/x_mla_split_rope/op_kernel/x_mla_split_rope_tiling.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "f66afc6d89e15eb505dc594acb7e0b8596c92ea4a061125c8a01c536aed7782a"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUBridge.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "50ece2ed83a4015eafdf2b8cb0fda1ad8fb52507a141970e1074695c46708685"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUBridge.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "36a36c982147e579920bc5402bf2ffc941c7af0cf2f6ce4da46a72a431139ba5"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUStorageImpl.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "3ceeedbd5110ff607cd38b7855da703edc7348e0a93275de39587feafd9faa1f"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/NPUStorageImpl.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "a48137ee679c74a31e63b291f888dbd9f7b718096b1753326387277bff1eb6e0"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/op_api_common.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "cad7ae0f75919932e9485b9911312e303d5e8faac3c1a0c7bebb5d3192912754"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.cpp",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "3f68526e9e770a3c8ce19571edc5b83b046b71f662594b17cb73096376fd33a7"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/opdev.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "97569a42930ddd9fb99a8725b4d0ba470dd3d67a64ae0b1075ce7df601e77ab8"
+    },
+    {
+      "path": "csrc/aclnn_torch_adapter/serial_matmul_v3/torch_adpt.h",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "10322bc5b3314a4e294884d0f605c7f128afe65b5b8b350cacd2ce6eb1bd0ce3"
+    },
+    {
+      "path": "LICENSE",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "origin_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    },
+    {
+      "path": "mla_superkernel/pipeline.py",
+      "origin_path": "vllm_ascend/ops/mla_prolog_serial.py",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "adapted": true
+    },
+    {
+      "path": "mla_superkernel/serial_matmul.py",
+      "origin_path": "vllm_ascend/ops/serial_matmul.py",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "adapted": true
+    },
+    {
+      "path": "mla_superkernel/compiler.py",
+      "origin_path": "vllm_ascend/compilation/serial_superkernel.py",
+      "origin_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+      "adapted": true
+    }
+  ],
+  "changes": [
+    "Standalone import/build binding; no vLLM dependency",
+    "Extra strict torch.matmul backends keep our R5 staged Vector and output layout",
+    "Original torch backend preserved as a distinct route",
+    "TLS verification required for fetched dependencies",
+    "Removed all imported generic CANN build/common/framework/ONNX/stub sources; use installed toolkit template instead."
+  ]
+}

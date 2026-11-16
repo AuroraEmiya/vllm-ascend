@@ -1,4 +1,3 @@
-// Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // Licensed under CANN Open Software License Agreement Version 2.0.
 #include "x_mla_norm_cache_tiling.h"
 #include <algorithm>
@@ -6,59 +5,47 @@
 
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext* context) {
-  const auto* a = context->GetAttrs();
-  const int64_t mode = *a->GetInt(0), rows = *a->GetInt(1), heads = *a->GetInt(2), slots = *a->GetInt(3);
-  const float epsQ = *a->GetFloat(4), epsKv = *a->GetFloat(5);
-  if (!(mode == 0 || mode == 3 || mode == 4 || mode == 5 || mode == 7 || mode == 20 || mode == 21 || mode == 22 || mode == 23) || rows < 1 || rows > 65536 || heads < 1 ||
-      heads > 128 || (heads & (heads - 1)) || slots < rows || slots > 1048576 || !std::isfinite(epsQ) ||
-      !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0)
+  const auto* attrs = context->GetAttrs();
+  const int64_t rows = *attrs->GetInt(0), slots = *attrs->GetInt(1);
+  const float epsQ = *attrs->GetFloat(2), epsKv = *attrs->GetFloat(3);
+  if (rows < 1 || rows > 65536 || slots < rows || slots > 1048576 ||
+      !std::isfinite(epsQ) || !std::isfinite(epsKv) || epsQ <= 0 || epsKv <= 0) {
     return ge::GRAPH_FAILED;
-  platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
-  uint64_t ub = 0;
-  platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub);
-  const uint32_t cores = platform.GetCoreNumAiv();
-  if (!cores || !ub) return ge::GRAPH_FAILED;
-  const auto& s = context->GetInputShape(0)->GetStorageShape();
-  const bool norm = 0 == 0, split = 0 == 1;
-  const int64_t inputRows = norm || split ? rows : heads * rows;
-  const int64_t inputWidth = norm ? (mode == 0 ? 1536 : 2112) : (split ? heads * 192 : 512);
-  if (s.GetDimNum() != 2 || s.GetDim(0) != inputRows || s.GetDim(1) != inputWidth) return ge::GRAPH_FAILED;
-  if (norm && (context->GetInputShape(2)->GetStorageShape().GetShapeSize() != 1536 ||
-               context->GetInputShape(3)->GetStorageShape().GetShapeSize() != 512))
-    return ge::GRAPH_FAILED;
-  if (norm && mode == 0 && context->GetInputShape(1)->GetStorageShape().GetShapeSize() != rows * 576)
-    return ge::GRAPH_FAILED;
-  if (norm || split) {
-    if (context->GetInputShape(4)->GetStorageShape().GetShapeSize() != rows * 64 ||
-        context->GetInputShape(5)->GetStorageShape().GetShapeSize() != rows * 64 ||
-        context->GetInputShape(6)->GetStorageShape().GetShapeSize() != rows)
-      return ge::GRAPH_FAILED;
   }
-  XMlaNormCacheTilingData t;
-  t.set_mode(mode);
-  t.set_rows(rows);
-  t.set_heads(heads);
-  t.set_slots(slots);
-  t.set_epsQ(epsQ);
-  t.set_epsKv(epsKv);
-  uint32_t headTile = 1, units = 0, work = 0, fp32 = 0;
-  uint64_t peak = 0;
-  units = (mode >= 21 ? 1 : 2) * rows;
-  work = 1536;
-  fp32 = mode >= 21 ? 2112 : 1600;
-  peak = 2ull * (1536 + 1536 + 64 + 1536) + 20ull * fp32 + 32;
-  if (mode >= 20) peak += 1536 * 2;
-  if (peak > ub || !units) return ge::GRAPH_FAILED;
-  t.set_units(units);
-  t.set_headTile(headTile);
-  t.set_workElements(work);
-  t.set_floatElements(fp32);
-  t.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
-  context->GetRawTilingData()->SetDataSize(t.GetDataSize());
-  // A measured control for launch/parallelism versus more work per AIV core.
-  const uint32_t coreBudget = mode == 22 ? std::max(1u, cores / 2)
-                              : mode == 23 ? std::max(1u, cores / 4) : cores;
-  context->SetBlockDim(std::min(units, coreBudget));
+  const auto& input = context->GetInputShape(0)->GetStorageShape();
+  if (input.GetDimNum() != 2 || input.GetDim(0) != rows || input.GetDim(1) != 2112 ||
+      context->GetInputShape(1)->GetStorageShape().GetShapeSize() != 1536 ||
+      context->GetInputShape(2)->GetStorageShape().GetShapeSize() != 512 ||
+      context->GetInputShape(3)->GetStorageShape().GetShapeSize() != rows * 64 ||
+      context->GetInputShape(4)->GetStorageShape().GetShapeSize() != rows * 64 ||
+      context->GetInputShape(5)->GetStorageShape().GetShapeSize() != rows) {
+    return ge::GRAPH_FAILED;
+  }
+  platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
+  uint64_t ubBytes = 0;
+  platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
+  const uint32_t cores = platform.GetCoreNumAiv();
+  if (!cores || !ubBytes) return ge::GRAPH_FAILED;
+
+  // Large inputs pair Q/KV branches of each token and keep both gammas.
+  // Small inputs expose the two branches independently for more parallelism.
+  const uint32_t branchesPerUnit = rows >= 512 ? 2 : 1;
+  const uint32_t units = 2 * rows / branchesPerUnit;
+  const uint32_t floatElements = branchesPerUnit == 2 ? 2112 : 1600;
+  const uint64_t peakBytes = 2ull * (1536 + 1536 + 64 + 2 * 1536) + 20ull * floatElements + 32;
+  if (peakBytes > ubBytes) return ge::GRAPH_FAILED;
+
+  XMlaNormCacheTilingData tiling;
+  tiling.set_rows(rows);
+  tiling.set_slots(slots);
+  tiling.set_units(units);
+  tiling.set_branchesPerUnit(branchesPerUnit);
+  tiling.set_floatElements(floatElements);
+  tiling.set_epsQ(epsQ);
+  tiling.set_epsKv(epsKv);
+  tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
+  context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
+  context->SetBlockDim(std::min(units, cores));
   context->SetTilingKey(0);
   context->GetWorkspaceSizes(1)[0] = 0;
   return ge::GRAPH_SUCCESS;

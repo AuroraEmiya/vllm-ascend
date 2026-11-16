@@ -20,7 +20,7 @@ def main():
     a=p.parse_args(); out=a.output.resolve();out.mkdir(parents=True,exist_ok=True)
     report=out/'result.json'
     if report.exists(): raise FileExistsError(report)
-    result=dict(backend=a.backend,mode=a.mode,batch=a.batch,hidden=7168,local_heads=32,sequence=1,dtype='BF16',source='own R5; not Contact',status='STARTED')
+    result=dict(backend=a.backend,mode=a.mode,batch=a.batch,hidden=7168,local_heads=32,sequence=1,dtype='BF16',source='final readable serial implementation',status='STARTED')
     try:
         # This cwd is part of the static-child cache identity; never reuse it across sources.
         cache=out/'fresh-static-cache';cache.mkdir(exist_ok=False);os.chdir(cache)
@@ -43,8 +43,8 @@ def main():
         expected=oracle(data,32,initial_kv,initial_kr)
         dev={k:v.npu() for k,v in data.items()}
         pipeline=MlaPrologSerial(*(dev[k] for k in ('wdq','wuq','wuk','wdkv','gq','gkv')))
-        pipeline._matrix_backend=a.backend;pipeline._vector_backend='staged';pipeline._head_layout='row';pipeline._split_head_tile=16
-        fn=pipeline if a.mode=='S0' else pipeline.compile_superkernel(matrix_backend=a.backend,optimize=a.mode=='S2',vector_backend='staged',head_layout='row',split_head_tile=16,optimize_options={'constant_codegen':1,'split_mode':4,'preload_code':5})
+        pipeline._matrix_backend=a.backend
+        fn=pipeline if a.mode=='S0' else pipeline.compile_superkernel(matrix_backend=a.backend,optimize=a.mode=='S2',optimize_options={'constant_codegen':1,'split_mode':4,'preload_code':5})
         caches=(initial_kv.npu(),initial_kr.npu())
         def call(): return fn(dev['x'],dev['sin'],dev['cos'],dev['index'],*caches)
         call();torch.npu.synchronize()

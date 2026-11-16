@@ -10,10 +10,10 @@ def load_extension():
     from torch.utils.cpp_extension import load
     existing=os.environ.get('MLASK_EXISTING_BINDING')
     if existing:
-        # Study the matrix interface against an already-built copy of our own R5 V kernels.
-        # No automatic fallback: the explicit path is recorded by the runner's binary hashes.
-        torch.ops.load_library(str(Path(existing).resolve(strict=True)))
-        return
+        raise RuntimeError(
+            "The final Vector schemas changed: unset MLASK_EXISTING_BINDING and rebuild "
+            "the binding and OPP together in a fresh source directory."
+        )
     root=Path(__file__).resolve().parents[1]
     cann=Path(os.environ['ASCEND_HOME_PATH'])
     build=root/'build'/'binding'

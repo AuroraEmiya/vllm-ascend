@@ -12,10 +12,6 @@ NOPE_DIM = 128
 ROPE_DIM = 64
 MAX_BATCH = 65536
 MAX_ROWS = 65536
-GAMMA_CACHE_MIN_BATCH = 32
-NORM_OUTPUT_OVERLAP_MIN_BATCH = 32
-SPLIT_DMA_OVERLAP_MIN_BATCH = 32
-SPLIT_DMA_OVERLAP_MAX_BATCH = 64
 FRACTAL_NZ = 29
 ND_FORMAT = 2
 ALLOWED_HIDDEN = (1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192)
@@ -76,17 +72,11 @@ class MlaPrologSerial:
         self.weight_dq, self.weight_uq_qr, self.weight_uk = weight_dq, weight_uq_qr, weight_uk
         self.weight_dkv_kr, self.gamma_q, self.gamma_kv = weight_dkv_kr, gamma_q, gamma_kv
         self.eps_q, self.eps_kv = eps_q, eps_kv
-        self._matrix_backend = "torch"
-        self._vector_backend = "staged"
-        self._head_layout = "row"
-        self._split_head_tile = 16
-        self._vector_modes = (None, None, None)
-        self._vector_policy = "tuned"
+        self._matrix_backend = "v3_nz"
         values = self._matrix_values()
         self._matrix_nz = tuple(torch_npu.npu_format_cast(value, FRACTAL_NZ) for value in values)
         self._matrix_nd = tuple(torch_npu.npu_format_cast(value.t().contiguous(), ND_FORMAT) for value in values)
         self._check_prepared_formats()
-        self.dummy = torch.empty(1, dtype=torch.bfloat16, device=self.device)
 
     def _check_prepared_formats(self):
         if any(torch_npu.get_npu_format(value) != FRACTAL_NZ for value in self._matrix_nz):
@@ -130,58 +120,35 @@ class MlaPrologSerial:
         """Choose a public matrix route from static decode shape metadata."""
         return "nd_transposed_linear" if rows >= 16 and rows % 16 == 0 else "nz_mm"
 
-    def vector_modes(self, rows):
-        """Select tested Vector algorithms using static token/head metadata.
+    def compile_superkernel(self, *, optimize=True, matrix_backend="v3_nz", optimize_options=None):
+        """Compile the final pipeline; warm up before outer Graph capture.
 
-        Explicit mode overrides are available for reproducible experiments.
-        The original algorithms remain selectable with _vector_policy='baseline'.
-        Tiling inside each host operator still queries the actual UB/AIV limits.
-        """
-        modern_matrix = self._matrix_backend in ("v3", "v3_nz") or self._matrix_backend.startswith("torch_matmul")
-        defaults = (
-            7 if rows >= NORM_OUTPUT_OVERLAP_MIN_BATCH else 4,
-            10 if modern_matrix and self._split_head_tile == 16 else
-            (6 if SPLIT_DMA_OVERLAP_MIN_BATCH <= rows <= SPLIT_DMA_OVERLAP_MAX_BATCH else 1),
-            9 if self._head_layout == "tile8" else 2,
-        )
-        if self._vector_policy == "tuned" and self._vector_backend == "staged" and modern_matrix:
-            defaults = (
-                21 if rows >= 512 else 20,
-                32 if rows >= 32 else 30,
-                14 if rows <= 32 else 12,
-            )
-        return tuple(default if override is None else override
-                     for default, override in zip(defaults, self._vector_modes))
-
-    def compile_superkernel(
-        self,
-        *,
-        optimize=True,
-        matrix_backend="v3_nz",
-        optimize_options=None,
-        head_layout="row",
-        split_head_tile=16,
-        vector_backend="staged",
-    ):
-        """Compile the full pipeline; warm up before outer Graph capture.
-
-        ``optimize=False`` selects the static-kernel control. Weight refresh
-        remains explicit on this prepared owner, outside replay.
+        optimize=False compiles the same children without outer grouping.
+        Vector tiling is selected by each host operator from the static shape.
         """
         from mla_superkernel.compiler import CompiledSerialPipeline
 
-        if vector_backend not in ("legacy", "staged"):
-            raise ValueError("vector_backend must be legacy or staged")
-        self._vector_backend = vector_backend
-        if head_layout not in ("transpose", "row", "tile8"):
-            raise ValueError("head_layout must be transpose, row or tile8")
-        if split_head_tile not in (0, 16):
-            raise ValueError("split_head_tile must be 0 or 16")
-        self._split_head_tile = split_head_tile
-        self._head_layout = head_layout
         return CompiledSerialPipeline(
-            self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend, optimize_options=optimize_options
+            self, "mla_prolog", optimize=optimize, matrix_backend=matrix_backend,
+            optimize_options=optimize_options,
         )
+
+    def _project(self, values, weight_index):
+        """Shared matrix dispatch for the two 2-D projections.
+
+        v3_nz is the final measured route. Public torch.matmul routes remain
+        available for the explicitly requested SuperKernel interface study.
+        """
+        if self._matrix_backend in ("v3", "v3_nz"):
+            from mla_superkernel.serial_matmul import serial_matmul_v3
+
+            if self._matrix_backend == "v3_nz":
+                return serial_matmul_v3(values, self._matrix_nz[weight_index])
+            return serial_matmul_v3(values, self._matrix_nd[weight_index], transpose_b=True)
+        if (self._matrix_backend != "torch_matmul_nz" and
+                self.matrix_route(values.shape[0]) == "nd_transposed_linear"):
+            return torch.matmul(values, self._matrix_nd[weight_index].t())
+        return torch.matmul(values, self._matrix_nz[weight_index])
 
     def __call__(self, token_x, rope_sin, rope_cos, cache_index, kv_cache, kr_cache):
         if token_x.ndim != 3 or not 1 <= token_x.shape[0] <= MAX_BATCH or token_x.shape[1] < 1:
@@ -190,8 +157,6 @@ class MlaPrologSerial:
         rows = batch * sequence
         if rows > MAX_ROWS:
             raise ValueError("this implementation supports B*S <= 65536")
-        if self._vector_backend == "legacy" and rows > 128:
-            raise ValueError("legacy compatibility kernel supports at most 128 token rows")
         for tensor, shape, name, dtype in (
             (token_x, (batch, sequence, self.hidden), "token_x", torch.bfloat16),
             (rope_sin, (batch, sequence, ROPE_DIM), "rope_sin", torch.bfloat16),
@@ -210,139 +175,48 @@ class MlaPrologSerial:
         sine, cosine = rope_sin.view(rows, ROPE_DIM), rope_cos.view(rows, ROPE_DIM)
         index = cache_index.view(rows)
         x = token_x.view(rows, self.hidden)
-        norm_mode, split_mode, layout_mode = self.vector_modes(rows)
 
-        use_v3 = self._matrix_backend in ("v3", "v3_nz")
-        use_nz = self._matrix_backend == "v3_nz"
-        if use_v3:
-            from mla_superkernel.serial_matmul import serial_matmul_v3
+        # 1. Combined Q/KV down projection: [T,H] -> [T,1536+512+64].
+        down_q_kv = self._project(x, 0)
 
-        use_linear = self._matrix_backend != "torch_matmul_nz" and self.matrix_route(rows) == "nd_transposed_linear"
-        down_q_kv = (
-            serial_matmul_v3(x, self._matrix_nz[0])
-            if use_nz
-            else serial_matmul_v3(x, self._matrix_nd[0], transpose_b=True)
-            if use_v3
-            else torch.matmul(x, self._matrix_nd[0].t())
-            if use_linear
-            else torch.matmul(x, self._matrix_nz[0])
-        )
+        # 2. Q/KV RMSNorm, KV RoPE and in-place cache updates.
         normalized_q = torch.empty((rows, QUERY_RANK), device=self.device, dtype=torch.bfloat16)
-        self._vector(
-            down_q_kv,
-            self.dummy,
-            self.gamma_q,
-            self.gamma_kv,
-            sine,
-            cosine,
-            index,
-            norm_mode,
-            rows,
-            slots,
-            normalized_q,
-            self.dummy,
-            cache_kv_flat,
-            cache_kr_flat,
+        torch.ops._C_ascend.mla_norm_cache_out(
+            down_q_kv, self.gamma_q, self.gamma_kv, sine, cosine, index,
+            rows, slots, self.eps_q, self.eps_kv,
+            normalized_q, cache_kv_flat, cache_kr_flat,
         )
 
-        up = (
-            serial_matmul_v3(normalized_q, self._matrix_nz[1])
-            if use_nz
-            else serial_matmul_v3(normalized_q, self._matrix_nd[1], transpose_b=True)
-            if use_v3
-            else torch.matmul(normalized_q, self._matrix_nd[1].t())
-            if use_linear or use_v3
-            else torch.matmul(normalized_q, self._matrix_nz[1])
-        )
+        # 3. Q up projection: [T,1536] -> [T,N*(128+64)].
+        up = self._project(normalized_q, 1)
+
+        # 4. NoPE is written in the exact layout consumed by the head matmul.
         head_q = torch.empty((self.heads, rows, NOPE_DIM), device=self.device, dtype=torch.bfloat16)
         query_rope = torch.empty((rows, self.heads, ROPE_DIM), device=self.device, dtype=torch.bfloat16)
-        self._vector(
-            up,
-            self.dummy,
-            self.dummy,
-            self.dummy,
-            sine,
-            cosine,
-            index,
-            split_mode,
-            rows,
-            slots,
-            head_q,
-            query_rope,
-            cache_kv_flat,
-            cache_kr_flat,
+        torch.ops._C_ascend.mla_split_rope_out(
+            up, sine, cosine, rows, self.heads, head_q, query_rope,
         )
 
-        if use_v3 or self._matrix_backend.startswith("torch_matmul"):
-            head_product = (serial_matmul_v3(head_q, self.weight_uk) if use_v3
-                            else torch.matmul(head_q, self.weight_uk))
-            if rows == 1:
-                query = head_product.view(rows, self.heads, KV_RANK)
-            elif self._head_layout == "transpose":
-                query = head_product.transpose(0, 1).contiguous()
-            else:
-                query = head_product.new_empty((rows, self.heads, KV_RANK))
-                self._vector(
-                    head_product.view(self.heads * rows, KV_RANK),
-                    self.dummy,
-                    self.dummy,
-                    self.dummy,
-                    sine,
-                    cosine,
-                    index,
-                    layout_mode,
-                    rows,
-                    slots,
-                    query,
-                    self.dummy,
-                    cache_kv_flat,
-                    cache_kr_flat,
-                )
-        elif rows == 1:
-            query = torch.bmm(head_q, self.weight_uk).view(rows, self.heads, KV_RANK)
+        # 5. Per-head projection: [N,T,128] @ [N,128,512].
+        if self._matrix_backend in ("v3", "v3_nz"):
+            from mla_superkernel.serial_matmul import serial_matmul_v3
+
+            head_product = serial_matmul_v3(head_q, self.weight_uk)
         else:
-            query = torch_npu.npu_transpose_batchmatmul(
-                head_q,
-                self.weight_uk,
-                perm_x1=[0, 1, 2],
-                perm_x2=[0, 1, 2],
-                perm_y=[1, 0, 2],
-                batch_split_factor=1,
+            head_product = torch.matmul(head_q, self.weight_uk)
+
+        # 6. Vector addressing maps [N,T,512] to [T,N,512]. For T=1 the
+        #    addresses already match, so only tensor metadata is needed.
+        if rows == 1:
+            query = head_product.view(rows, self.heads, KV_RANK)
+        else:
+            query = head_product.new_empty((rows, self.heads, KV_RANK))
+            torch.ops._C_ascend.mla_layout_out(
+                head_product.view(self.heads * rows, KV_RANK), rows, self.heads, query,
             )
         return (
             query.view(batch, sequence, self.heads, KV_RANK),
             query_rope.view(batch, sequence, self.heads, ROPE_DIM),
-            kv_cache,
-            kr_cache,
-        )
-
-    def _vector(
-        self, x, aux, gamma_q, gamma_kv, sine, cosine, index, mode, rows, slots, y, query_rope, kv_cache, kr_cache
-    ):
-        if self._vector_backend == "legacy":
-            op = torch.ops._C_ascend.mla_prolog_vector_out
-        elif mode in (0, 3, 4, 5, 7, 20, 21, 22, 23):
-            op = torch.ops._C_ascend.mla_norm_cache_out
-        elif mode in (1, 6, 8, 10, 30, 31, 32):
-            op = torch.ops._C_ascend.mla_split_rope_out
-        else:
-            op = torch.ops._C_ascend.mla_layout_out
-        op(
-            x,
-            aux,
-            gamma_q,
-            gamma_kv,
-            sine,
-            cosine,
-            index,
-            mode,
-            rows,
-            self.heads,
-            slots,
-            self.eps_q,
-            self.eps_kv,
-            y,
-            query_rope,
             kv_cache,
             kr_cache,
         )

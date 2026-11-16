@@ -1,69 +1,54 @@
-// Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // Licensed under CANN Open Software License Agreement Version 2.0.
 #include "x_mla_split_rope_tiling.h"
 #include <algorithm>
-#include <cmath>
 
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext* context) {
-  const auto* a = context->GetAttrs();
-  const int64_t mode = *a->GetInt(0), rows = *a->GetInt(1), heads = *a->GetInt(2), slots = *a->GetInt(3);
-  const float epsQ = *a->GetFloat(4), epsKv = *a->GetFloat(5);
-  if (!(mode == 1 || mode == 6 || mode == 8 || mode == 10 || mode == 30 || mode == 31 || mode == 32) || rows < 1 || rows > 65536 || heads < 1 || heads > 128 ||
-      (heads & (heads - 1)) || slots < rows || slots > 1048576 || !std::isfinite(epsQ) || !std::isfinite(epsKv) ||
-      epsQ <= 0 || epsKv <= 0)
+  const auto* attrs = context->GetAttrs();
+  const int64_t rows = *attrs->GetInt(0), heads = *attrs->GetInt(1);
+  if (rows < 1 || rows > 65536 || heads < 1 || heads > 128 || (heads & (heads - 1))) {
     return ge::GRAPH_FAILED;
-  platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
-  uint64_t ub = 0;
-  platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub);
-  const uint32_t cores = platform.GetCoreNumAiv();
-  if (!cores || !ub) return ge::GRAPH_FAILED;
-  const auto& s = context->GetInputShape(0)->GetStorageShape();
-  const bool norm = 1 == 0, split = 1 == 1;
-  const int64_t inputRows = norm || split ? rows : heads * rows;
-  const int64_t inputWidth = norm ? (mode == 0 ? 1536 : 2112) : (split ? heads * 192 : 512);
-  if (s.GetDimNum() != 2 || s.GetDim(0) != inputRows || s.GetDim(1) != inputWidth) return ge::GRAPH_FAILED;
-  if (norm && (context->GetInputShape(2)->GetStorageShape().GetShapeSize() != 1536 ||
-               context->GetInputShape(3)->GetStorageShape().GetShapeSize() != 512))
-    return ge::GRAPH_FAILED;
-  if (norm && mode == 0 && context->GetInputShape(1)->GetStorageShape().GetShapeSize() != rows * 576)
-    return ge::GRAPH_FAILED;
-  if (norm || split) {
-    if (context->GetInputShape(4)->GetStorageShape().GetShapeSize() != rows * 64 ||
-        context->GetInputShape(5)->GetStorageShape().GetShapeSize() != rows * 64 ||
-        context->GetInputShape(6)->GetStorageShape().GetShapeSize() != rows)
-      return ge::GRAPH_FAILED;
   }
-  XMlaSplitRopeTilingData t;
-  t.set_mode(mode);
-  t.set_rows(rows);
-  t.set_heads(heads);
-  t.set_slots(slots);
-  t.set_epsQ(epsQ);
-  t.set_epsKv(epsKv);
-  uint32_t headTile = 1, units = 0, work = 0, fp32 = 0;
-  uint64_t peak = 0;
-  headTile = std::min<int64_t>(heads, mode < 30 && mode != 10 && rows >= 32 ? 32 : 16);
-  if (mode >= 31) {
-    // Grow the tile only while enough independent row/head units remain
-    // to occupy the available AIV cores. Small decode batches expose heads.
+  const auto& input = context->GetInputShape(0)->GetStorageShape();
+  if (input.GetDimNum() != 2 || input.GetDim(0) != rows || input.GetDim(1) != heads * 192 ||
+      context->GetInputShape(1)->GetStorageShape().GetShapeSize() != rows * 64 ||
+      context->GetInputShape(2)->GetStorageShape().GetShapeSize() != rows * 64) {
+    return ge::GRAPH_FAILED;
+  }
+  platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
+  uint64_t ubBytes = 0;
+  platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
+  const uint32_t cores = platform.GetCoreNumAiv();
+  if (!cores || !ubBytes) return ge::GRAPH_FAILED;
+
+  // Tiny inputs retain a coarse tile to avoid repeated coefficient loads.
+  uint32_t headTile = std::min<int64_t>(heads, 16);
+  if (rows >= 32) {
     headTile = 1;
     while (headTile < std::min<int64_t>(heads, 32) &&
-           rows * ((heads + 2 * headTile - 1) / (2 * headTile)) >= cores)
+           rows * ((heads + 2 * headTile - 1) / (2 * headTile)) >= cores) {
       headTile *= 2;
+    }
   }
-  units = rows * ((heads + headTile - 1) / headTile);
-  work = headTile * 64;
-  fp32 = std::max(256u, work);
-  const uint32_t inputHeadWidth = mode >= 32 ? 192 : 128;
-  peak = (mode >= 30 ? 4ull : 2ull) * (headTile * inputHeadWidth + 128 + work) + 20ull * fp32 + 32;
-  if (peak > ub || !units) return ge::GRAPH_FAILED;
-  t.set_units(units);
-  t.set_headTile(headTile);
-  t.set_workElements(work);
-  t.set_floatElements(fp32);
-  t.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
-  context->GetRawTilingData()->SetDataSize(t.GetDataSize());
+  const uint32_t units = rows * ((heads + headTile - 1) / headTile);
+  const uint32_t workElements = headTile * 64;
+  const uint32_t floatElements = std::max(256u, workElements);
+  // 192 loads a complete contiguous head; 128 loads NoPE and RoPE separately.
+  const uint32_t inputHeadWidth = rows >= 32 ? 192 : 128;
+  const uint64_t peakBytes = 4ull * (headTile * inputHeadWidth + 128 + workElements) +
+                             20ull * floatElements + 32;
+  if (peakBytes > ubBytes) return ge::GRAPH_FAILED;
+
+  XMlaSplitRopeTilingData tiling;
+  tiling.set_rows(rows);
+  tiling.set_heads(heads);
+  tiling.set_units(units);
+  tiling.set_headTile(headTile);
+  tiling.set_workElements(workElements);
+  tiling.set_floatElements(floatElements);
+  tiling.set_inputHeadWidth(inputHeadWidth);
+  tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
+  context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
   context->SetBlockDim(std::min(units, cores));
   context->SetTilingKey(0);
   context->GetWorkspaceSizes(1)[0] = 0;

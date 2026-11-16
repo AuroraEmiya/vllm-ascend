@@ -5,28 +5,52 @@ namespace ops {
 class XMlaNormCache : public OpDef {
  public:
   explicit XMlaNormCache(const char* name) : OpDef(name) {
-    for (const char* input : {"x", "aux", "gamma_q", "gamma_kv", "sin", "cos"}) {
-      this->Input(input)
-          .ParamType(REQUIRED)
-          .DataType({ge::DT_BF16})
-          .Format({ge::FORMAT_ND})
-          .UnknownShapeFormat({ge::FORMAT_ND});
-    }
+    this->Input("x")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
+    this->Input("gamma_q")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
+    this->Input("gamma_kv")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
+    this->Input("sin")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
+    this->Input("cos")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
     this->Input("index")
         .ParamType(REQUIRED)
         .DataType({ge::DT_INT64})
         .Format({ge::FORMAT_ND})
         .UnknownShapeFormat({ge::FORMAT_ND});
-    for (const char* output : {"y", "query_rope", "kv_cache", "kr_cache"}) {
-      this->Output(output)
-          .ParamType(REQUIRED)
-          .DataType({ge::DT_BF16})
-          .Format({ge::FORMAT_ND})
-          .UnknownShapeFormat({ge::FORMAT_ND});
-    }
-    this->Attr("mode").Int();
+    this->Output("normalized_q")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
+    this->Output("kv_cache")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
+    this->Output("kr_cache")
+        .ParamType(REQUIRED)
+        .DataType({ge::DT_BF16})
+        .Format({ge::FORMAT_ND})
+        .UnknownShapeFormat({ge::FORMAT_ND});
     this->Attr("rows").Int();
-    this->Attr("heads").Int();
     this->Attr("cache_slots").Int();
     this->Attr("eps_q").Float();
     this->Attr("eps_kv").Float();

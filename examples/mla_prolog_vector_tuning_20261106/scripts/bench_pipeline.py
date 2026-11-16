@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Compare the complete original/tuned serial pipeline and installed aclnnMlaProlog."""
+"""Compare the final complete serial pipeline and installed aclnnMlaProlog."""
 import argparse
-import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -32,7 +31,6 @@ def main():
     p.add_argument('--index-mode',choices=['edges','reverse','strided'],default='edges')
     p.add_argument('--mode',choices=['S0','S1','S2'],default='S2')
     p.add_argument('--backend',choices=['v3_nz','torch_matmul_nz'],default='v3_nz')
-    p.add_argument('--vector-modes',default='baseline')
     p.add_argument('--output',type=Path,required=True);p.add_argument('--profile',action='store_true')
     p.add_argument('--samples',type=int,default=20)
     p.add_argument('--refresh-check',action='store_true')
@@ -56,12 +54,6 @@ def main():
         data,initial_kv,initial_kr=build_case(case);dev={k:v.npu() for k,v in data.items()}
         pipeline=MlaPrologSerial(*(dev[k] for k in ('wdq','wuq','wuk','wdkv','gq','gkv')))
         pipeline._matrix_backend=a.backend
-        pipeline._vector_policy='baseline'
-        candidate=copy.copy(pipeline)
-        if a.vector_modes=='adaptive':
-            candidate._vector_policy='tuned'
-        elif a.vector_modes!='baseline':
-            candidate._vector_modes=tuple(map(int,a.vector_modes.split(',')))
         weights={k:torch_npu.npu_format_cast(dev[k],29) for k in ('wdq','wuq','wdkv')}
         stream=torch.npu.Stream();graphs={};outputs={};owners={};caches={}
         def check_cpu(outputs_value,cache_value,current_data):
@@ -84,7 +76,7 @@ def main():
             checks['oracle_coverage']={'kind':'sampled token rows with full untouched cache check','selected':selected,'total_rows':rows}
             checks['pass']=all(v['pass'] for k,v in checks.items() if k!='oracle_coverage')
             return checks
-        for label,owner in [('fused',None),('original',pipeline),('candidate',candidate)]:
+        for label,owner in [('fused',None),('serial',pipeline)]:
             r={'status':'STARTED','samples_us':[]};result['variants'][label]=r
             try:
                 caches[label]=(initial_kv.npu(),initial_kr.npu())
@@ -119,12 +111,12 @@ def main():
         for label,r in result['variants'].items():
             if r['samples_us']:r['median_us']=statistics.median(r['samples_us'])
             r['preparation']=getattr(owners.get(label),'preparation',None)
-        if a.profile and 'candidate' in graphs:
+        if a.profile and 'serial' in graphs:
             with torch_npu.profiler.profile(activities=[torch_npu.profiler.ProfilerActivity.CPU,torch_npu.profiler.ProfilerActivity.NPU],on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(str(out/'trace')),record_shapes=True) as prof:
-                graphs['candidate'].replay();torch.npu.synchronize();prof.step()
+                graphs['serial'].replay();torch.npu.synchronize();prof.step()
         # Full output comparison to the installed public API, processed in small CPU chunks.
         if 'fused' in outputs:
-            for label in ('original','candidate'):
+            for label in ('serial',):
                 if label not in outputs:continue
                 comparisons=[]
                 for v,ref in zip(outputs[label],outputs['fused']):
@@ -150,8 +142,6 @@ def main():
                 result['variants'][label]['same_address_update']=c
                 if not c['pass'] or not result['refresh_addresses_preserved']:result['variants'][label]['status']='REFRESH_FAILURE'
         result['loaded_binaries']={}
-        result['vector_routes']={'original':pipeline.vector_modes(a.batch*a.sequence),
-                                 'candidate':candidate.vector_modes(a.batch*a.sequence)}
         for line in Path('/proc/self/maps').read_text().splitlines():
             f=Path(line.split()[-1])
             if f.is_file() and f.suffix=='.so' and any(v in str(f) for v in ('mla_superkernel_native','mla_public_baseline','mlask_transformer','libopapi','libnnopbase')):result['loaded_binaries'][str(f)]=hashlib.sha256(f.read_bytes()).hexdigest()

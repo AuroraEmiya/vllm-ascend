@@ -13,7 +13,6 @@ def main():
     p.add_argument('--selection',default='all',help='all, decode, sk, guards, or BxS comma-separated')
     p.add_argument('--mode',choices=['S0','S1','S2'],default='S0')
     p.add_argument('--backend',choices=['v3_nz','torch_matmul_nz'],default='v3_nz')
-    p.add_argument('--vector-modes',default='adaptive')
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--profile',action='store_true');p.add_argument('--refresh-check',action='store_true')
     a=p.parse_args();out=a.output.resolve();out.mkdir(parents=True,exist_ok=True)
@@ -33,7 +32,7 @@ def main():
         sys.argv=['bench_pipeline.py','--batch',str(c['batch']),'--sequence',str(c['sequence']),
                   '--hidden',str(c.get('hidden',7168)),'--heads',str(c.get('heads',32)),
                   '--block-size',str(c.get('block_size',16)),'--index-mode',c.get('index_mode','edges'),
-                  '--mode',a.mode,'--backend',a.backend,'--vector-modes',a.vector_modes,'--output',str(target)]
+                  '--mode',a.mode,'--backend',a.backend,'--output',str(target)]
         if a.profile and number==1:sys.argv+=['--profile']
         if a.refresh_check and number==1:sys.argv+=['--refresh-check']
         code=bench_pipeline.main()

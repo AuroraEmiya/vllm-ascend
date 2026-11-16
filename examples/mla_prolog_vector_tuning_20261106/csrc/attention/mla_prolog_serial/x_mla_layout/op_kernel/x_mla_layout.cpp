@@ -4,16 +4,7 @@
 #include "x_mla_layout_tiling.h"
 using namespace AscendC;
 namespace {
-constexpr uint32_t QUERY_RANK = 1536;
 constexpr uint32_t KV_RANK = 512;
-constexpr uint32_t NOPE_DIM = 128;
-constexpr uint32_t ROPE_DIM = 64;
-constexpr uint32_t UP_HEAD_WIDTH = NOPE_DIM + ROPE_DIM;
-constexpr uint32_t HEAD_TILE = 32;
-constexpr uint32_t SMALL_HEAD_TILE = 16;
-constexpr uint32_t WORK_WIDTH = HEAD_TILE * ROPE_DIM;
-constexpr uint32_t GAMMA_OFFSET = ROPE_DIM;
-static_assert(GAMMA_OFFSET + QUERY_RANK <= WORK_WIDTH, "cached gamma exceeds f1 buffer");
 
 template <HardEvent EVENT>
 __aicore__ inline void Sync() {
@@ -23,97 +14,67 @@ __aicore__ inline void Sync() {
 
 class XMlaLayoutKernel {
  public:
-  __aicore__ inline void Init(GM_ADDR x, GM_ADDR aux, GM_ADDR gammaQ, GM_ADDR gammaKv, GM_ADDR sine, GM_ADDR cosine,
-                              GM_ADDR index, GM_ADDR y, GM_ADDR queryRope, GM_ADDR cacheKv, GM_ADDR cacheKr,
-                              const XMlaLayoutTilingData& tiling) {
-    t = tiling;
-    cachedGammaWidth = 0;
-    xGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(x));
-    auxGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(aux));
-    gammaQGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(gammaQ));
-    gammaKvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(gammaKv));
-    sinGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(sine));
-    cosGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cosine));
-    indexGm.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(index));
-    yGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(y));
-    qrGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(queryRope));
-    kvGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKv));
-    krGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(cacheKr));
-    // Mode11 uses disjoint ping/pong regions, including the DMA output lifetime.
-    pipe.InitBuffer(b0Buf, t.workElements * (t.mode >= 11 ? 4 : 2));
-    b0 = b0Buf.Get<bfloat16_t>();
+  __aicore__ inline void Init(GM_ADDR x, GM_ADDR query, const XMlaLayoutTilingData& tiling) {
+    tilingData = tiling;
+    headMajorGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(x));
+    queryGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(query));
+    // Two disjoint BF16 tiles, each protected until its output DMA completes.
+    pipe.InitBuffer(tileBuffer, tilingData.workElements * sizeof(bfloat16_t) * 2);
+    tileBf16 = tileBuffer.Get<bfloat16_t>();
   }
   __aicore__ inline void Process() {
-    if (t.mode >= 11) {
-      SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
-      SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
-      uint32_t iteration = 0;
-      for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum(), ++iteration) {
-        const int32_t eventId = (iteration & 1u) ? EVENT_ID1 : EVENT_ID0;
-        WaitFlag<HardEvent::MTE3_MTE2>(eventId);
-        RestoreLayout(unit, (iteration & 1u) * t.workElements);
-        SetFlag<HardEvent::MTE3_MTE2>(eventId);
-      }
-      // Consume both tokens before returning to a parent SuperKernel.
-      WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
-      WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
-      return;
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+    uint32_t iteration = 0;
+    for (uint32_t unit = GetBlockIdx(); unit < tilingData.units; unit += GetBlockNum(), ++iteration) {
+      const int32_t eventId = (iteration & 1u) ? EVENT_ID1 : EVENT_ID0;
+      WaitFlag<HardEvent::MTE3_MTE2>(eventId);
+      RestoreLayout(unit, (iteration & 1u) * tilingData.workElements);
+      SetFlag<HardEvent::MTE3_MTE2>(eventId);
     }
-    for (uint32_t unit = GetBlockIdx(); unit < t.units; unit += GetBlockNum()) {
-      Sync<HardEvent::V_MTE2>();
-      Sync<HardEvent::MTE3_MTE2>();
-      RestoreLayout(unit);
-    }
-    Sync<HardEvent::MTE3_S>();
+    // Consume both tokens before returning to a parent SuperKernel.
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
   }
 
  private:
   __aicore__ inline void RestoreLayout(uint32_t unit, uint32_t bufferOffset = 0) {
-    // Read all heads of one row with a strided GM DMA, then write one
-    // contiguous batch-major row. The UB-only mode needs no vector buffers.
-    const uint32_t tileHeads = t.headTile;
-    const uint32_t tiles = (t.heads + tileHeads - 1) / tileHeads;
-    const uint32_t rowTile = t.mode >= 12 ? t.floatElements : 1;
+    // Read a head/row tile, then write batch-major rows using DMA strides.
+    const uint32_t tileHeads = tilingData.headTile;
+    const uint32_t tiles = (tilingData.heads + tileHeads - 1) / tileHeads;
+    const uint32_t rowTile = tilingData.rowTile;
     const uint32_t row = (unit / tiles) * rowTile, head = (unit % tiles) * tileHeads;
-    const uint32_t liveHeads = t.heads - head < tileHeads ? t.heads - head : tileHeads;
-    const uint32_t liveRows = t.rows - row < rowTile ? t.rows - row : rowTile;
+    const uint32_t liveHeads = tilingData.heads - head < tileHeads ? tilingData.heads - head : tileHeads;
+    const uint32_t liveRows = tilingData.rows - row < rowTile ? tilingData.rows - row : rowTile;
     DataCopyExtParams copy{static_cast<uint16_t>(liveHeads), static_cast<uint32_t>(liveRows * KV_RANK * sizeof(bfloat16_t)),
-                           static_cast<uint32_t>((t.rows - liveRows) * KV_RANK * sizeof(bfloat16_t)),
+                           static_cast<uint32_t>((tilingData.rows - liveRows) * KV_RANK * sizeof(bfloat16_t)),
                            static_cast<uint32_t>((rowTile - liveRows) * KV_RANK * sizeof(bfloat16_t) / 32), 0};
     DataCopyPadExtParams<bfloat16_t> noPad{false, 0, 0, 0};
-    auto buffer = b0[bufferOffset];
-    DataCopyPad(buffer, xGm[(head * t.rows + row) * KV_RANK], copy, noPad);
+    auto buffer = tileBf16[bufferOffset];
+    DataCopyPad(buffer, headMajorGm[(head * tilingData.rows + row) * KV_RANK], copy, noPad);
     Sync<HardEvent::MTE2_MTE3>();
-    if (rowTile == 1) {
-      DataCopy(yGm[(static_cast<uint64_t>(row) * t.heads + head) * KV_RANK], buffer, liveHeads * KV_RANK);
-    } else {
-      // DMA strides perform the [head,row,512] -> [row,head,512] mapping.
-      // UB strides are in 32-byte blocks; GM strides above are bytes.
-      DataCopyExtParams write{static_cast<uint16_t>(liveHeads), KV_RANK * sizeof(bfloat16_t),
-                              static_cast<uint32_t>((rowTile - 1) * KV_RANK * sizeof(bfloat16_t) / 32), 0, 0};
-      for (uint32_t r = 0; r < liveRows; ++r)
-        DataCopyPad(yGm[(static_cast<uint64_t>(row + r) * t.heads + head) * KV_RANK], buffer[r * KV_RANK], write);
+    // DMA strides perform the [head,row,512] -> [row,head,512] mapping.
+    // UB strides are in 32-byte blocks; GM strides above are bytes.
+    DataCopyExtParams write{static_cast<uint16_t>(liveHeads), KV_RANK * sizeof(bfloat16_t),
+                           static_cast<uint32_t>((rowTile - 1) * KV_RANK * sizeof(bfloat16_t) / 32), 0, 0};
+    for (uint32_t rowOffset = 0; rowOffset < liveRows; ++rowOffset) {
+      DataCopyPad(queryGm[(static_cast<uint64_t>(row + rowOffset) * tilingData.heads + head) * KV_RANK],
+                  buffer[rowOffset * KV_RANK], write);
     }
   }
-  uint32_t cachedGammaWidth;
   TPipe pipe;
-  TBuf<TPosition::VECCALC> b0Buf, b1Buf, b2Buf, b3Buf, f0Buf, f1Buf, f2Buf, f3Buf, f4Buf, indexBuf;
-  LocalTensor<bfloat16_t> b0, b1, b2, b3;
-  LocalTensor<float> f0, f1, f2, f3, f4;
-  LocalTensor<int64_t> idx;
-  GlobalTensor<bfloat16_t> xGm, auxGm, gammaQGm, gammaKvGm, sinGm, cosGm, yGm, qrGm, kvGm, krGm;
-  GlobalTensor<int64_t> indexGm;
-  XMlaLayoutTilingData t;
+  TBuf<TPosition::VECCALC> tileBuffer;
+  LocalTensor<bfloat16_t> tileBf16;
+  GlobalTensor<bfloat16_t> headMajorGm, queryGm;
+  XMlaLayoutTilingData tilingData;
 };
 }  // namespace
-extern "C" __global__ __aicore__ void x_mla_layout(GM_ADDR x, GM_ADDR aux, GM_ADDR gamma_q, GM_ADDR gamma_kv,
-                                                   GM_ADDR sin, GM_ADDR cos, GM_ADDR index, GM_ADDR y,
-                                                   GM_ADDR query_rope, GM_ADDR kv_cache, GM_ADDR kr_cache,
-                                                   GM_ADDR workspace, GM_ADDR tiling) {
+extern "C" __global__ __aicore__ void x_mla_layout(
+    GM_ADDR x, GM_ADDR query, GM_ADDR workspace, GM_ADDR tiling) {
   KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
   REGISTER_TILING_DEFAULT(XMlaLayoutTilingData);
   GET_TILING_DATA_WITH_STRUCT(XMlaLayoutTilingData, tilingData, tiling);
   XMlaLayoutKernel op;
-  op.Init(x, aux, gamma_q, gamma_kv, sin, cos, index, y, query_rope, kv_cache, kr_cache, tilingData);
+  op.Init(x, query, tilingData);
   op.Process();
 }

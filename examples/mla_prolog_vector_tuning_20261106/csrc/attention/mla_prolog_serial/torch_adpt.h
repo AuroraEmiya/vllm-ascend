@@ -1,73 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
-#ifndef VLLM_ASCEND_X_MLA_VECTOR_TORCH_ADPT_H
-#define VLLM_ASCEND_X_MLA_VECTOR_TORCH_ADPT_H
+#pragma once
+#include <initializer_list>
 #include <torch/extension.h>
 #include "../../aclnn_torch_adapter/op_api_common.h"
 
 namespace vllm_ascend {
-inline void mla_prolog_vector_out(const at::Tensor& x, const at::Tensor& aux, const at::Tensor& gammaQ,
-                                  const at::Tensor& gammaKv, const at::Tensor& sine, const at::Tensor& cosine,
-                                  const at::Tensor& index, int64_t mode, int64_t rows, int64_t heads,
-                                  int64_t cacheSlots, double epsQ, double epsKv, at::Tensor& y, at::Tensor& queryRope,
-                                  at::Tensor& cacheKv, at::Tensor& cacheKr) {
-  TORCH_CHECK(x.device().type() == c10::DeviceType::PrivateUse1, "XMlaVector requires NPU tensors");
-  const at::Tensor* tensors[] = {&x, &aux, &gammaQ, &gammaKv, &sine, &cosine, &y, &queryRope, &cacheKv, &cacheKr};
-  for (const at::Tensor* tensor : tensors) {
-    TORCH_CHECK(tensor->scalar_type() == at::kBFloat16 && tensor->is_contiguous() && tensor->device() == x.device(),
-                "XMlaVector expects contiguous BF16 tensors on one NPU");
+inline void CheckBf16Tensors(const at::Tensor& input, std::initializer_list<const at::Tensor*> tensors) {
+  TORCH_CHECK(input.device().type() == c10::DeviceType::PrivateUse1, "MLA Vector requires NPU tensors");
+  for (const auto* tensor : tensors) {
+    TORCH_CHECK(tensor->scalar_type() == at::kBFloat16 && tensor->is_contiguous() &&
+                    tensor->device() == input.device(),
+                "MLA Vector expects contiguous BF16 tensors on one NPU");
   }
-  TORCH_CHECK(index.scalar_type() == at::kLong && index.is_contiguous() && index.device() == x.device(),
-              "XMlaVector index must be contiguous int64 on the same NPU");
-  EXEC_NPU_CMD(aclnnXMlaVector, x, aux, gammaQ, gammaKv, sine, cosine, index, mode, rows, heads, cacheSlots, epsQ,
-               epsKv, y, queryRope, cacheKv, cacheKr);
 }
-inline void mla_norm_cache_out(const at::Tensor& x, const at::Tensor& aux, const at::Tensor& gammaQ,
-                               const at::Tensor& gammaKv, const at::Tensor& sine, const at::Tensor& cosine,
-                               const at::Tensor& index, int64_t mode, int64_t rows, int64_t heads, int64_t cacheSlots,
-                               double epsQ, double epsKv, at::Tensor& y, at::Tensor& queryRope, at::Tensor& cacheKv,
-                               at::Tensor& cacheKr) {
-  TORCH_CHECK(x.device().type() == c10::DeviceType::PrivateUse1, "XMlaVector requires NPU tensors");
-  const at::Tensor* tensors[] = {&x, &aux, &gammaQ, &gammaKv, &sine, &cosine, &y, &queryRope, &cacheKv, &cacheKr};
-  for (const at::Tensor* tensor : tensors) {
-    TORCH_CHECK(tensor->scalar_type() == at::kBFloat16 && tensor->is_contiguous() && tensor->device() == x.device(),
-                "XMlaVector expects contiguous BF16 tensors on one NPU");
-  }
+
+inline void mla_norm_cache_out(const at::Tensor& x, const at::Tensor& gammaQ, const at::Tensor& gammaKv,
+                               const at::Tensor& sine, const at::Tensor& cosine, const at::Tensor& index,
+                               int64_t rows, int64_t cacheSlots, double epsQ, double epsKv,
+                               at::Tensor& normalizedQ, at::Tensor& cacheKv, at::Tensor& cacheKr) {
+  CheckBf16Tensors(x, {&x, &gammaQ, &gammaKv, &sine, &cosine, &normalizedQ, &cacheKv, &cacheKr});
   TORCH_CHECK(index.scalar_type() == at::kLong && index.is_contiguous() && index.device() == x.device(),
-              "XMlaVector index must be contiguous int64 on the same NPU");
-  EXEC_NPU_CMD(aclnnXMlaNormCache, x, aux, gammaQ, gammaKv, sine, cosine, index, mode, rows, heads, cacheSlots, epsQ,
-               epsKv, y, queryRope, cacheKv, cacheKr);
+              "MLA cache index must be contiguous int64 on the same NPU");
+  EXEC_NPU_CMD(aclnnXMlaNormCache, x, gammaQ, gammaKv, sine, cosine, index,
+               rows, cacheSlots, epsQ, epsKv, normalizedQ, cacheKv, cacheKr);
 }
-inline void mla_split_rope_out(const at::Tensor& x, const at::Tensor& aux, const at::Tensor& gammaQ,
-                               const at::Tensor& gammaKv, const at::Tensor& sine, const at::Tensor& cosine,
-                               const at::Tensor& index, int64_t mode, int64_t rows, int64_t heads, int64_t cacheSlots,
-                               double epsQ, double epsKv, at::Tensor& y, at::Tensor& queryRope, at::Tensor& cacheKv,
-                               at::Tensor& cacheKr) {
-  TORCH_CHECK(x.device().type() == c10::DeviceType::PrivateUse1, "XMlaVector requires NPU tensors");
-  const at::Tensor* tensors[] = {&x, &aux, &gammaQ, &gammaKv, &sine, &cosine, &y, &queryRope, &cacheKv, &cacheKr};
-  for (const at::Tensor* tensor : tensors) {
-    TORCH_CHECK(tensor->scalar_type() == at::kBFloat16 && tensor->is_contiguous() && tensor->device() == x.device(),
-                "XMlaVector expects contiguous BF16 tensors on one NPU");
-  }
-  TORCH_CHECK(index.scalar_type() == at::kLong && index.is_contiguous() && index.device() == x.device(),
-              "XMlaVector index must be contiguous int64 on the same NPU");
-  EXEC_NPU_CMD(aclnnXMlaSplitRope, x, aux, gammaQ, gammaKv, sine, cosine, index, mode, rows, heads, cacheSlots, epsQ,
-               epsKv, y, queryRope, cacheKv, cacheKr);
+
+inline void mla_split_rope_out(const at::Tensor& x, const at::Tensor& sine, const at::Tensor& cosine,
+                               int64_t rows, int64_t heads, at::Tensor& headQ, at::Tensor& queryRope) {
+  CheckBf16Tensors(x, {&x, &sine, &cosine, &headQ, &queryRope});
+  EXEC_NPU_CMD(aclnnXMlaSplitRope, x, sine, cosine, rows, heads, headQ, queryRope);
 }
-inline void mla_layout_out(const at::Tensor& x, const at::Tensor& aux, const at::Tensor& gammaQ,
-                           const at::Tensor& gammaKv, const at::Tensor& sine, const at::Tensor& cosine,
-                           const at::Tensor& index, int64_t mode, int64_t rows, int64_t heads, int64_t cacheSlots,
-                           double epsQ, double epsKv, at::Tensor& y, at::Tensor& queryRope, at::Tensor& cacheKv,
-                           at::Tensor& cacheKr) {
-  TORCH_CHECK(x.device().type() == c10::DeviceType::PrivateUse1, "XMlaVector requires NPU tensors");
-  const at::Tensor* tensors[] = {&x, &aux, &gammaQ, &gammaKv, &sine, &cosine, &y, &queryRope, &cacheKv, &cacheKr};
-  for (const at::Tensor* tensor : tensors) {
-    TORCH_CHECK(tensor->scalar_type() == at::kBFloat16 && tensor->is_contiguous() && tensor->device() == x.device(),
-                "XMlaVector expects contiguous BF16 tensors on one NPU");
-  }
-  TORCH_CHECK(index.scalar_type() == at::kLong && index.is_contiguous() && index.device() == x.device(),
-              "XMlaVector index must be contiguous int64 on the same NPU");
-  EXEC_NPU_CMD(aclnnXMlaLayout, x, aux, gammaQ, gammaKv, sine, cosine, index, mode, rows, heads, cacheSlots, epsQ,
-               epsKv, y, queryRope, cacheKv, cacheKr);
+
+inline void mla_layout_out(const at::Tensor& x, int64_t rows, int64_t heads, at::Tensor& query) {
+  CheckBf16Tensors(x, {&x, &query});
+  EXEC_NPU_CMD(aclnnXMlaLayout, x, rows, heads, query);
 }
 }  // namespace vllm_ascend
-#endif
