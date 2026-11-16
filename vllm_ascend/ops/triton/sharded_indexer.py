@@ -220,27 +220,51 @@ def _pack_sorted_candidates(
 
 
 @triton.jit
-def _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot, K: tl.constexpr, BY_ID: tl.constexpr):
-    # Addresses are clamped and unmasked: the A3 backend rejects loop-carried
-    # masks on indirect loads. Inactive lanes contribute through bounds only.
-    a_lo, a_hi = lower, upper
-    b_lo, b_hi = lower, upper
+def _owner_cached_boundaries(
+    packed_ptr, peer_base, lower, upper, pivot, K: tl.constexpr, TILE: tl.constexpr, BY_ID: tl.constexpr
+):
+    # Binary-search contiguous tile endpoints, then count only the boundary
+    # tile. The cached per-peer interval excludes every previously crossed group.
+    a_lo = tl.zeros(lower.shape, tl.int32)
+    a_hi = tl.cdiv(upper - lower, TILE)
+    b_lo, b_hi = a_lo, a_hi
     while tl.sum(((a_lo < a_hi) | (b_lo < b_hi)).to(tl.int32), 0) > 0:
         a_mid, b_mid = (a_lo + a_hi) // 2, (b_lo + b_hi) // 2
+        a_pos = tl.maximum(0, tl.minimum(lower + (a_mid + 1) * TILE - 1, upper - 1))
+        b_pos = tl.maximum(0, tl.minimum(lower + (b_mid + 1) * TILE - 1, upper - 1))
         if BY_ID:
-            a_value = tl.load(packed_ptr + peer_base + tl.minimum(a_mid, K - 1) * 2)
-            b_value = tl.load(packed_ptr + peer_base + tl.minimum(b_mid, K - 1) * 2)
+            a_value = tl.load(packed_ptr + peer_base + a_pos * 2)
+            b_value = tl.load(packed_ptr + peer_base + b_pos * 2)
             before_a, before_b = a_value < pivot, b_value <= pivot
         else:
-            a_value = tl.load(packed_ptr + peer_base + tl.minimum(a_mid, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
-            b_value = tl.load(packed_ptr + peer_base + tl.minimum(b_mid, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
+            a_value = tl.load(packed_ptr + peer_base + a_pos * 2 + 1).to(tl.float32, bitcast=True)
+            b_value = tl.load(packed_ptr + peer_base + b_pos * 2 + 1).to(tl.float32, bitcast=True)
             before_a, before_b = a_value > pivot, b_value >= pivot
         a_active, b_active = a_lo < a_hi, b_lo < b_hi
         a_lo = tl.where(a_active & before_a, a_mid + 1, a_lo)
         a_hi = tl.where(a_active & ~before_a, a_mid, a_hi)
         b_lo = tl.where(b_active & before_b, b_mid + 1, b_lo)
         b_hi = tl.where(b_active & ~before_b, b_mid, b_hi)
-    return a_lo, b_lo
+    a_start = tl.minimum(lower + a_lo * TILE, upper)
+    b_start = tl.minimum(lower + b_lo * TILE, upper)
+    col = tl.arange(0, TILE)
+    a_pos = a_start[:, None] + col[None, :]
+    b_pos = b_start[:, None] + col[None, :]
+    if BY_ID:
+        a_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(a_pos, K - 1) * 2)
+        b_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(b_pos, K - 1) * 2)
+        before_a, before_b = a_value < pivot, b_value <= pivot
+    else:
+        a_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(a_pos, K - 1) * 2 + 1).to(
+            tl.float32, bitcast=True
+        )
+        b_value = tl.load(packed_ptr + peer_base[:, None] + tl.minimum(b_pos, K - 1) * 2 + 1).to(
+            tl.float32, bitcast=True
+        )
+        before_a, before_b = a_value > pivot, b_value >= pivot
+    a = a_start + tl.sum(((a_pos < upper[:, None]) & before_a).to(tl.int32), 1)
+    b = b_start + tl.sum(((b_pos < upper[:, None]) & before_b).to(tl.int32), 1)
+    return a, b
 
 
 @triton.jit(do_not_specialize=["num_rows"])
@@ -256,13 +280,15 @@ def _merge_owner_prefix(
     BLOCK_RANKS: tl.constexpr,
     PARALLEL_PEERS: tl.constexpr = False,
 ):
-    """Find the global score boundary, then the exact integer ID tie boundary."""
+    """Close this owner's prefix using cached score and exact int32 ID bounds."""
     K: tl.constexpr = 1 << LOG_BLOCK
+    BOUND_TILE: tl.constexpr = min(TILE, 64)
     col = tl.arange(0, K)
     ranks = tl.arange(0, BLOCK_RANKS)
     peer_rank = tl.minimum(ranks, WORLD - 1)
     for row in range(tl.program_id(0), num_rows, tl.num_programs(0)):
         peer_base = (peer_rank * num_rows + row) * K * 2
+        owner_base = (OWNER * num_rows + row) * K * 2
         tail_id = tl.load(packed_ptr + peer_base + (K - 1) * 2)
         tail_score = tl.load(packed_ptr + peer_base + (K - 1) * 2 + 1).to(tl.float32, bitcast=True)
         full = (ranks < WORLD) & (tail_id >= 0) & (tl.abs(tail_score) < float("inf"))
@@ -276,59 +302,64 @@ def _merge_owner_prefix(
             active = valid_lo < valid_hi
             valid_lo = tl.where(active & valid, mid + 1, valid_lo)
             valid_hi = tl.where(active & ~valid, mid, valid_hi)
-        selected_count = tl.sum(tl.where(ranks == OWNER, valid_lo, 0), 0)
-        total = tl.sum(valid_lo, 0)
-        if total > K:
+        own_valid = tl.sum(tl.where(ranks == OWNER, valid_lo, 0), 0)
+        selected_count = own_valid
+        own_tail_pos = tl.maximum(own_valid - 1, 0)
+        own_tail_id = tl.load(packed_ptr + owner_base + own_tail_pos * 2)
+        own_tail = tl.load(packed_ptr + owner_base + own_tail_pos * 2 + 1).to(tl.float32, bitcast=True)
+        own_head = tl.load(packed_ptr + owner_base + 1).to(tl.float32, bitcast=True)
+        head_id = tl.load(packed_ptr + peer_base)
+        head_score = tl.load(packed_ptr + peer_base + 1).to(tl.float32, bitcast=True)
+        valid_peer = (ranks < WORLD) & (ranks != OWNER) & (valid_lo > 0)
+        better_tail = valid_peer & ((head_score > own_tail) | ((head_score == own_tail) & (head_id < own_tail_id)))
+        peer_peak = tl.max(tl.where(valid_peer, head_score, -float("inf")), 0)
+        skewed = peer_peak - own_head > own_head - own_tail
+        if (own_valid > 0) & (tl.sum(valid_lo, 0) > K) & (tl.sum(better_tail.to(tl.int32), 0) > 0):
             lower = tl.zeros((BLOCK_RANKS,), tl.int32)
             upper = valid_lo
+            own_lower, own_upper = tl.full((), 0, tl.int32), own_valid
             found = tl.full((), False, tl.int1)
             iteration = tl.full((), 0, tl.int32)
             a, b = lower, upper
-            while ~found:
-                width = upper - lower
-                max_width = tl.max(width, 0)
-                pivot_rank = tl.min(tl.where(width == max_width, ranks, BLOCK_RANKS), 0)
-                mid = lower + width // 2
-                mid = tl.where(iteration == 0, tl.minimum(upper - 1, K // WORLD), mid)
-                sample = tl.load(packed_ptr + peer_base + tl.maximum(0, tl.minimum(mid, K - 1)) * 2 + 1).to(tl.float32, bitcast=True)
-                pivot = tl.sum(tl.where(ranks == pivot_rank, sample, 0.0), 0)
-                residual = K - tl.sum(lower, 0)
-                # At most WORLD remaining winners: consume the nearest score
-                # group and reuse every peer's already established boundary.
-                if residual <= WORLD:
-                    head = tl.load(packed_ptr + peer_base + tl.minimum(lower, K - 1) * 2 + 1).to(tl.float32, bitcast=True)
-                    pivot = tl.max(tl.where(width > 0, head, -float("inf")), 0)
-                elif tl.sum(width, 0) - residual < WORLD:
-                    tail = tl.load(packed_ptr + peer_base + tl.maximum(upper - 1, 0) * 2 + 1).to(tl.float32, bitcast=True)
-                    pivot = tl.min(tl.where(width > 0, tail, float("inf")), 0)
-                a, b = _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot, K, False)
+            while (own_lower < own_upper) & ~found:
+                pivot_pos = (own_lower + own_upper) // 2
+                if iteration == 0:
+                    pivot_pos = tl.where(skewed, 0, tl.minimum(own_upper - 1, K // WORLD))
+                pivot = tl.load(packed_ptr + owner_base + pivot_pos * 2 + 1).to(tl.float32, bitcast=True)
+                a, b = _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot, K, BOUND_TILE, False)
                 greater, through = tl.sum(a, 0), tl.sum(b, 0)
-                found = (greater < K) & (K <= through)
-                upper = tl.where(K <= greater, a, upper)
-                lower = tl.where(K > through, b, lower)
+                found = (greater < K) & (through >= K)
+                upper = tl.where(greater >= K, a, upper)
+                lower = tl.where(through < K, b, lower)
+                own_lower = tl.sum(tl.where(ranks == OWNER, lower, 0), 0)
+                own_upper = tl.sum(tl.where(ranks == OWNER, upper, 0), 0)
                 iteration += 1
-            selected_count = tl.sum(tl.where(ranks == OWNER, b, 0), 0)
-            if tl.sum(b, 0) > K:
-                lower, upper = a, b
-                found = tl.full((), False, tl.int1)
-                while ~found:
-                    width = upper - lower
-                    max_width = tl.max(width, 0)
-                    pivot_rank = tl.min(tl.where(width == max_width, ranks, BLOCK_RANKS), 0)
-                    mid = lower + width // 2
-                    sample = tl.load(packed_ptr + peer_base + tl.minimum(mid, K - 1) * 2)
-                    pivot_id = tl.sum(tl.where(ranks == pivot_rank, sample, 0), 0)
-                    a, b = _owner_cached_boundaries(packed_ptr, peer_base, lower, upper, pivot_id, K, True)
-                    less, through = tl.sum(a, 0), tl.sum(b, 0)
-                    found = (less < K) & (K <= through)
-                    upper = tl.where(K <= less, a, upper)
-                    lower = tl.where(K > through, b, lower)
+            selected_count = own_lower
+            if found:
                 selected_count = tl.sum(tl.where(ranks == OWNER, b, 0), 0)
-        own_ids = tl.load(packed_ptr + (OWNER * num_rows + row) * K * 2 + col * 2)
+                own_a = tl.sum(tl.where(ranks == OWNER, a, 0), 0)
+                own_b = selected_count
+                if (tl.sum(b, 0) > K) & (own_a < own_b):
+                    lower, upper = a, b
+                    own_lower, own_upper = own_a, own_b
+                    found = tl.full((), False, tl.int1)
+                    while (own_lower < own_upper) & ~found:
+                        mid = (own_lower + own_upper) // 2
+                        pivot_id = tl.load(packed_ptr + owner_base + mid * 2)
+                        a, b = _owner_cached_boundaries(
+                            packed_ptr, peer_base, lower, upper, pivot_id, K, BOUND_TILE, True
+                        )
+                        less, through = tl.sum(a, 0), tl.sum(b, 0)
+                        found = (less < K) & (through >= K)
+                        upper = tl.where(less >= K, a, upper)
+                        lower = tl.where(through < K, b, lower)
+                        own_lower = tl.sum(tl.where(ranks == OWNER, lower, 0), 0)
+                        own_upper = tl.sum(tl.where(ranks == OWNER, upper, 0), 0)
+                    selected_count = tl.where(found, tl.sum(tl.where(ranks == OWNER, b, 0), 0), own_lower)
+        own_ids = tl.load(packed_ptr + owner_base + col * 2)
         block = own_ids // INTERLEAVE
         local = block // WORLD * INTERLEAVE + own_ids - block * INTERLEAVE
-        result = tl.where(col < selected_count, local, -1)
-        tl.store(output_ptr + row * K + col, result)
+        tl.store(output_ptr + row * K + col, tl.where(col < selected_count, local, -1))
 
 
 @triton.jit(do_not_specialize=["ROWS"])
