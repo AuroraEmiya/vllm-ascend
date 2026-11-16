@@ -161,6 +161,7 @@ def main():
                 with torch.npu.graph(graphs[route]):
                     for _ in range(GRAPH_INNER):
                         graph_outputs[route] = public(route)
+                graphs[route].replay()
                 check(graph_outputs[route], route + "_capture")
             report["graph_protocol"] = "32 full entries captured per graph; fixed captured outputs/intermediates; replay omits Python allocation/dispatch; Event interval around replay divided by32, completion synchronized"
             report["graph_inner_calls"] = GRAPH_INNER
