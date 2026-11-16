@@ -15,6 +15,8 @@ CASES = [
     (40, 8, 3, 768, "random"),
     (41, 8, 3, 768, "random"),
     (257, 8, 3, 768, "random"),
+    (48, 8, 3, 768, "random"),
+    (49, 8, 3, 768, "random"),
     (41, 4, 1, 768, "random"),
     (41, 16, 15, 768, "random"),
     (41, 3, 2, 768, "random"),
@@ -23,6 +25,11 @@ CASES = [
     (41, 8, 0, 768, "peer_high"),
     (41, 8, 0, 768, "short"),
     (41, 8, 0, 768, "mixed"),
+    (49, 8, 0, 768, "ties"),
+    (49, 8, 0, 768, "own_high"),
+    (49, 8, 0, 768, "peer_high"),
+    (49, 8, 0, 768, "short"),
+    (49, 8, 0, 768, "mixed"),
     (1, 1, 0, 1, "ties"),
     (49, 17, 16, 1, "ties"),
 ]
@@ -101,7 +108,7 @@ def test_owner_prefix_exact(rows, world, owner, interleave, distribution, edge):
 
 def test_owner_prefix_changed_graph_input():
     torch.npu.set_device(0)
-    rows, world, owner, interleave = 41, 8, 3, 768
+    rows, world, owner, interleave = 49, 8, 3, 768
     packed, expected = make_inputs(rows, world, owner, interleave, "random", False)
     device = packed.npu()
     output = torch.empty((rows, 1, 2048), device="npu", dtype=torch.int32)

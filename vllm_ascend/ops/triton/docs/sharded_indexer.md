@@ -46,3 +46,50 @@ pytest -q tests/ut/attention/test_sharded_indexer.py
 pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_candidates.py
 pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_pre_post.py -k local_lengths
 ```
+
+## Owner-prefix implementation
+
+`merge_packed_candidates` selects the owner-prefix kernel when `topk == 2048`,
+`local_k == topk`, `presorted=True`, `owner_sharded=True`, and `local_rank` names
+a valid rank. Production DCP callers provide rank-major gathered candidate pairs.
+The public wrapper allocates the output unless `out` is supplied; that buffer is
+written in place, including every `-1` padding slot. Inputs are not modified.
+
+One `_merge_owner_prefix` implementation handles both peer-count strategies.
+A3's hardware policy enables parallel peers for `world_size > 4` and more rows
+than vector cores. Other policies and smaller workloads use serial peers. A
+skewed row also uses serial scans within the same kernel. Each sorted peer stops
+after its first partial tile. Bounds always use exact better-candidate counts.
+
+For the first owner candidate (`pivot == 0`), finding at least K better entries
+proves that the owner contributes no winners. Remaining peers may then be
+skipped. For any other pivot the count is completed, because interpolation and
+boundary updates require the exact value. This preserves score-descending,
+ID-ascending ordering, including tied scores and empty owner prefixes.
+
+### Specialization and warmup
+
+`WORLD`, `OWNER`, `INTERLEAVE`, `LOG_BLOCK`, `TILE`, `BLOCK_RANKS` and
+`PARALLEL_PEERS` are compile-time parameters: they determine fixed lane shapes,
+rank geometry, ID conversion or peer strategy. `num_rows` is a runtime integer
+with `do_not_specialize`; row count alone is not an explicit compile-time axis.
+Tensor dtype, alignment classes, compiler options and cache state still matter.
+The two interpolation updates and four spare probes are named search constants.
+
+This PR does not introduce an explicit warmup registration for the owner kernel.
+Uncached variants may compile during their first invocation, including a dummy
+run or graph capture. Serving-phase compilation counts have not been measured.
+
+### Owner-prefix validation
+
+The added test uses independent CPU global Top-K and owner compaction with exact
+integer comparison. It covers real logical row counts 144/152, core boundaries,
+non-power-of-two worlds, ties, skew, short prefixes, invalid entries, and changed
+inputs under graph replay. A3 is the measured optimization target; A5 and model
+accuracy/performance validation remain outstanding for this revision.
+
+```bash
+pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_owner_prefix_adaptive.py
+pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_candidates.py
+pytest -q tests/ut/device/test_hardware_profile.py
+```
