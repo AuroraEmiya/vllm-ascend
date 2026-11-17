@@ -274,6 +274,9 @@ def _merge_owner_prefix(
         # Three interpolation probes are followed by enough bisections for
         # every possible boundary. Estimates affect work only, never selection.
         iteration = tl.full((), 0, tl.int32)
+        if PARALLEL_PEERS:
+            peer_lower = tl.zeros((BLOCK_RANKS,), tl.int32)
+            peer_upper = tl.where((ranks < WORLD) & (ranks != OWNER), K, 0)
         while (lower < upper) & (iteration < LOG_BLOCK + SEARCH_MARGIN):
             pivot_id = tl.load(owner_ptr + pivot * 2).to(tl.float32)
             pivot_score = tl.load(owner_ptr + pivot * 2 + 1).to(tl.float32, bitcast=True)
@@ -300,25 +303,37 @@ def _merge_owner_prefix(
                             count += amount
                             start += SERIAL_TILE
             else:
-                # All peers evaluate this pivot together. Inactive peers stop counting
-                # after their first partial tile; bounded loads still cover all peers.
-                active = (ranks < WORLD) & (ranks != OWNER)
-                start = tl.full((), 0, tl.int32)
-                peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
+                # Counts stay in [peer_lower, peer_upper] for every remaining
+                # owner pivot. All peers retain one shared contiguous tile start.
+                active = (ranks < WORLD) & (ranks != OWNER) & (peer_lower < peer_upper)
+                start = tl.min(tl.where(active, peer_lower, K), 0)
+                peer_count = peer_lower.to(tl.float32)
                 while (start < K) & (tl.sum(active.to(tl.int32), 0) > 0):
-                    offsets = ((peer_rank[:, None] * num_rows + row) * K + start) * 2 + lanes[None, :]
+                    scan_start = tl.minimum(start, K - TILE)
+                    offsets = ((peer_rank[:, None] * num_rows + row) * K + scan_start) * 2 + lanes[None, :]
                     pair = tl.load(packed_ptr + offsets)
                     raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, TILE, 2)))
                     ids = raw_ids.to(tl.float32)
                     scores = bits.to(tl.float32, bitcast=True)
-                    valid = active[:, None] & (ids >= 0) & (tl.abs(scores) < float("inf"))
+                    positions = scan_start + tl.arange(0, TILE)
+                    in_range = (positions[None, :] >= tl.maximum(peer_lower, start)[:, None]) & (
+                        positions[None, :] < peer_upper[:, None]
+                    )
+                    valid = active[:, None] & in_range & (ids >= 0) & (tl.abs(scores) < float("inf"))
                     better = valid & ((scores > pivot_score) | ((scores == pivot_score) & (ids < pivot_id)))
                     amount = tl.sum(better.to(tl.float32), 1)
                     peer_count += amount
-                    active = active & (amount == TILE)
+                    capacity = tl.maximum(0, tl.minimum(start + TILE, peer_upper) - tl.maximum(start, peer_lower))
+                    active = active & (amount == capacity) & (start + TILE < peer_upper)
                     start += TILE
                 count += tl.sum(peer_count, 0)
             selected = pivot_valid & (count < K)
+            if PARALLEL_PEERS:
+                if not skewed:
+                    # A selected owner pivot excludes earlier future pivots;
+                    # rejection excludes later ones. Direction may reverse.
+                    peer_lower = tl.where(selected, peer_count.to(tl.int32), peer_lower)
+                    peer_upper = tl.where(~selected & pivot_valid, peer_count.to(tl.int32), peer_upper)
             # Let S be the number of better peer entries. Monotonicity
             # makes K-S an upper bound after a selected pivot, or a lower
             # bound after a rejected valid pivot. Invalid pivots only
