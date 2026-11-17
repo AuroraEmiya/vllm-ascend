@@ -284,6 +284,13 @@ def _validate_dcp_inputs(
     return num_tokens, num_heads, head_dim, local_scatter_size, replicated_size
 
 
+def _validate_dcp_pack_layout(partial_output: torch.Tensor) -> None:
+    if partial_output.stride(-1) != 1:
+        raise ValueError(
+            f"DCP output/LSE pack requires partial_output.stride(-1) == 1, got {partial_output.stride(-1)}."
+        )
+
+
 def pack_dcp_output_lse(
     partial_output: torch.Tensor,
     softmax_lse: torch.Tensor,
@@ -291,10 +298,14 @@ def pack_dcp_output_lse(
     scatter_dim: int,
     softmax_sum: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Pack output and LSE, or compute LSE from max/sum during packing."""
+    """Pack output with unit feature stride and LSE, optionally from max/sum.
+
+    Token/head and LSE/max/sum strides may be non-contiguous.
+    """
     _, _, head_dim, local_scatter_size, replicated_size = _validate_dcp_inputs(
         partial_output, softmax_lse, dcp_size, scatter_dim
     )
+    _validate_dcp_pack_layout(partial_output)
     if softmax_sum is not None:
         if (
             softmax_sum.shape != softmax_lse.shape
@@ -323,14 +334,9 @@ def _launch_pack_dcp_output_lse(partial_output, softmax_lse, softmax_sum, send, 
     lse_pack_dim = _lse_pack_dim(partial_output.dtype)
     total_rows = num_tokens * num_heads
     grid_size = total_rows if total_rows < vector_cores else vector_cores
-    # Preserve the existing dtype, scatter, feature-size and row-count
-    # eligibility. One rectangular kernel handles all input strides.
-    batched = (
-        partial_output.dtype == torch.bfloat16
-        and scatter_dim == 1
-        and head_dim <= 2048
-        and total_rows >= 8 * vector_cores
-    )
+    # BF16 head scatter uses the same rectangular kernel for every T/H/D.
+    # Other dtype/scatter contracts retain their existing wire-format path.
+    batched = partial_output.dtype == torch.bfloat16 and scatter_dim == 1
     if batched:
         launch(
             _pack_dcp_output_lse_batched_kernel,
@@ -542,6 +548,7 @@ def dcp_a2a_fused_combine(
     """
     # Keep PCP composition and token-scatter paths on the upstream implementation.
     if _use_fast_exchange(partial_output, softmax_lse, scatter_size, scatter_dim, pcp_group, return_lse, defer_combine):
+        _validate_dcp_pack_layout(partial_output)
         if scatter_group is None:
             raise ValueError("SFA output scatter requires an explicit All2All group.")
         return exchange(partial_output, softmax_lse, scatter_group, softmax_sum=softmax_sum).to(partial_output.dtype)

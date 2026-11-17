@@ -31,7 +31,7 @@ scheduling and each layout route owns its kernel-specific selection policy.
 
 | Argument | Shape or type | Description |
 | --- | --- | --- |
-| `partial_output` | `[tokens, heads, head_dim]` | BF16, FP16, or FP32 partial attention output. Arbitrary positive strides are supported. |
+| `partial_output` | `[tokens, heads, head_dim]` | BF16, FP16, or FP32 partial attention output with `stride(-1) == 1`. Token/head strides may be non-contiguous, including head-major layout. |
 | `softmax_lse` | `[tokens, heads, 1]`, FP32 | LSE associated with each partial output row. |
 | `dcp_size` | positive `int` | Number of ranks in the All-to-All scatter group; with PCP, this can be the TP subgroup size. |
 | `scatter_dim` | `0` or `1` | Dimension sharded by the All-to-All: tokens for `0`, heads for `1`. |
@@ -39,10 +39,17 @@ scheduling and each layout route owns its kernel-specific selection policy.
 | `pcp_group_name` | `str` or `None` | Optional PCP group used to gather rank contributions after the scatter. |
 | `return_lse` | `bool` | Append merged LSE to an FP32 output for a later merge. |
 | `defer_combine` | `bool` | Return the packed receive buffer after exchange instead of merging it. |
+| `softmax_sum` | `[tokens, heads, 1]`, FP32 or `None` | Optional softmax sum; when supplied, `softmax_lse` is the maximum and packing computes `maximum + log(sum)`. |
 
 The merged result has the same dtype and `head_dim` as `partial_output`. Its
 token or head dimension is divided by `dcp_size`, according to `scatter_dim`.
 `defer_combine` and `return_lse` cannot both be enabled.
+
+Non-unit `partial_output` feature strides raise `ValueError` before packing or
+communication, including on the fast exchange route. Full contiguity is not
+required. LSE/max and sum may each have independent non-contiguous strides.
+This pack-input restriction does not apply to local contributions passed
+directly to `fused_dcp_lse_combine`.
 
 ## Packed payload
 

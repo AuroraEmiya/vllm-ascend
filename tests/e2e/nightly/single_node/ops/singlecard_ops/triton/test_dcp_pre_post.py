@@ -206,10 +206,10 @@ def test_remap_exact_integer_boundaries_and_graph_replay(rows, topk, world, rank
 @pytest.mark.parametrize("with_local", [False, True])
 def test_output_pack_and_combine_changed_graph_inputs(tokens, world, heads, with_local):
     torch.manual_seed(43)
-    # Both feature and statistics strides differ from the timing fixtures.
-    partial = torch.randn(tokens, world * heads, 1024, dtype=torch.bfloat16, device="npu")[..., ::2]
+    # Head-major output keeps unit feature stride; max/sum have independent strides.
+    partial = torch.randn(world * heads, tokens, 512, dtype=torch.bfloat16, device="npu").transpose(0, 1)
     maxima = torch.randn(world * heads, tokens, 2, device="npu").transpose(0, 1)[..., :1]
-    sums = torch.rand(world * heads, tokens, 2, device="npu").transpose(0, 1)[..., :1] + 0.25
+    sums = torch.rand(world * heads, tokens, 3, device="npu").add_(0.25).transpose(0, 1)[..., :1]
 
     def forward():
         packed = pack_dcp_output_lse(partial, maxima, world, 1, softmax_sum=sums)

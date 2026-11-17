@@ -5,6 +5,7 @@ import pytest
 import torch
 import torch_npu  # noqa: F401
 
+from vllm_ascend.ops.triton.dcp import dcp_a2a
 from vllm_ascend.ops.triton.dcp.dcp_a2a import pack_dcp_output_lse
 
 
@@ -12,6 +13,10 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a import pack_dcp_output_lse
     "tokens,heads,dim,world",
     [
         (1, 64, 512, 8),
+        (2, 96, 512, 8),
+        (16, 96, 512, 8),
+        (3, 7, 2049, 1),
+        (5, 12, 4096, 4),
         (7, 64, 512, 8),
         (114, 64, 512, 8),
         (127, 64, 512, 8),
@@ -37,9 +42,9 @@ from vllm_ascend.ops.triton.dcp.dcp_a2a import pack_dcp_output_lse
         (5, 96, 2047, 8),
     ],
 )
-@pytest.mark.parametrize("layout", ["contiguous", "head_major", "feature_stride"])
+@pytest.mark.parametrize("layout", ["contiguous", "head_major", "lse_stride", "feature_stride"])
 @pytest.mark.parametrize("from_stats", [False, True])
-def test_dcp_pack_payload_and_lse_wire_format(tokens, heads, dim, world, layout, from_stats):
+def test_dcp_pack_payload_and_lse_wire_format(tokens, heads, dim, world, layout, from_stats, monkeypatch):
     torch.npu.set_device(0)
     generator = torch.Generator().manual_seed(20878)
     output = torch.randn((tokens, heads, dim), generator=generator).bfloat16()
@@ -52,11 +57,33 @@ def test_dcp_pack_payload_and_lse_wire_format(tokens, heads, dim, world, layout,
         device_lse = lse.transpose(0, 1).contiguous().npu().transpose(0, 1)
     elif layout == "feature_stride":
         device_output = torch.stack((output, output), -1).npu()[..., 0]
+        device_lse = lse.npu()
+    elif layout == "lse_stride":
+        device_output = output.npu()
         device_lse = torch.stack((lse, lse), -1).npu()[..., 0]
     else:
         device_output, device_lse = output.npu(), lse.npu()
     device_sums = torch.stack((sums, sums), -1).npu()[..., 0] if from_stats else None
+    if layout == "feature_stride":
+        with pytest.raises(ValueError, match=r"partial_output.stride\(-1\) == 1"):
+            pack_dcp_output_lse(device_output, device_lse, world, 1, softmax_sum=device_sums)
+        return
+    if layout == "lse_stride" and from_stats:
+        # Exercise a strided maximum independently of the sum layout.
+        device_sums = sums.npu()
+    assert device_output.stride(-1) == 1
+    launches = []
+    original_launch = dcp_a2a._launch_kernel
+
+    def record(kernel, grid, *inputs, **options):
+        launches.append((kernel.__name__, grid, options))
+        return original_launch(kernel, grid, *inputs, **options)
+
+    monkeypatch.setattr(dcp_a2a, "_launch_kernel", record)
     packed = pack_dcp_output_lse(device_output, device_lse, world, 1, softmax_sum=device_sums)
+    assert len(launches) == 1
+    assert launches[0][0] == "_pack_dcp_output_lse_batched_kernel"
+    assert launches[0][2]["HEAD_DIM"] == dim
     # Undo only the documented head-scatter layout, without using a GPU decoder.
     wire = packed.cpu().reshape(heads, tokens, dim + 4).transpose(0, 1).contiguous()
     assert torch.equal(wire[..., :dim].contiguous().view(torch.int16), output.view(torch.int16))
