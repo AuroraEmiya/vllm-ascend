@@ -276,6 +276,7 @@ def _merge_owner_prefix(
         iteration = tl.full((), 0, tl.int32)
         if PARALLEL_PEERS:
             peer_lower = tl.zeros((BLOCK_RANKS,), tl.int32)
+            peer_count = tl.zeros((BLOCK_RANKS,), tl.float32)
             peer_upper = tl.where((ranks < WORLD) & (ranks != OWNER), K, 0)
         while (lower < upper) & (iteration < LOG_BLOCK + SEARCH_MARGIN):
             pivot_id = tl.load(owner_ptr + pivot * 2).to(tl.float32)
