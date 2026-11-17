@@ -314,7 +314,13 @@ def _merge_owner_prefix(
                 while (start < K) & (tl.sum(active.to(tl.float32), 0) > 0):
                     scan_start = tl.minimum(start, K - TILE)
                     offsets = ((peer_rank[:, None] * num_rows + row) * K + scan_start) * 2 + lanes[None, :]
-                    pair = tl.load(packed_ptr + offsets)
+                    load_positions = (scan_start + lanes // 2).to(tl.float32)
+                    load_mask = active[:, None] & (
+                        load_positions[None, :] >= tl.maximum(peer_lower, start.to(tl.float32))[:, None]
+                    )
+                    load_mask = load_mask & (load_positions[None, :] < peer_upper[:, None])
+                    load_mask = load_mask & (load_positions[None, :] >= 0) & (load_positions[None, :] < K)
+                    pair = tl.load(packed_ptr + offsets, mask=load_mask, other=0)
                     raw_ids, bits = tl.split(tl.reshape(pair, (BLOCK_RANKS, TILE, 2)))
                     ids = raw_ids.to(tl.float32)
                     scores = bits.to(tl.float32, bitcast=True)
