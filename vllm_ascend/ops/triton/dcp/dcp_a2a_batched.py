@@ -162,7 +162,15 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     BLOCK_ROWS: tl.constexpr = 8
     fields = tl.arange(0, 4)
     features = tl.arange(0, BLOCK_D)
-    for start in range(tl.program_id(0) * BLOCK_ROWS, total_rows, tl.num_programs(0) * BLOCK_ROWS):
+    program = tl.program_id(0)
+    programs = tl.num_programs(0)
+    tile_count = tl.cdiv(total_rows, BLOCK_ROWS)
+    tiles_per_program = tile_count // programs
+    extra_tiles = tile_count % programs
+    first_tile = program * tiles_per_program + tl.minimum(program, extra_tiles)
+    stop_tile = first_tile + tiles_per_program + (program < extra_tiles).to(tl.int32)
+    for tile in range(first_tile, stop_tile):
+        start = tile * BLOCK_ROWS
         rows = start + tl.arange(0, BLOCK_ROWS)
         row_mask = rows < total_rows
         tokens = (rows // num_heads).to(tl.int64)
