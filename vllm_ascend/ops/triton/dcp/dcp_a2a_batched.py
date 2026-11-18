@@ -187,7 +187,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE)
         rank_lanes = tl.arange(0, BLOCK_RANKS)[:, None]
         decoded = tl.full((BLOCK_RANKS, BLOCK_ROWS), -float("inf"), tl.float32)
-        for rank in tl.static_range(DCP_SIZE):
+        for rank in tl.range(DCP_SIZE, loop_unroll_factor=1):
             offsets = (rank * recv_stride_rank + bases)[:, None] + (head_dim + fields[None, :]) * recv_stride_d
             packed = tl.load(recv_ptr + offsets, row_mask[:, None], 0.0).to(tl.float32)
             even, odd = tl.split(tl.reshape(packed, (BLOCK_ROWS, 2, 2)))
@@ -205,7 +205,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         mask = row_mask[:, None] & (features < head_dim)[None, :]
         numerator = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
         denominator = tl.zeros((BLOCK_ROWS,), tl.float32)
-        for rank in tl.static_range(DCP_SIZE):
+        for rank in tl.range(DCP_SIZE, loop_unroll_factor=1):
             rank_index = tl.full((1, BLOCK_ROWS), rank, tl.int32)
             lse = tl.reshape(tl.gather(decoded, rank_index, axis=0), (BLOCK_ROWS,))
             weight = tl.exp(lse - maximum)
