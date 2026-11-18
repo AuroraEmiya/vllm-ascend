@@ -156,6 +156,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     total_rows,
     DCP_SIZE: tl.constexpr,
     BLOCK_D: tl.constexpr,
+    WORD_LSE: tl.constexpr,
     HAS_LOCAL: tl.constexpr = True,
 ):
     # One rank contributes one vector of row LSEs and one tile of features.
@@ -186,10 +187,17 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         decoded = ()
         for rank in tl.static_range(DCP_SIZE):
             field_ptr = recv_ptr + (rank * recv_stride_rank + bases) + head_dim * recv_stride_d
-            code = tl.load(field_ptr, row_mask, 0.0).to(tl.float32)
-            hi = tl.load(field_ptr + recv_stride_d, row_mask, 0.0).to(tl.float32)
-            mid = tl.load(field_ptr + 2 * recv_stride_d, row_mask, 0.0).to(tl.float32)
-            lo = tl.load(field_ptr + 3 * recv_stride_d, row_mask, 0.0).to(tl.float32)
+            if WORD_LSE:
+                word = tl.load(field_ptr.to(tl.pointer_type(tl.uint64)), row_mask, 0)
+                code = word.to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
+                hi = (word >> 16).to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
+                mid = (word >> 32).to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
+                lo = (word >> 48).to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
+            else:
+                code = tl.load(field_ptr, row_mask, 0.0).to(tl.float32)
+                hi = tl.load(field_ptr + recv_stride_d, row_mask, 0.0).to(tl.float32)
+                mid = tl.load(field_ptr + 2 * recv_stride_d, row_mask, 0.0).to(tl.float32)
+                lo = tl.load(field_ptr + 3 * recv_stride_d, row_mask, 0.0).to(tl.float32)
             significand = hi * 65536.0 + mid * 256.0 + lo
             bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
             magnitude = tl.where(significand != 0.0, bits, 0).to(tl.float32, bitcast=True)

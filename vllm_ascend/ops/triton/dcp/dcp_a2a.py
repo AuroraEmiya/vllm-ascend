@@ -473,6 +473,7 @@ def _launch_fused_dcp_lse_combine(
             num_heads,
             total_rows,
             DCP_SIZE=dcp_size,
+            WORD_LSE=head_dim % 4 == 0 and recv.data_ptr() % 8 == 0,
             HAS_LOCAL=local_output is not None,
             BLOCK_D=triton.next_power_of_2(head_dim),
             multibuffer=False,
