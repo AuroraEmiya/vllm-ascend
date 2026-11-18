@@ -154,6 +154,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     head_dim,
     num_heads,
     total_rows,
+    recv_words_ptr,
     DCP_SIZE: tl.constexpr,
     BLOCK_D: tl.constexpr,
     WORD_LSE: tl.constexpr,
@@ -188,7 +189,8 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         for rank in tl.static_range(DCP_SIZE):
             field_ptr = recv_ptr + (rank * recv_stride_rank + bases) + head_dim * recv_stride_d
             if WORD_LSE:
-                word = tl.load(field_ptr.to(tl.pointer_type(tl.uint64)), row_mask, 0)
+                word_offsets = (rank * recv_stride_rank + bases + head_dim) // 4
+                word = tl.load(recv_words_ptr + word_offsets, row_mask, 0).to(tl.uint64, bitcast=True)
                 code = word.to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
                 hi = (word >> 16).to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)
                 mid = (word >> 32).to(tl.uint16).to(tl.bfloat16, bitcast=True).to(tl.float32)

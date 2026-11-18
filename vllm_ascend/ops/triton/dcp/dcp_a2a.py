@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.distributed as dist
 from vllm.distributed.parallel_state import GroupCoordinator, _groups
+from vllm.model_executor.warmup.jit_warmup_triton_helper import TritonWarmupTensor
 from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
 
@@ -458,6 +459,15 @@ def _launch_fused_dcp_lse_combine(
         and not return_lse
     )
     if vector_compatible:
+        word_lse = head_dim % 4 == 0 and recv.data_ptr() % 8 == 0
+        words = recv
+        if isinstance(recv, TritonWarmupTensor):
+            if word_lse:
+                words = TritonWarmupTensor(torch.int64, aligned=recv.aligned)
+        elif word_lse:
+            word_lse = recv.storage_offset() % 4 == 0
+            if word_lse:
+                words = recv.view(-1).view(torch.int64)
         launch(
             _fused_dcp_lse_combine_head_scatter_kernel,
             (grid_size,),
@@ -472,8 +482,9 @@ def _launch_fused_dcp_lse_combine(
             head_dim,
             num_heads,
             total_rows,
+            words,
             DCP_SIZE=dcp_size,
-            WORD_LSE=head_dim % 4 == 0 and recv.data_ptr() % 8 == 0,
+            WORD_LSE=word_lse,
             HAS_LOCAL=local_output is not None,
             BLOCK_D=triton.next_power_of_2(head_dim),
             multibuffer=False,
