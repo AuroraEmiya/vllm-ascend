@@ -11,7 +11,7 @@
   2. Launch `min(output_rows, get_vectorcore_num())` Triton programs. The scalar kernel loops over rows, finds the largest valid LSE across the ranks and optional local contribution, then loops over ranks again to accumulate weighted output in FP32.
   3. Ignore non-finite LSE and mask its output before multiplication, preventing a zero weight times NaN from contaminating the result. Normalize once, store the output, and optionally append merged LSE.
   4. For eligible BF16 head-scatter inputs, the row-weighted kernel decodes each LSE once and reuses the rank weights across the feature dimension.
-- **Supported modes**: All device profiles use the same input-based dispatch. The wrapper runs after DCP exchange in eager execution; the enclosing registered custom op supplies a FakeTensor implementation for tracing.
+- **Supported modes**: Input layout determines eligibility for head-scatter combine. The device profile selects its implementation. The wrapper runs after DCP exchange in eager execution; the enclosing registered custom op supplies a FakeTensor implementation for tracing.
 
 ## Parameters
 
@@ -50,10 +50,18 @@ pytest -sv tests/e2e/nightly/single_node/ops/multicard_ops_a3/test_dcp_a2a.py
 
 The wrapper selects the row-weighted kernel for BF16 head scatter with
 `D <= 512`, no returned LSE, and unit local feature stride when a local
-contribution is present. The same rule applies to every row count and device
-profile. Other supported inputs use the scalar kernel.
+contribution is present. This rule applies at every row count. Other supported
+inputs use the scalar kernel.
 
-Each program receives a balanced contiguous row interval. For one row, the kernel
+The A3 kernel processes one row at a time. On A3, multirow LSE loads can lower
+to nested scalar loops. The single-row kernel keeps the compiled loop body
+small. On A5, the multirow kernel loads each LSE field across eight rows and
+all ranks together, then streams each rank's features through a rolled loop.
+This layout improves memory throughput on A5. Each program owns a contiguous
+interval of rows (A3) or eight-row tiles (A5), including a masked final tile.
+Other device profiles retain the single-row implementation.
+
+For each output row, either kernel
 decodes the received LSE fields once and places the optional local LSE in the same
 small rank vector. It computes one maximum, exponent vector and denominator,
 then streams each rank's output into one FP32 feature accumulator. The optional
@@ -70,8 +78,8 @@ rank vector is `next_power_of_2(DCP_SIZE + HAS_LOCAL)`.
 Sizes and strides remain runtime scalars, subject to ordinary Triton integer
 specialization classes; pointer dtype/alignment and compiler options can also
 create variants. Tensor contents and the grid alone do not create variants.
-The existing DCP warmup uses the same production launcher and now includes
-`_fused_dcp_lse_combine_head_scatter_kernel` in its wrapper inventory. Unit tests check
+DCP warmup uses the production launcher and registers the head-scatter kernel
+selected by the active device profile. Unit tests check
 that runtime and warmup select the same combine kernel for small and large row counts. Serving
 compilation counts remain unmeasured.
 
@@ -85,8 +93,8 @@ include invalid and extreme LSE values.
 The test requires at least 99% of BF16 elements to satisfy
 `abs_error <= 2e-5 + 0.004 * abs(reference)`, with maximum absolute error at most
 0.02 and every output finite. Invalid-LSE cases are handled explicitly. These are
-reconstructed inputs, not model payload replay. A5, distributed HCCL and
-model-level validation remain outstanding.
+reconstructed inputs. The A3 and A5 single-card tests exercise the public
+wrapper. Distributed HCCL and model-level performance are outside these measurements.
 
 ```bash
 pytest -q tests/e2e/nightly/single_node/ops/singlecard_ops/triton/test_dcp_a2a.py

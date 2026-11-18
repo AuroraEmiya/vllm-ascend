@@ -292,6 +292,8 @@ class HardwareProfile:
     # Independent, additive contracts queried with ``supports``.
     capabilities: frozenset[HardwareCapability]
 
+    # A5 streams rank contributions across eight output rows per tile.
+    use_multirow_dcp_combine: bool = False
     # NZ mm/addmm is supported, but batched matmul rejects NZ weights.
     requires_2d_nz_linear_input: bool = False
     # A5 uses mixed softmax for compatibility with CANN GBSA packages that
@@ -440,6 +442,7 @@ _HARDWARE_PROFILES: Mapping[AscendDeviceType, HardwareProfile] = MappingProxyTyp
         ),
         AscendDeviceType.A5: HardwareProfile(
             _device_type=AscendDeviceType.A5,
+            use_multirow_dcp_combine=True,
             requires_2d_nz_linear_input=True,
             minimax_m3_gbsa_bf16_softmax_precision=1,
             attention_backend_family=AttentionBackendFamily.STANDARD,

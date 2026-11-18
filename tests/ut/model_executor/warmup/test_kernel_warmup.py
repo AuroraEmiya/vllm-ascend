@@ -15,6 +15,8 @@ from tests.ut.model_executor.warmup.helpers import (
     make_mock_vllm_config,
     make_registry,
 )
+from vllm_ascend.device.hardware import AscendDeviceType
+from vllm_ascend.device.hardware_profile import get_hardware_profile
 from vllm_ascend.ops.triton import rms_norm
 from vllm_ascend.ops.triton.dcp import dcp_a2a, dcp_warmup
 from vllm_ascend.ops.triton.dcp.dcp_jit import DcpJitKernel
@@ -211,9 +213,17 @@ def _dcp_warmup_keys(registry):
     }
 
 
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize(
+    "device_type,dtype,expected",
+    [
+        (AscendDeviceType.A3, torch.bfloat16, dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel),
+        (AscendDeviceType.A5, torch.bfloat16, dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel),
+        (AscendDeviceType.A5, torch.float16, dcp_a2a._fused_dcp_lse_combine_kernel),
+    ],
+)
 @pytest.mark.parametrize("tokens", [1, 33])
-def test_runtime_combine_matches_registered_warmup(dtype, tokens):
+def test_runtime_combine_matches_registered_warmup(device_type, dtype, expected, tokens, monkeypatch):
+    monkeypatch.setattr(dcp_a2a, "get_current_hardware_profile", lambda: get_hardware_profile(device_type))
     heads, dim, ranks = 12, 512, 8
     registry = _register_dcp_warmup(
         dtype=dtype,
@@ -230,13 +240,12 @@ def test_runtime_combine_matches_registered_warmup(dtype, tokens):
     launch = MagicMock()
     dcp_a2a._launch_fused_dcp_lse_combine(recv, output, dim, 1, False, None, None, 24, launch)
     launch.assert_called_once()
-    expected = (
-        dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
-        if dtype == torch.bfloat16
-        else dcp_a2a._fused_dcp_lse_combine_kernel
-    )
     assert launch.call_args.args[0] is expected
-    combine_kernels = {dcp_a2a._fused_dcp_lse_combine_kernel, dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel}
+    combine_kernels = {
+        dcp_a2a._fused_dcp_lse_combine_kernel,
+        dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel,
+        dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel,
+    }
     assert {owner.kernel for owner in registry._registrations} & combine_kernels == {expected}
 
 
@@ -311,7 +320,12 @@ def test_registration_is_scoped_deduplicated_and_allocates_nothing():
         with registry.activate():
             dcp_warmup.register_dcp_warmup(**kwargs)
             dcp_warmup.register_dcp_warmup(**kwargs)
-    expected = {owner.kernel for owner in dcp_warmup._DCP_KERNELS} - {dcp_a2a._fused_dcp_lse_combine_kernel}
+    inactive = (
+        dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
+        if dcp_a2a.get_current_hardware_profile().use_multirow_dcp_combine
+        else dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel
+    )
+    expected = {owner.kernel for owner in dcp_warmup._DCP_KERNELS} - {dcp_a2a._fused_dcp_lse_combine_kernel, inactive}
     assert {owner.kernel for owner in registry._registrations} == expected
     assert all(len(registrations) == 1 for registrations in registry._registrations.values())
     for original, keys in _dcp_warmup_keys(registry).items():

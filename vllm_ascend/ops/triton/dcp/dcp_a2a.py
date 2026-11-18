@@ -8,9 +8,11 @@ from vllm.distributed.parallel_state import GroupCoordinator, _groups
 from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
 
+from vllm_ascend.device.hardware_profile import get_current_hardware_profile
 from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
     _encode_lse_fields,
     _fused_dcp_lse_combine_head_scatter_kernel,
+    _fused_dcp_lse_combine_head_scatter_multirow_kernel,
     _pack_dcp_output_lse_batched_kernel,
 )
 from vllm_ascend.ops.triton.dcp.dcp_jit import _launch_kernel
@@ -458,8 +460,15 @@ def _launch_fused_dcp_lse_combine(
         and not return_lse
     )
     if vector_compatible:
+        # A3 avoids scalar loops over rows. A5 gets higher memory
+        # throughput by loading the LSE fields for eight rows together.
+        kernel = (
+            _fused_dcp_lse_combine_head_scatter_multirow_kernel
+            if get_current_hardware_profile().use_multirow_dcp_combine
+            else _fused_dcp_lse_combine_head_scatter_kernel
+        )
         launch(
-            _fused_dcp_lse_combine_head_scatter_kernel,
+            kernel,
             (grid_size,),
             recv,
             output,
