@@ -156,10 +156,10 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     total_rows,
     DCP_SIZE: tl.constexpr,
     BLOCK_D: tl.constexpr,
+    BLOCK_ROWS: tl.constexpr,
     HAS_LOCAL: tl.constexpr = True,
 ):
     # Normalize across ranks once for each row, then stream feature tiles.
-    BLOCK_ROWS: tl.constexpr = 8
     BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE + HAS_LOCAL)
     ranks = tl.arange(0, BLOCK_RANKS)
     rank_offsets = tl.minimum(ranks, DCP_SIZE - 1) * recv_stride_rank

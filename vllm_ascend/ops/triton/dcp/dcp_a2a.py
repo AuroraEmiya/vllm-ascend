@@ -458,9 +458,11 @@ def _launch_fused_dcp_lse_combine(
         and not return_lse
     )
     if vector_compatible:
+        block_rows = 1 if total_rows <= vector_cores else 8
+        num_tiles = triton.cdiv(total_rows, block_rows)
         launch(
             _fused_dcp_lse_combine_head_scatter_kernel,
-            (grid_size,),
+            (min(vector_cores, num_tiles),),
             recv,
             output,
             local_output if local_output is not None else recv,
@@ -475,6 +477,7 @@ def _launch_fused_dcp_lse_combine(
             DCP_SIZE=dcp_size,
             HAS_LOCAL=local_output is not None,
             BLOCK_D=triton.next_power_of_2(head_dim),
+            BLOCK_ROWS=block_rows,
             multibuffer=False,
         )
         return
