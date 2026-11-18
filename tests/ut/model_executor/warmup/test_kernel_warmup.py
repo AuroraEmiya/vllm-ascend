@@ -251,6 +251,7 @@ def test_runtime_combine_matches_registered_warmup(dtype, tokens):
         (torch.bfloat16, 8, 512, 8, 1, False, True, 4097),
         (torch.bfloat16, 128, 512, 2, 1, True, False, 33),
         (torch.bfloat16, 1, 2, 2, 1, False, False, 33),
+        (torch.bfloat16, 1, 96, 2, 1, False, True, 185),
     ],
 )
 def test_finite_warmup_covers_every_token_count(

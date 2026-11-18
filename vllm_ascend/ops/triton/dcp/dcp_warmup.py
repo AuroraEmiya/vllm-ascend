@@ -67,6 +67,8 @@ def _token_representatives(max_tokens, heads, local_heads, head_dim, vector_core
         2,
         128,
         triton.cdiv(8 * vector_cores, heads),
+        # First token count with one eight-row combine tile per vector core.
+        (8 * (vector_cores - 1)) // local_heads + 1,
         _FULL_PACK_VECTOR_ELEMENTS // local_heads + 1,
         max_tokens + 1,
     }
