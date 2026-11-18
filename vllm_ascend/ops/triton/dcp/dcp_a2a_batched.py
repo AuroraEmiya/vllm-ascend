@@ -3,6 +3,8 @@
 
 from vllm.triton_utils import tl, triton
 
+from vllm_ascend.ops.triton.triton_utils import get_element
+
 
 @triton.jit
 def _encode_lse_fields(lse):
@@ -134,6 +136,12 @@ def _pack_dcp_output_lse_batched_kernel(
 
 
 @triton.jit
+def _accumulate_head_scatter_rank(recv_ptr, offsets, mask, numerator, weight, finite):
+    values = tl.load(recv_ptr + offsets, mask, 0.0).to(tl.float32)
+    return numerator + tl.where(finite, values, 0.0) * weight
+
+
+@triton.jit
 def _fused_dcp_lse_combine_head_scatter_kernel(
     recv_ptr,
     output_ptr,
@@ -178,12 +186,25 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         tokens = (rows // num_heads).to(tl.int64)
         heads = (rows % num_heads).to(tl.int64)
         bases = heads * recv_stride_scatter + tokens * recv_stride_replicated
-        addresses = bases[:, None] + rank_offsets[None, :] + head_dim * recv_stride_d
-        field_mask = row_mask[:, None] & (ranks < DCP_SIZE)[None, :]
-        code = tl.load(recv_ptr + addresses, field_mask, 0.0).to(tl.float32)
-        hi = tl.load(recv_ptr + addresses + recv_stride_d, field_mask, 0.0).to(tl.float32)
-        mid = tl.load(recv_ptr + addresses + 2 * recv_stride_d, field_mask, 0.0).to(tl.float32)
-        lo = tl.load(recv_ptr + addresses + 3 * recv_stride_d, field_mask, 0.0).to(tl.float32)
+        if BLOCK_ROWS == 1:
+            rank_bases = tl.reshape(bases, ()) + rank_offsets
+            packed = tl.load(
+                recv_ptr + rank_bases[:, None] + (head_dim + tl.arange(0, 4)[None, :]) * recv_stride_d,
+                (ranks < DCP_SIZE)[:, None],
+                0.0,
+            ).to(tl.float32)
+            even, odd = tl.split(tl.reshape(packed, (BLOCK_RANKS, 2, 2)))
+            code_1d, mid_1d = tl.split(even)
+            hi_1d, lo_1d = tl.split(odd)
+            code, mid = code_1d[None, :], mid_1d[None, :]
+            hi, lo = hi_1d[None, :], lo_1d[None, :]
+        else:
+            addresses = bases[:, None] + rank_offsets[None, :] + head_dim * recv_stride_d
+            field_mask = row_mask[:, None] & (ranks < DCP_SIZE)[None, :]
+            code = tl.load(recv_ptr + addresses, field_mask, 0.0).to(tl.float32)
+            hi = tl.load(recv_ptr + addresses + recv_stride_d, field_mask, 0.0).to(tl.float32)
+            mid = tl.load(recv_ptr + addresses + 2 * recv_stride_d, field_mask, 0.0).to(tl.float32)
+            lo = tl.load(recv_ptr + addresses + 3 * recv_stride_d, field_mask, 0.0).to(tl.float32)
         significand = hi * 65536.0 + mid * 256.0 + lo
         bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
         magnitude = tl.where(significand != 0.0, bits, 0).to(tl.float32, bitcast=True)
@@ -208,15 +229,29 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         denominator = tl.sum(weights, 1)
         mask = row_mask[:, None] & (features < head_dim)[None, :]
         numerator = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
-        for rank in tl.range(DCP_SIZE, loop_unroll_factor=1):
-            index = tl.full((BLOCK_ROWS, 1), rank, tl.int32)
-            weight = tl.gather(weights, index, axis=1)
-            finite = tl.gather(valid.to(tl.int32), index, axis=1) != 0
-            offsets = (rank * recv_stride_rank + bases)[:, None] + features[None, :] * recv_stride_d
-            values = tl.load(recv_ptr + offsets, mask, 0.0).to(tl.float32)
-            numerator += tl.where(finite, values, 0.0) * weight
+        offsets = bases[:, None] + features[None, :] * recv_stride_d
+        if BLOCK_ROWS == 1:
+            row_weights = tl.reshape(weights, (BLOCK_RANKS,))
+            row_valid = tl.reshape(valid, (BLOCK_RANKS,))
+            for rank in tl.static_range(DCP_SIZE):
+                weight = get_element(row_weights, (rank,))
+                finite = get_element(row_valid, (rank,))
+                numerator = _accumulate_head_scatter_rank(
+                    recv_ptr, rank * recv_stride_rank + offsets, mask, numerator, weight, finite
+                )
+        else:
+            for rank in tl.range(DCP_SIZE, loop_unroll_factor=1):
+                index = tl.full((BLOCK_ROWS, 1), rank, tl.int32)
+                weight = tl.gather(weights, index, axis=1)
+                finite = tl.gather(valid.to(tl.int32), index, axis=1) != 0
+                numerator = _accumulate_head_scatter_rank(
+                    recv_ptr, rank * recv_stride_rank + offsets, mask, numerator, weight, finite
+                )
         if HAS_LOCAL:
-            weight = tl.gather(weights, tl.full((BLOCK_ROWS, 1), DCP_SIZE, tl.int32), axis=1)
+            if BLOCK_ROWS == 1:
+                weight = get_element(row_weights, (DCP_SIZE,))
+            else:
+                weight = tl.gather(weights, tl.full((BLOCK_ROWS, 1), DCP_SIZE, tl.int32), axis=1)
             local_bases = tokens * local_output_stride_t + heads * local_output_stride_h
             local_values = tl.load(
                 local_output_ptr + local_bases[:, None] + features[None, :] * local_output_stride_d, mask, 0.0
