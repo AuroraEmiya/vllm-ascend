@@ -458,7 +458,8 @@ def _launch_fused_dcp_lse_combine(
         and not return_lse
     )
     if vector_compatible:
-        block_rows = 1 if total_rows <= vector_cores else 8
+        # Use wider tiles when there is at least one tile per vector core.
+        block_rows = 8 if triton.cdiv(total_rows, 8) >= vector_cores else 1
         num_tiles = triton.cdiv(total_rows, block_rows)
         launch(
             _fused_dcp_lse_combine_head_scatter_kernel,

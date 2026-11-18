@@ -41,10 +41,11 @@ def test_deferred_exchange_skips_combine(monkeypatch, scatter_size):
     [
         (5, 1, 512, 8, True, False, 1, 5),
         (5, 8, 512, 8, True, False, 1, 40),
-        (41, 1, 512, 8, True, False, 8, 6),
+        (312, 1, 512, 8, True, False, 1, 40),
+        (313, 1, 512, 8, True, False, 8, 40),
         (41, 8, 128, 8, True, False, 8, 40),
-        (41, 7, 128, 3, True, False, 8, 36),
-        (20, 8, 64, 4, False, False, 8, 20),
+        (41, 7, 128, 3, True, False, 1, 40),
+        (20, 8, 64, 4, False, False, 1, 40),
         (41, 12, 512, 8, True, True, 8, 40),
     ],
 )
