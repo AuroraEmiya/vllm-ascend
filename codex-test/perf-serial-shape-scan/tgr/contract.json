@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "operator_id": "text_gated_residual_serial",
+  "status": "PREPARED_NOT_DEPLOYED",
+  "candidate_public_commit": "22152aaf24c8c6d870e6367b5e0ef0338ac7efe4",
+  "candidate_local_commit": "1f72e31d59b5d0df17073b5ddd3ff7dc8a3ccea9",
+  "candidate_tree": "885adca6d90c64b1fe350a2f6498b02dc076b76d",
+  "candidate_module": "vllm_ascend/ops/text_gated_residual.py",
+  "candidate_callable": "TextGatedResidualSerial.__call__",
+  "candidate_route": "direct_staged_v3_nz",
+  "candidate_settings": {"_vector_backend": "staged", "_matrix_backend": "v3_nz", "_sk_pad_down": false},
+  "historical_route_not_used": "compile_superkernel plus outer Graph optimization",
+  "execution_mode": "eager",
+  "protocol": "msprof_application",
+  "baseline_module": "cann_ops_transformer_custom.ops.attention.text_gated_residual.text_gated_residual",
+  "baseline_callable": "torch.ops.cann_ops_transformer.text_gated_residual",
+  "baseline_positional": ["x", "w_down", "w_up"],
+  "baseline_keyword_order": ["w_gate", "channels", "gamma", "eps", "need_backward"],
+  "baseline_identity": {
+    "kind": "installed_binary_release",
+    "source_commit": null,
+    "version": "cann_ops_transformer_custom-1.0.0",
+    "wheel_sha256": "f6534e9f22e72727366ae4c1c2c4a91b53a4a418c0616efca7e22f2532935c04",
+    "run_sha256": "630cbe8ff9fe51a744624b34b590405e29ce344d67188e1f5a342be34074d5ba"
+  },
+  "inputs": {
+    "x": {"shape": ["B", "S", 10240], "dtype": "BF16", "layout": "ND", "contiguous": true},
+    "w_down": {"shape": [320, 10240], "dtype": "BF16", "layout": "ND", "contiguous": true},
+    "w_up": {"shape": [10240, 320], "dtype": "BF16", "layout": "ND", "contiguous": true},
+    "w_gate": {"shape": [4, 10240], "dtype": "BF16", "optional": true},
+    "gamma": {"shape": [10240], "dtype": "FP32", "optional": true, "meaning": "raw gamma; no caller-side plus-one conversion"}
+  },
+  "scalars": {"channels": 4, "eps": "finite positive scalar, default 1e-6", "need_backward": "bool; forward auxiliary outputs only, not an autograd backward test"},
+  "return_positions": [
+    {"name": "mixed", "shape": ["B", "S", 2560], "dtype": "BF16", "enabled": "always"},
+    {"name": "inject", "shape": ["B", "S", 4], "dtype": "BF16", "enabled": "gate"},
+    {"name": "inv_rms", "shape": ["B", "S", 4], "dtype": "FP32", "enabled": "need_backward"},
+    {"name": "down_pre_act", "shape": ["B", "S", 320], "dtype": "BF16", "enabled": "need_backward"},
+    {"name": "up_pre_act", "shape": ["B", "S", 10240], "dtype": "BF16", "enabled": "need_backward"}
+  ],
+  "disabled_return": "typed empty tensor, shape [0]; not None",
+  "mutable_inputs": [],
+  "candidate_static_domain": {"B_min": 1, "S_min": 1, "B_times_S_max": 2048, "B_operational_max": 512, "S_operational_max": 32768, "channels": 4, "branch_hidden": 2560, "low_rank": 320, "dtype": "BF16", "layout": "ND"},
+  "baseline_numeric_domain": "UNKNOWN_DOC_RANGE; public schema defines dimensions but no full finite numeric domain; historically measured [1,2,10240] is a calibration seed, not proof for all candidate shapes",
+  "platforms": {
+    "A3": {"status": "HISTORICAL_BASELINE_EXISTS_CURRENT_DEPLOYMENT_UNVERIFIED", "historical_full_soc": "Ascend910_9362"},
+    "A5": {"status": "UNVERIFIED", "reason": "no current A5 build/loaded binary/paired output proof; missing deployed baseline is SKIP_BASELINE_UNAVAILABLE, not permanent unsupported"}
+  },
+  "precision": {
+    "oracle": "frozen installed public black box; paired equivalence only",
+    "independent_mathematical_accuracy_verified": false,
+    "source": "CANNbot/.agents/skills/ops-precision-standard/references/float_compute.md",
+    "BF16": {"atol": 0.015625, "rtol": 0.015625, "matched_ratio_min": 0.99, "max_abs_error_limit": 1.0},
+    "FP32": {"atol": 0.0000152587890625, "rtol": 0.0009765625, "matched_ratio_min": 0.99, "max_abs_error_limit": 0.01},
+    "all_outputs": "shape, dtype, finite and numeric metrics; all inputs immutable; all five positions checked",
+    "phases": ["direct_call", "repeated_eager_call", "changed_values_same_eager"]
+  },
+  "preparation_excluded_from_target": "fixed-weight packing and BF16 NZ up-weight preparation are caller-owned; all input-dependent work remains in target; weight changes require refresh_weights_ before target",
+  "timing": "10 adjacent ArgMax warmup -> sync -> complete target -> sync; raw device task-duration sum, median of ten in collector",
+  "not_runtime_support_claim": true
+}

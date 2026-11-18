@@ -1,0 +1,33 @@
+{
+  "case_id": "text_gated_residual_serial-14",
+  "operator_id": "text_gated_residual_serial",
+  "scenario": "prefill",
+  "dtype": "BF16",
+  "allowed_execution_modes": [
+    "eager"
+  ],
+  "shape": {
+    "B": 2,
+    "S": 1024,
+    "C": 4,
+    "H": 2560,
+    "R": 320,
+    "dtype": "BF16",
+    "layout": "ND"
+  },
+  "query_lengths": [
+    1024,
+    1024
+  ],
+  "context_lengths": [
+    0,
+    0
+  ],
+  "scalars": {
+    "channels": 4,
+    "eps": 1e-06,
+    "gate": true,
+    "gamma": true,
+    "need_backward": false
+  }
+}
