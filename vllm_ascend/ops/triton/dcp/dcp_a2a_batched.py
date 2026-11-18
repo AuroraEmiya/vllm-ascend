@@ -160,7 +160,6 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
 ):
     # One rank contributes one vector of row LSEs and one tile of features.
     BLOCK_ROWS: tl.constexpr = 8
-    fields = tl.arange(0, 4)
     features = tl.arange(0, BLOCK_D)
     program = tl.program_id(0)
     programs = tl.num_programs(0)
@@ -186,11 +185,11 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
 
         decoded = ()
         for rank in tl.static_range(DCP_SIZE):
-            offsets = (rank * recv_stride_rank + bases)[:, None] + (head_dim + fields[None, :]) * recv_stride_d
-            packed = tl.load(recv_ptr + offsets, row_mask[:, None], 0.0).to(tl.float32)
-            even, odd = tl.split(tl.reshape(packed, (BLOCK_ROWS, 2, 2)))
-            code, mid = tl.split(even)
-            hi, lo = tl.split(odd)
+            field_ptr = recv_ptr + (rank * recv_stride_rank + bases) + head_dim * recv_stride_d
+            code = tl.load(field_ptr, row_mask, 0.0).to(tl.float32)
+            hi = tl.load(field_ptr + recv_stride_d, row_mask, 0.0).to(tl.float32)
+            mid = tl.load(field_ptr + 2 * recv_stride_d, row_mask, 0.0).to(tl.float32)
+            lo = tl.load(field_ptr + 3 * recv_stride_d, row_mask, 0.0).to(tl.float32)
             significand = hi * 65536.0 + mid * 256.0 + lo
             bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
             magnitude = tl.where(significand != 0.0, bits, 0).to(tl.float32, bitcast=True)
