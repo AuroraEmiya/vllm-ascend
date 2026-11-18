@@ -37,17 +37,18 @@ def test_deferred_exchange_skips_combine(monkeypatch, scatter_size):
 
 
 @pytest.mark.parametrize(
-    "tokens,heads,dim,world,has_local,head_major",
+    "tokens,heads,dim,world,has_local,head_major,block_rows,programs",
     [
-        (5, 1, 512, 8, True, False),
-        (5, 8, 512, 8, True, False),
-        (41, 8, 128, 8, True, False),
-        (41, 7, 128, 3, True, False),
-        (20, 8, 64, 4, False, False),
-        (41, 12, 512, 8, True, True),
+        (5, 1, 512, 8, True, False, 1, 5),
+        (5, 8, 512, 8, True, False, 1, 40),
+        (41, 1, 512, 8, True, False, 8, 6),
+        (41, 8, 128, 8, True, False, 8, 40),
+        (41, 7, 128, 3, True, False, 8, 36),
+        (20, 8, 64, 4, False, False, 8, 20),
+        (41, 12, 512, 8, True, True, 8, 40),
     ],
 )
-def test_combine_launch_supports_generic_rows(tokens, heads, dim, world, has_local, head_major):
+def test_combine_launch_supports_generic_rows(tokens, heads, dim, world, has_local, head_major, block_rows, programs):
     recv = torch.empty(world, heads, tokens, dim + 4, dtype=torch.bfloat16, device="meta")
     output = torch.empty(tokens, heads, dim, dtype=torch.bfloat16, device="meta")
     local = (output.transpose(0, 1).contiguous().transpose(0, 1) if head_major else output) if has_local else None
@@ -57,7 +58,8 @@ def test_combine_launch_supports_generic_rows(tokens, heads, dim, world, has_loc
     launch.assert_called_once()
     kernel, grid, *args = launch.call_args.args
     assert kernel is dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
-    assert grid == (min(tokens * heads, 40),)
+    assert grid == (programs,)
+    assert launch.call_args.kwargs["BLOCK_ROWS"] == block_rows
     assert args[4:7] == list(local.stride() if has_local else (0, 0, 0))
 
 
