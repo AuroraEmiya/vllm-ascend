@@ -151,7 +151,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     output_stride_t,
     output_stride_h,
     output_stride_d,
-    head_dim,
+    head_dim: tl.constexpr,
     num_heads,
     total_rows,
     DCP_SIZE: tl.constexpr,
