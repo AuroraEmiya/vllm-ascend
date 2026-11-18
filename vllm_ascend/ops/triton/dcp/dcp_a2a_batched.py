@@ -159,7 +159,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     HAS_LOCAL: tl.constexpr = True,
 ):
     # One rank contributes one vector of row LSEs and one tile of features.
-    BLOCK_ROWS: tl.constexpr = 8
+    BLOCK_ROWS: tl.constexpr = 1
     fields = tl.arange(0, 4)
     features = tl.arange(0, BLOCK_D)
     program = tl.program_id(0)
