@@ -159,7 +159,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     HAS_LOCAL: tl.constexpr = True,
 ):
     # One rank contributes one vector of row LSEs and one tile of features.
-    BLOCK_ROWS: tl.constexpr = 1
+    BLOCK_ROWS: tl.constexpr = 8
     fields = tl.arange(0, 4)
     features = tl.arange(0, BLOCK_D)
     program = tl.program_id(0)
@@ -184,7 +184,9 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
             local_valid = (local_lse == local_lse) & (local_lse != float("inf")) & (local_lse != -float("inf"))
             maximum = tl.where(local_valid, local_lse, -float("inf"))
 
-        decoded = ()
+        BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE)
+        rank_lanes = tl.arange(0, BLOCK_RANKS)[:, None]
+        decoded = tl.full((BLOCK_RANKS, BLOCK_ROWS), -float("inf"), tl.float32)
         for rank in tl.static_range(DCP_SIZE):
             offsets = (rank * recv_stride_rank + bases)[:, None] + (head_dim + fields[None, :]) * recv_stride_d
             packed = tl.load(recv_ptr + offsets, row_mask[:, None], 0.0).to(tl.float32)
@@ -197,14 +199,15 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
             lse = tl.where(code < 0.0, -magnitude, magnitude)
             valid = (code != 0.0) & (lse == lse) & (lse != float("inf")) & (lse != -float("inf"))
             lse = tl.where(valid, lse, -float("inf"))
-            decoded += (lse,)
+            decoded = tl.where(rank_lanes == rank, lse[None, :], decoded)
             maximum = tl.maximum(maximum, lse)
         maximum = tl.where(maximum != -float("inf"), maximum, 0.0)
         mask = row_mask[:, None] & (features < head_dim)[None, :]
         numerator = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
         denominator = tl.zeros((BLOCK_ROWS,), tl.float32)
         for rank in tl.static_range(DCP_SIZE):
-            lse = decoded[rank]
+            rank_index = tl.full((1, BLOCK_ROWS), rank, tl.int32)
+            lse = tl.reshape(tl.gather(decoded, rank_index, axis=0), (BLOCK_ROWS,))
             weight = tl.exp(lse - maximum)
             offsets = (rank * recv_stride_rank + bases)[:, None] + features[None, :] * recv_stride_d
             values = tl.load(recv_ptr + offsets, mask, 0.0).to(tl.float32)
