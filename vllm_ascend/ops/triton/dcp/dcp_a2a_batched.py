@@ -162,9 +162,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     BLOCK_ROWS: tl.constexpr = 8
     BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE + HAS_LOCAL)
     ranks = tl.arange(0, BLOCK_RANKS)
-    field_lanes = tl.arange(0, BLOCK_RANKS * 4)
-    field_ranks = field_lanes // 4
-    rank_offsets = tl.minimum(field_ranks, DCP_SIZE - 1) * recv_stride_rank
+    rank_offsets = tl.minimum(ranks, DCP_SIZE - 1) * recv_stride_rank
     features = tl.arange(0, BLOCK_D)
     program = tl.program_id(0)
     programs = tl.num_programs(0)
@@ -180,13 +178,12 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
         tokens = (rows // num_heads).to(tl.int64)
         heads = (rows % num_heads).to(tl.int64)
         bases = heads * recv_stride_scatter + tokens * recv_stride_replicated
-        addresses = bases[:, None] + rank_offsets[None, :] + (head_dim + field_lanes % 4)[None, :] * recv_stride_d
-        packed = tl.load(recv_ptr + addresses, row_mask[:, None] & (field_ranks < DCP_SIZE)[None, :], 0.0).to(
-            tl.float32
-        )
-        even, odd = tl.split(tl.reshape(packed, (BLOCK_ROWS, BLOCK_RANKS, 2, 2)))
-        code, mid = tl.split(even)
-        hi, lo = tl.split(odd)
+        addresses = bases[:, None] + rank_offsets[None, :] + head_dim * recv_stride_d
+        field_mask = row_mask[:, None] & (ranks < DCP_SIZE)[None, :]
+        code = tl.load(recv_ptr + addresses, field_mask, 0.0).to(tl.float32)
+        hi = tl.load(recv_ptr + addresses + recv_stride_d, field_mask, 0.0).to(tl.float32)
+        mid = tl.load(recv_ptr + addresses + 2 * recv_stride_d, field_mask, 0.0).to(tl.float32)
+        lo = tl.load(recv_ptr + addresses + 3 * recv_stride_d, field_mask, 0.0).to(tl.float32)
         significand = hi * 65536.0 + mid * 256.0 + lo
         bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
         magnitude = tl.where(significand != 0.0, bits, 0).to(tl.float32, bitcast=True)
