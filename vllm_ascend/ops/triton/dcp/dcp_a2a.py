@@ -10,6 +10,7 @@ from vllm.utils.torch_utils import direct_register_custom_op
 
 from vllm_ascend.device.hardware_profile import get_current_hardware_profile
 from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
+    _decode_lse_significand,
     _encode_lse_fields,
     _fused_dcp_lse_combine_head_scatter_kernel,
     _pack_dcp_output_lse_batched_kernel,
@@ -170,7 +171,7 @@ def _fused_dcp_lse_combine_kernel(
                 sign = tl.where(exponent_code < 0.0, -1.0, 1.0)
                 exponent_magnitude = tl.where(exponent_code < 0.0, -exponent_code, exponent_code)
                 safe_exponent = exponent_magnitude - 128.0
-                significand = significand_hi * 65536.0 + significand_mid * 256.0 + significand_lo
+                significand = _decode_lse_significand(significand_hi, significand_mid, significand_lo)
                 lse = sign * significand * tl.exp2(safe_exponent - 23.0)
                 valid_lse = packed_valid & (lse == lse) & (lse != float("inf")) & (lse != -float("inf"))
             lse_max = tl.maximum(lse_max, tl.where(valid_lse, lse, -float("inf")))
@@ -198,7 +199,7 @@ def _fused_dcp_lse_combine_kernel(
                 sign = tl.where(exponent_code < 0.0, -1.0, 1.0)
                 exponent_magnitude = tl.where(exponent_code < 0.0, -exponent_code, exponent_code)
                 safe_exponent = exponent_magnitude - 128.0
-                significand = significand_hi * 65536.0 + significand_mid * 256.0 + significand_lo
+                significand = _decode_lse_significand(significand_hi, significand_mid, significand_lo)
                 lse = sign * significand * tl.exp2(safe_exponent - 23.0)
                 valid_lse = packed_valid & (lse == lse) & (lse != float("inf")) & (lse != -float("inf"))
             weight = tl.where(valid_lse, tl.exp(lse - safe_lse_max), 0.0)

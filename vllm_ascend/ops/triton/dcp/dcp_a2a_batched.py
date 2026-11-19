@@ -11,6 +11,13 @@ _MULTI_ROW = tl.constexpr(DCP_HEAD_SCATTER_MULTI_ROW)
 
 
 @triton.jit
+def _decode_lse_significand(hi, mid, lo):
+    BYTE_RADIX: tl.constexpr = 256.0
+    HIGH_BYTE_SCALE: tl.constexpr = BYTE_RADIX * BYTE_RADIX
+    return hi * HIGH_BYTE_SCALE + mid * BYTE_RADIX + lo
+
+
+@triton.jit
 def _encode_lse_fields(lse):
     """Encode the existing four-field wire format without transcendental ops."""
     bits = lse.to(tl.int32, bitcast=True)
@@ -220,7 +227,7 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
             significand_lo = tl.load(recv_ptr + addresses + 3 * recv_stride_d, field_mask, 0.0).to(tl.float32)
             numerator = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
 
-        significand = significand_hi * 65536.0 + significand_mid * 256.0 + significand_lo
+        significand = _decode_lse_significand(significand_hi, significand_mid, significand_lo)
         bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
         magnitude = tl.where(significand != 0.0, bits, 0).to(tl.float32, bitcast=True)
         lses = tl.where(code < 0.0, -magnitude, magnitude)
