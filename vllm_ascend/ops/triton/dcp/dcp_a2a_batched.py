@@ -136,6 +136,12 @@ def _pack_dcp_output_lse_batched_kernel(
 
 
 @triton.jit
+def _accumulate_dcp_output(ptr, mask, valid, weight, numerator):
+    values = tl.load(ptr, mask, 0.0).to(tl.float32)
+    return numerator + tl.where(valid, values, 0.0) * weight
+
+
+@triton.jit
 def _fused_dcp_lse_combine_head_scatter_kernel(
     recv_ptr,
     output_ptr,
@@ -158,107 +164,11 @@ def _fused_dcp_lse_combine_head_scatter_kernel(
     total_rows,
     DCP_SIZE: tl.constexpr,
     BLOCK_D: tl.constexpr,
+    MODE: tl.constexpr,
     HAS_LOCAL: tl.constexpr = True,
 ):
-    # Follow the existing SFA merge pattern: rank weights stay a tiny vector,
-    # get_element feeds one coefficient to the continuous D accumulator.
-    # The wire format stores an exponent code and three base-256 significand bytes.
-    LSE_FIELDS: tl.constexpr = 4
-    FP32_FRACTION_BITS: tl.constexpr = 23
-    BYTE_RADIX: tl.constexpr = 256.0
-    HIGH_BYTE_SCALE: tl.constexpr = 65536.0
-    BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE + HAS_LOCAL)
-    ranks = tl.arange(0, BLOCK_RANKS)
-    bounded_ranks = tl.minimum(ranks, DCP_SIZE - 1)
-    d = tl.arange(0, BLOCK_D)
-    # Consecutive row intervals preserve single ownership and balanced counts.
-    program = tl.program_id(0)
-    programs = tl.num_programs(0)
-    quotient = total_rows // programs
-    remainder = total_rows % programs
-    start = program * quotient + tl.minimum(program, remainder)
-    stop = start + quotient + (program < remainder).to(tl.int32)
-    for row in range(start, stop):
-        token = (row // num_heads).to(tl.int64)
-        head = (row % num_heads).to(tl.int64)
-        bases = bounded_ranks * recv_stride_rank + head * recv_stride_scatter + token * recv_stride_replicated
-        packed = tl.load(
-            recv_ptr + bases[:, None] + (head_dim + tl.arange(0, LSE_FIELDS)[None, :]) * recv_stride_d,
-            (ranks < DCP_SIZE)[:, None],
-            0.0,
-        ).to(tl.float32)
-        even, odd = tl.split(tl.reshape(packed, (BLOCK_RANKS, 2, 2)))
-        code, mid = tl.split(even)
-        hi, lo = tl.split(odd)
-        significand = hi * HIGH_BYTE_SCALE + mid * BYTE_RADIX + lo
-        lse_bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << FP32_FRACTION_BITS) + significand.to(tl.int32)
-        lse_bits = tl.where(significand != 0.0, lse_bits, 0)
-        lses = tl.where(code < 0.0, -1.0, 1.0) * lse_bits.to(tl.float32, bitcast=True)
-        valid = (ranks < DCP_SIZE) & (code != 0.0) & (lses == lses) & (lses != float("inf")) & (lses != -float("inf"))
-        if HAS_LOCAL:
-            local_lse = tl.load(local_lse_ptr + token * local_lse_stride_t + head * local_lse_stride_h).to(tl.float32)
-            local_valid = (local_lse == local_lse) & (local_lse != float("inf")) & (local_lse != -float("inf"))
-            lses = tl.where(ranks == DCP_SIZE, local_lse, lses)
-            valid = tl.where(ranks == DCP_SIZE, local_valid, valid)
-        maximum = tl.max(tl.where(valid, lses, -float("inf")), 0)
-        maximum = tl.where(maximum != -float("inf"), maximum, 0.0)
-        weights = tl.where(valid, tl.exp(lses - maximum), 0.0)
-        denominator = tl.sum(weights, 0)
-        numerator = tl.zeros((BLOCK_D,), tl.float32)
-        for rank in tl.static_range(DCP_SIZE):
-            weight = get_element(weights, (rank,))
-            finite = get_element(valid, (rank,))
-            offsets = (
-                rank * recv_stride_rank
-                + head * recv_stride_scatter
-                + token * recv_stride_replicated
-                + d * recv_stride_d
-            )
-            values = tl.load(recv_ptr + offsets, d < head_dim, 0.0).to(tl.float32)
-            numerator += tl.where(finite, values, 0.0) * weight
-        if HAS_LOCAL:
-            local_weight = get_element(weights, (DCP_SIZE,))
-            local_values = tl.load(
-                local_output_ptr
-                + token * local_output_stride_t
-                + head * local_output_stride_h
-                + d * local_output_stride_d,
-                d < head_dim,
-                0.0,
-            ).to(tl.float32)
-            numerator += tl.where(local_valid, local_values, 0.0) * local_weight
-        result = numerator / tl.where(denominator > 0.0, denominator, 1.0)
-        offsets = token * output_stride_t + head * output_stride_h + d * output_stride_d
-        tl.store(output_ptr + offsets, result, d < head_dim)
-
-
-@triton.jit
-def _fused_dcp_lse_combine_head_scatter_multirow_kernel(
-    recv_ptr,
-    output_ptr,
-    local_output_ptr,
-    local_lse_ptr,
-    local_output_stride_t,
-    local_output_stride_h,
-    local_output_stride_d,
-    local_lse_stride_t,
-    local_lse_stride_h,
-    recv_stride_rank,
-    recv_stride_scatter,
-    recv_stride_replicated,
-    recv_stride_d,
-    output_stride_t,
-    output_stride_h,
-    output_stride_d,
-    head_dim,
-    num_heads,
-    total_rows,
-    DCP_SIZE: tl.constexpr,
-    BLOCK_D: tl.constexpr,
-    HAS_LOCAL: tl.constexpr = True,
-):
-    # Normalize across ranks once for each row, then stream feature tiles.
-    BLOCK_ROWS: tl.constexpr = 8
+    # MODE 0 keeps scalar row addresses on A3. MODE 1 tiles eight rows on A5.
+    BLOCK_ROWS: tl.constexpr = 1 if MODE == 0 else 8
     BLOCK_RANKS: tl.constexpr = triton.next_power_of_2(DCP_SIZE + HAS_LOCAL)
     ranks = tl.arange(0, BLOCK_RANKS)
     rank_offsets = tl.minimum(ranks, DCP_SIZE - 1) * recv_stride_rank
@@ -266,61 +176,92 @@ def _fused_dcp_lse_combine_head_scatter_multirow_kernel(
     program = tl.program_id(0)
     programs = tl.num_programs(0)
     tile_count = tl.cdiv(total_rows, BLOCK_ROWS)
-    tiles_per_program = tile_count // programs
-    extra_tiles = tile_count % programs
-    first_tile = program * tiles_per_program + tl.minimum(program, extra_tiles)
-    stop_tile = first_tile + tiles_per_program + (program < extra_tiles).to(tl.int32)
-    for tile in range(first_tile, stop_tile):
-        start = tile * BLOCK_ROWS
-        rows = start + tl.arange(0, BLOCK_ROWS)
-        row_mask = rows < total_rows
+    quotient = tile_count // programs
+    remainder = tile_count % programs
+    first = program * quotient + tl.minimum(program, remainder)
+    stop = first + quotient + (program < remainder).to(tl.int32)
+    for tile in range(first, stop):
+        if MODE == 0:
+            rows = tile
+        else:
+            rows = tile * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)
         tokens = (rows // num_heads).to(tl.int64)
         heads = (rows % num_heads).to(tl.int64)
         bases = heads * recv_stride_scatter + tokens * recv_stride_replicated
-        addresses = bases[:, None] + rank_offsets[None, :] + head_dim * recv_stride_d
-        field_mask = row_mask[:, None] & (ranks < DCP_SIZE)[None, :]
-        code = tl.load(recv_ptr + addresses, field_mask, 0.0).to(tl.float32)
-        hi = tl.load(recv_ptr + addresses + recv_stride_d, field_mask, 0.0).to(tl.float32)
-        mid = tl.load(recv_ptr + addresses + 2 * recv_stride_d, field_mask, 0.0).to(tl.float32)
-        lo = tl.load(recv_ptr + addresses + 3 * recv_stride_d, field_mask, 0.0).to(tl.float32)
+        if MODE == 0:
+            addresses = rank_offsets + heads * recv_stride_scatter + tokens * recv_stride_replicated
+            packed = tl.load(
+                recv_ptr + addresses[:, None] + (head_dim + tl.arange(0, 4)[None, :]) * recv_stride_d,
+                (ranks < DCP_SIZE)[:, None],
+                0.0,
+            ).to(tl.float32)
+            even, odd = tl.split(tl.reshape(packed, (BLOCK_RANKS, 2, 2)))
+            code, mid = tl.split(even)
+            hi, lo = tl.split(odd)
+            rank_ids = ranks
+            feature_ids = features
+            mask = features < head_dim
+            feature_bases = bases
+            numerator = tl.zeros((BLOCK_D,), tl.float32)
+        else:
+            rank_ids = ranks[None, :]
+            feature_ids = features[None, :]
+            row_mask = rows < total_rows
+            mask = row_mask[:, None] & (feature_ids < head_dim)
+            feature_bases = bases[:, None]
+            addresses = feature_bases + rank_offsets[None, :] + head_dim * recv_stride_d
+            field_mask = row_mask[:, None] & (rank_ids < DCP_SIZE)
+            code = tl.load(recv_ptr + addresses, field_mask, 0.0).to(tl.float32)
+            hi = tl.load(recv_ptr + addresses + recv_stride_d, field_mask, 0.0).to(tl.float32)
+            mid = tl.load(recv_ptr + addresses + 2 * recv_stride_d, field_mask, 0.0).to(tl.float32)
+            lo = tl.load(recv_ptr + addresses + 3 * recv_stride_d, field_mask, 0.0).to(tl.float32)
+            numerator = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
+
         significand = hi * 65536.0 + mid * 256.0 + lo
         bits = (tl.maximum(tl.abs(code).to(tl.int32) - 2, 0) << 23) + significand.to(tl.int32)
         magnitude = tl.where(significand != 0.0, bits, 0).to(tl.float32, bitcast=True)
         lses = tl.where(code < 0.0, -magnitude, magnitude)
-        valid = (
-            (ranks < DCP_SIZE)[None, :]
-            & (code != 0.0)
-            & (lses == lses)
-            & (lses != float("inf"))
-            & (lses != -float("inf"))
-        )
+        valid = (rank_ids < DCP_SIZE) & (code != 0.0) & (lses == lses) & (tl.abs(lses) != float("inf"))
         if HAS_LOCAL:
-            local_lse = tl.load(
-                local_lse_ptr + tokens * local_lse_stride_t + heads * local_lse_stride_h, row_mask, 0.0
-            ).to(tl.float32)
-            local_valid = (local_lse == local_lse) & (local_lse != float("inf")) & (local_lse != -float("inf"))
-            lses = tl.where((ranks == DCP_SIZE)[None, :], local_lse[:, None], lses)
-            valid = tl.where((ranks == DCP_SIZE)[None, :], local_valid[:, None], valid)
-        maximum = tl.max(tl.where(valid, lses, -float("inf")), 1)
+            lse_ptr = local_lse_ptr + tokens * local_lse_stride_t + heads * local_lse_stride_h
+            if MODE == 0:
+                local_lse = tl.load(lse_ptr).to(tl.float32)
+            else:
+                local_lse = tl.load(lse_ptr, row_mask, 0.0).to(tl.float32)[:, None]
+            local_valid = (local_lse == local_lse) & (tl.abs(local_lse) != float("inf"))
+            lses = tl.where(rank_ids == DCP_SIZE, local_lse, lses)
+            valid = tl.where(rank_ids == DCP_SIZE, local_valid, valid)
+        maximum = tl.max(tl.where(valid, lses, -float("inf")), -1)
         maximum = tl.where(maximum != -float("inf"), maximum, 0.0)
-        weights = tl.where(valid, tl.exp(lses - maximum[:, None]), 0.0)
-        denominator = tl.sum(weights, 1)
-        mask = row_mask[:, None] & (features < head_dim)[None, :]
-        numerator = tl.zeros((BLOCK_ROWS, BLOCK_D), tl.float32)
-        for rank in tl.range(DCP_SIZE, loop_unroll_factor=1):
-            index = tl.full((BLOCK_ROWS, 1), rank, tl.int32)
-            weight = tl.gather(weights, index, axis=1)
-            finite = tl.gather(valid.to(tl.int32), index, axis=1) != 0
-            offsets = (rank * recv_stride_rank + bases)[:, None] + features[None, :] * recv_stride_d
-            values = tl.load(recv_ptr + offsets, mask, 0.0).to(tl.float32)
-            numerator += tl.where(finite, values, 0.0) * weight
+        if MODE == 1:
+            maximum = maximum[:, None]
+        weights = tl.where(valid, tl.exp(lses - maximum), 0.0)
+        denominator = tl.sum(weights, -1)
+        if MODE == 0:
+            for rank in tl.static_range(DCP_SIZE):
+                weight = get_element(weights, (rank,))
+                finite = get_element(valid, (rank,))
+                offsets = rank * recv_stride_rank + feature_bases + feature_ids * recv_stride_d
+                numerator = _accumulate_dcp_output(recv_ptr + offsets, mask, finite, weight, numerator)
+        else:
+            for rank in tl.range(DCP_SIZE, loop_unroll_factor=1):
+                index = tl.full((BLOCK_ROWS, 1), rank, tl.int32)
+                weight = tl.gather(weights, index, axis=1)
+                finite = tl.gather(valid.to(tl.int32), index, axis=1) != 0
+                offsets = rank * recv_stride_rank + feature_bases + feature_ids * recv_stride_d
+                numerator = _accumulate_dcp_output(recv_ptr + offsets, mask, finite, weight, numerator)
         if HAS_LOCAL:
-            weight = tl.gather(weights, tl.full((BLOCK_ROWS, 1), DCP_SIZE, tl.int32), axis=1)
             local_bases = tokens * local_output_stride_t + heads * local_output_stride_h
-            local_values = tl.load(
-                local_output_ptr + local_bases[:, None] + features[None, :] * local_output_stride_d, mask, 0.0
-            ).to(tl.float32)
-            numerator += tl.where(local_valid[:, None], local_values, 0.0) * weight
-        result = numerator / tl.where(denominator > 0.0, denominator, 1.0)[:, None]
+            if MODE == 0:
+                weight = get_element(weights, (DCP_SIZE,))
+            else:
+                weight = tl.gather(weights, tl.full((BLOCK_ROWS, 1), DCP_SIZE, tl.int32), axis=1)
+                local_bases = local_bases[:, None]
+            offsets = local_bases + feature_ids * local_output_stride_d
+            numerator = _accumulate_dcp_output(local_output_ptr + offsets, mask, local_valid, weight, numerator)
+        scale = tl.where(denominator > 0.0, denominator, 1.0)
         output_bases = tokens * output_stride_t + heads * output_stride_h
-        tl.store(output_ptr + output_bases[:, None] + features[None, :] * output_stride_d, result, mask)
+        if MODE == 1:
+            scale = scale[:, None]
+            output_bases = output_bases[:, None]
+        tl.store(output_ptr + output_bases + feature_ids * output_stride_d, numerator / scale, mask)

@@ -12,7 +12,6 @@ from vllm_ascend.device.hardware_profile import get_current_hardware_profile
 from vllm_ascend.ops.triton.dcp.dcp_a2a_batched import (
     _encode_lse_fields,
     _fused_dcp_lse_combine_head_scatter_kernel,
-    _fused_dcp_lse_combine_head_scatter_multirow_kernel,
     _pack_dcp_output_lse_batched_kernel,
 )
 from vllm_ascend.ops.triton.dcp.dcp_jit import _launch_kernel
@@ -460,15 +459,8 @@ def _launch_fused_dcp_lse_combine(
         and not return_lse
     )
     if vector_compatible:
-        # A3 avoids scalar loops over rows. A5 gets higher memory
-        # throughput by loading the LSE fields for eight rows together.
-        kernel = (
-            _fused_dcp_lse_combine_head_scatter_multirow_kernel
-            if get_current_hardware_profile().use_multirow_dcp_combine
-            else _fused_dcp_lse_combine_head_scatter_kernel
-        )
         launch(
-            kernel,
+            _fused_dcp_lse_combine_head_scatter_kernel,
             (grid_size,),
             recv,
             output,
@@ -481,6 +473,7 @@ def _launch_fused_dcp_lse_combine(
             head_dim,
             num_heads,
             total_rows,
+            MODE=get_current_hardware_profile().dcp_head_scatter_mode,
             DCP_SIZE=dcp_size,
             HAS_LOCAL=local_output is not None,
             BLOCK_D=triton.next_power_of_2(head_dim),

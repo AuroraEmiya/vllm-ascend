@@ -56,12 +56,7 @@ def test_combine_launch_supports_generic_rows(tokens, heads, dim, world, has_loc
     dcp_a2a._launch_fused_dcp_lse_combine(recv, output, dim, 1, False, local, local_lse, 40, launch)
     launch.assert_called_once()
     kernel, grid, *args = launch.call_args.args
-    expected = (
-        dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel
-        if dcp_a2a.get_current_hardware_profile().use_multirow_dcp_combine
-        else dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
-    )
-    assert kernel is expected
+    assert kernel is dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
     assert grid == (min(tokens * heads, 40),)
     assert args[4:7] == list(local.stride() if has_local else (0, 0, 0))
 

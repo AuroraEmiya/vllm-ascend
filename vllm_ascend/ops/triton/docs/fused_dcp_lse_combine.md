@@ -11,7 +11,7 @@
   2. Launch `min(output_rows, get_vectorcore_num())` Triton programs. The scalar kernel loops over rows, finds the largest valid LSE across the ranks and optional local contribution, then loops over ranks again to accumulate weighted output in FP32.
   3. Ignore non-finite LSE and mask its output before multiplication, preventing a zero weight times NaN from contaminating the result. Normalize once, store the output, and optionally append merged LSE.
   4. For eligible BF16 head-scatter inputs, the row-weighted kernel decodes each LSE once and reuses the rank weights across the feature dimension.
-- **Supported modes**: Input layout determines eligibility for head-scatter combine. The device profile selects its implementation. The wrapper runs after DCP exchange in eager execution; the enclosing registered custom op supplies a FakeTensor implementation for tracing.
+- **Supported modes**: Input layout determines eligibility for head-scatter combine. The device profile supplies the head-scatter kernel's compile-time mode. The wrapper runs after DCP exchange in eager execution; the enclosing registered custom op supplies a FakeTensor implementation for tracing.
 
 ## Parameters
 
@@ -53,16 +53,15 @@ The wrapper selects the row-weighted kernel for BF16 head scatter with
 contribution is present. This rule applies at every row count. Other supported
 inputs use the scalar kernel.
 
-The A3 kernel processes one row at a time. On A3, multirow LSE loads can lower
-to nested scalar loops. The single-row kernel keeps the compiled loop body
-small. On A5, the multirow kernel loads each LSE field across eight rows and
+Mode 0 (A3) processes one row at a time. On A3, multirow LSE loads can lower
+to nested scalar loops. The single-row specialization keeps the compiled loop body
+small. Mode 1 (A5) loads each LSE field across eight rows and
 all ranks together, then streams each rank's features through a rolled loop.
 This layout improves memory throughput on A5. Each program owns a contiguous
 interval of rows (A3) or eight-row tiles (A5), including a masked final tile.
 Other device profiles retain the single-row implementation.
 
-For each output row, either kernel
-decodes the received LSE fields once and places the optional local LSE in the same
+For each output row, the kernel decodes the received LSE fields once and places the optional local LSE in the same
 small rank vector. It computes one maximum, exponent vector and denominator,
 then streams each rank's output into one FP32 feature accumulator. The optional
 local output uses its already-computed vector weight. Invalid contributions are
@@ -78,9 +77,9 @@ rank vector is `next_power_of_2(DCP_SIZE + HAS_LOCAL)`.
 Sizes and strides remain runtime scalars, subject to ordinary Triton integer
 specialization classes; pointer dtype/alignment and compiler options can also
 create variants. Tensor contents and the grid alone do not create variants.
-DCP warmup uses the production launcher and registers the head-scatter kernel
-selected by the active device profile. Unit tests check
-that runtime and warmup select the same combine kernel for small and large row counts. Serving
+DCP warmup uses the production launcher and registers the same head-scatter JIT function
+with the active profile's `MODE` as a compile-time key. Unit tests check
+that runtime and warmup select the same kernel and mode for small and large row counts. Serving
 compilation counts remain unmeasured.
 
 ### Row-weighted validation

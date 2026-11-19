@@ -214,15 +214,15 @@ def _dcp_warmup_keys(registry):
 
 
 @pytest.mark.parametrize(
-    "device_type,dtype,expected",
+    "device_type,dtype,expected_mode",
     [
-        (AscendDeviceType.A3, torch.bfloat16, dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel),
-        (AscendDeviceType.A5, torch.bfloat16, dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel),
-        (AscendDeviceType.A5, torch.float16, dcp_a2a._fused_dcp_lse_combine_kernel),
+        (AscendDeviceType.A3, torch.bfloat16, 0),
+        (AscendDeviceType.A5, torch.bfloat16, 1),
+        (AscendDeviceType.A5, torch.float16, None),
     ],
 )
 @pytest.mark.parametrize("tokens", [1, 33])
-def test_runtime_combine_matches_registered_warmup(device_type, dtype, expected, tokens, monkeypatch):
+def test_runtime_combine_matches_registered_warmup(device_type, dtype, expected_mode, tokens, monkeypatch):
     monkeypatch.setattr(dcp_a2a, "get_current_hardware_profile", lambda: get_hardware_profile(device_type))
     heads, dim, ranks = 12, 512, 8
     registry = _register_dcp_warmup(
@@ -240,13 +240,16 @@ def test_runtime_combine_matches_registered_warmup(device_type, dtype, expected,
     launch = MagicMock()
     dcp_a2a._launch_fused_dcp_lse_combine(recv, output, dim, 1, False, None, None, 24, launch)
     launch.assert_called_once()
+    head_scatter = dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
+    scalar = dcp_a2a._fused_dcp_lse_combine_kernel
+    expected = scalar if expected_mode is None else head_scatter
     assert launch.call_args.args[0] is expected
-    combine_kernels = {
-        dcp_a2a._fused_dcp_lse_combine_kernel,
-        dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel,
-        dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel,
-    }
-    assert {owner.kernel for owner in registry._registrations} & combine_kernels == {expected}
+    assert launch.call_args.kwargs.get("MODE") == expected_mode
+    registered = _dcp_warmup_keys(registry)
+    assert {owner.kernel for owner in registered} & {scalar, head_scatter} == {expected}
+    owner = next(owner for owner in registered if owner.kernel is expected)
+    modes = {dict(key.inputs).get("MODE") for key in registered[owner]}
+    assert modes == {expected_mode}
 
 
 @pytest.mark.parametrize(
@@ -320,12 +323,7 @@ def test_registration_is_scoped_deduplicated_and_allocates_nothing():
         with registry.activate():
             dcp_warmup.register_dcp_warmup(**kwargs)
             dcp_warmup.register_dcp_warmup(**kwargs)
-    inactive = (
-        dcp_a2a._fused_dcp_lse_combine_head_scatter_kernel
-        if dcp_a2a.get_current_hardware_profile().use_multirow_dcp_combine
-        else dcp_a2a._fused_dcp_lse_combine_head_scatter_multirow_kernel
-    )
-    expected = {owner.kernel for owner in dcp_warmup._DCP_KERNELS} - {dcp_a2a._fused_dcp_lse_combine_kernel, inactive}
+    expected = {owner.kernel for owner in dcp_warmup._DCP_KERNELS} - {dcp_a2a._fused_dcp_lse_combine_kernel}
     assert {owner.kernel for owner in registry._registrations} == expected
     assert all(len(registrations) == 1 for registrations in registry._registrations.values())
     for original, keys in _dcp_warmup_keys(registry).items():
