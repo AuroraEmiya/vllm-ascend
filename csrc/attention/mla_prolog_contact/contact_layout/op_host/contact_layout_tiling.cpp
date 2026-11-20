@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // Licensed under CANN Open Software License Agreement Version 2.0.
 #include "contact_layout_tiling.h"
+#include "../../contact_row_limits.h"
 #include <algorithm>
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext* context) {
@@ -10,11 +11,20 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   uint32_t b=0,n=0,q=0,k=0,d=0,r=0,ht=1,units=0,in=0,out=0;uint64_t peak=0;
   const auto& s=context->GetInputShape(0)->GetStorageShape();
   if(s.GetDimNum()!=3) return ge::GRAPH_FAILED;
-  n=s.GetDim(0);b=s.GetDim(1);k=s.GetDim(2);
-  if ((n!=8 && n!=16 && n!=32 && n!=64) || k!=512) return ge::GRAPH_FAILED;
-  ht=std::min(16u,n);units=b*((n+ht-1)/ht);in=out=ht*k;
+  const auto heads = s.GetDim(0);
+  const auto kvRank = s.GetDim(2);
+  if ((heads != 8 && heads != 16 && heads != 32 && heads != 64) || kvRank != 512) return ge::GRAPH_FAILED;
+  n = static_cast<uint32_t>(heads);
+  k = static_cast<uint32_t>(kvRank);
+  ht = std::min(16u, n);
+  const uint32_t headTiles = (n + ht - 1) / ht;
+  if (!ContactSerial::TryGetRowSchedule(s.GetDim(1), headTiles, cores, b, units) ||
+      !ContactSerial::FitsUint32RowOffset(b, k * ContactSerial::kBf16Bytes)) {
+    return ge::GRAPH_FAILED;
+  }
+  in=out=ht*k;
   peak=4ull*in;
-  if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
+  if(peak>ub) return ge::GRAPH_FAILED;
   ContactLayoutTilingData t;
   t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
   t.set_units(units);t.set_headTile(ht);t.set_inElements(in);t.set_outElements(out);

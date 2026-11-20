@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // Licensed under CANN Open Software License Agreement Version 2.0.
 #include "contact_norm_tiling.h"
+#include "../../contact_row_limits.h"
 #include <algorithm>
+#include <limits>
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   platform_ascendc::PlatformAscendC p(context->GetPlatformInfo());
@@ -10,22 +12,40 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   uint32_t b=0,n=0,q=0,k=0,d=0,r=0,ht=1,units=0,in=0,out=0;uint64_t peak=0;
   const auto& s=context->GetInputShape(0)->GetStorageShape();
   if (s.GetDimNum()!=3 || s.GetDim(1)!=1) return ge::GRAPH_FAILED;
-  b=s.GetDim(0);q=s.GetDim(2);k=context->GetInputShape(3)->GetStorageShape().GetShapeSize();
-  r=context->GetInputShape(4)->GetStorageShape().GetDim(2);
-  if ((q!=1536 && q!=2048) || k!=512 || r!=64) return ge::GRAPH_FAILED;
+  const auto qRank = s.GetDim(2);
+  const auto kvRank = context->GetInputShape(3)->GetStorageShape().GetShapeSize();
+  const auto rope = context->GetInputShape(4)->GetStorageShape().GetDim(2);
+  if ((qRank != 1536 && qRank != 2048) || kvRank != 512 || rope != 64) return ge::GRAPH_FAILED;
+  q = static_cast<uint32_t>(qRank);
+  k = static_cast<uint32_t>(kvRank);
+  r = static_cast<uint32_t>(rope);
+  if (!ContactSerial::TryGetRowSchedule(s.GetDim(0), 1, cores, b, units) ||
+      !ContactSerial::FitsUint32RowOffset(b, q) ||
+      !ContactSerial::FitsUint32RowOffset(b, k+r) ||
+      !ContactSerial::FitsUint32RowOffset(b, r)) {
+    return ge::GRAPH_FAILED;
+  }
+  const int64_t rows = b;
   if (context->GetInputShape(2)->GetStorageShape().GetShapeSize()!=q ||
-      context->GetInputShape(1)->GetStorageShape().GetShapeSize()!=b*(k+r) ||
-      context->GetInputShape(4)->GetStorageShape().GetShapeSize()!=b*r ||
-      context->GetInputShape(5)->GetStorageShape().GetShapeSize()!=b*r ||
-      context->GetInputShape(6)->GetStorageShape().GetShapeSize()!=b) return ge::GRAPH_FAILED;
+      context->GetInputShape(1)->GetStorageShape().GetShapeSize()!=rows*(k+r) ||
+      context->GetInputShape(4)->GetStorageShape().GetShapeSize()!=rows*r ||
+      context->GetInputShape(5)->GetStorageShape().GetShapeSize()!=rows*r ||
+      context->GetInputShape(6)->GetStorageShape().GetShapeSize()!=rows) return ge::GRAPH_FAILED;
   for (int i=7;i<9;++i) {
     const auto& c=context->GetInputShape(i)->GetStorageShape();
-    if(c.GetDimNum()!=4 || c.GetDim(2)!=1 || c.GetDim(3)!=(i==7?k:r) ||
-       (c.GetDim(1)!=16 && c.GetDim(1)!=128) || c.GetDim(0)*c.GetDim(1)<b) return ge::GRAPH_FAILED;
+    const int64_t width = i == 7 ? k : r;
+    if (c.GetDimNum() != 4 || c.GetDim(2) != 1 || c.GetDim(3) != width) return ge::GRAPH_FAILED;
+    const int64_t page = c.GetDim(1);
+    if (page != 16 && page != 128) return ge::GRAPH_FAILED;
+    const int64_t pages = c.GetDim(0);
+    if (pages < (rows + page - 1) / page ||
+        pages > std::numeric_limits<int64_t>::max() / (page * width)) {
+      return ge::GRAPH_FAILED;
+    }
   }
-  units=b; in=2*q+2*k+3*r+16;out=q+k+r;
+  in=2*q+2*k+3*r+16;out=q+k+r;
   peak=4ull*in+4ull*out+16ull*q+20ull*r+128;
-  if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
+  if(peak>ub) return ge::GRAPH_FAILED;
   ContactNormTilingData t;
   t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
   t.set_units(units);t.set_headTile(ht);t.set_inElements(in);t.set_outElements(out);

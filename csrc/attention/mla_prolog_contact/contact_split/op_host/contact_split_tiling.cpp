@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // Licensed under CANN Open Software License Agreement Version 2.0.
 #include "contact_split_tiling.h"
+#include "../../contact_row_limits.h"
 #include <algorithm>
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext* context) {
@@ -11,14 +12,29 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context) {
   const auto& s=context->GetInputShape(0)->GetStorageShape();
   const auto* a=context->GetAttrs();
   if(s.GetDimNum()!=3 || s.GetDim(1)!=1) return ge::GRAPH_FAILED;
-  b=s.GetDim(0);n=*a->GetInt(0);d=*a->GetInt(1);r=*a->GetInt(2);
-  if ((n!=8 && n!=16 && n!=32 && n!=64) || (d!=128 && d!=192) || r!=64 || s.GetDim(2)!=n*(d+r)) return ge::GRAPH_FAILED;
-  if (context->GetInputShape(1)->GetStorageShape().GetShapeSize()!=b*r ||
-      context->GetInputShape(2)->GetStorageShape().GetShapeSize()!=b*r) return ge::GRAPH_FAILED;
-  ht=std::min(16u,n); units=b*((n+ht-1)/ht);
+  const auto heads = *a->GetInt(0);
+  const auto nope = *a->GetInt(1);
+  const auto rope = *a->GetInt(2);
+  if ((heads != 8 && heads != 16 && heads != 32 && heads != 64) ||
+      (nope != 128 && nope != 192) || rope != 64 || s.GetDim(2) != heads * (nope + rope)) {
+    return ge::GRAPH_FAILED;
+  }
+  n = static_cast<uint32_t>(heads);
+  d = static_cast<uint32_t>(nope);
+  r = static_cast<uint32_t>(rope);
+  ht = std::min(16u, n);
+  const uint32_t headTiles = (n + ht - 1) / ht;
+  if (!ContactSerial::TryGetRowSchedule(s.GetDim(0), headTiles, cores, b, units) ||
+      !ContactSerial::FitsUint32RowOffset(b, r) ||
+      !ContactSerial::FitsUint32RowOffset(b, d * ContactSerial::kBf16Bytes)) {
+    return ge::GRAPH_FAILED;
+  }
+  const int64_t ropeElements = static_cast<int64_t>(b) * r;
+  if (context->GetInputShape(1)->GetStorageShape().GetShapeSize()!=ropeElements ||
+      context->GetInputShape(2)->GetStorageShape().GetShapeSize()!=ropeElements) return ge::GRAPH_FAILED;
   in=ht*(d+r)+2*r;out=ht*(d+r);
   peak=4ull*in+4ull*out+4ull*(3*ht*r+2*r);
-  if(b<1 || b>64 || !units || peak>ub) return ge::GRAPH_FAILED;
+  if(peak>ub) return ge::GRAPH_FAILED;
   ContactSplitTilingData t;
   t.set_rows(b);t.set_heads(n);t.set_qRank(q);t.set_kvRank(k);t.set_nope(d);t.set_rope(r);
   t.set_units(units);t.set_headTile(ht);t.set_inElements(in);t.set_outElements(out);
