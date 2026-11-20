@@ -12,7 +12,7 @@
  *
  * All kernel arguments are named lvalues (EXEC_KERNEL_CMD contract); the only
  * struct crossing the ABI is the K2 TilingHeader (MatmulImpl requires a
- * TCubeTiling), uploaded as a device byte tensor via a blocking H2D copy.
+ * TCubeTiling). The prepared entry stages it on-device before graph capture.
  *
  * Core counts are queried from PlatformAscendC at runtime (no hardcoding).
  */
@@ -103,6 +103,14 @@ uint32_t SigmoidTmpFor(const std::vector<int64_t> &shape)
 // the in-cube HF32 conversion is the identity (mantissa already 10-bit), so
 // the GEMM consumes exactly the oracle's operand and the residual collapses
 // to sum-order noise.
+at::Tensor PrepareHcFnT(const at::Tensor &hcFn)
+{
+    at::Tensor transpose = hcFn.t().contiguous();
+    // RTZ to the frozen route's ten-bit HF32 mantissa.
+    at::Tensor mask = at::scalar_tensor(~((1 << 13) - 1), hcFn.options().dtype(at::kInt));
+    return at::bitwise_and(transpose.view(at::kInt), mask).view(hcFn.scalar_type());
+}
+
 const at::Tensor &GetHcFnT(const at::Tensor &hc_fn)
 {
     struct Key
@@ -122,10 +130,7 @@ const at::Tensor &GetHcFnT(const at::Tensor &hc_fn)
     if (it == cache.end()) {
         // keep the original alive so the caching allocator never hands its
         // address to a different weight (prevents stale-cache hits)
-        at::Tensor hcFnT = hc_fn.t().contiguous();
-        // RTZ pre-truncation to the 10-bit HF32 mantissa (bitwise, no fp math)
-        at::Tensor mask = at::scalar_tensor(~((1 << 13) - 1), hc_fn.options().dtype(at::kInt));
-        hcFnT = at::bitwise_and(hcFnT.view(at::kInt), mask).view(hc_fn.scalar_type());
+        at::Tensor hcFnT = PrepareHcFnT(hc_fn);
         it = cache.emplace(key, std::make_pair(hc_fn, std::move(hcFnT))).first;
     }
     return it->second.second;
@@ -138,21 +143,83 @@ const at::Tensor &GetHcFnT(const at::Tensor &hc_fn)
 // K3 multiplies this mask right after exp() and again after the +eps. There
 // is no standard-API path that avoids the 32B-granularity tail zeroing (the
 // band loads are inherently 16B), so the mask is mandatory.
+at::Tensor MakeMask8(const at::Device &device)
+{
+    return at::tensor({1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+                      at::device(at::kCPU).dtype(at::kFloat)).to(device);
+}
+
 const at::Tensor &GetMask8(const at::Device &device)
 {
     static at::Tensor cache;
     if (!cache.defined()) {
-        at::Tensor cpu = at::tensor({1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f},
-                                    at::device(at::kCPU).dtype(at::kFloat));
-        cache = cpu.to(device);
+        cache = MakeMask8(device);
     }
     return cache;
 }
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> hc_pre(
+namespace {
+
+struct PreparedTensors
+{
+    const at::Tensor &tiling;
+    const at::Tensor &weight;
+    const at::Tensor &mask;
+};
+
+int64_t SplitKSegment(int64_t fanIn, int64_t aicCoreNum)
+{
+    int64_t kSeg = fanIn;
+    for (int64_t cand = aicCoreNum; cand >= 1; --cand) {
+        if (fanIn % cand == 0 && (fanIn / cand) % 64 == 0) {
+            kSeg = fanIn / cand;
+            break;
+        }
+    }
+    return kSeg;
+}
+
+at::Tensor MakeMatmulTiling(platform_ascendc::PlatformAscendC &platform, int64_t B, int64_t mix,
+                           int64_t fanIn, int64_t kSeg, const at::Device &device)
+{
+    const int64_t ks = CeilDiv(fanIn, kSeg);
+    HcPreMatmulTilingHeader mmHeader{};
+    {
+        namespace mt = matmul_tiling;
+        mt::MatmulApiTiling mmTiling(platform);
+        mmTiling.SetAType(mt::TPosition::GM, mt::CubeFormat::ND, mt::DataType::DT_FLOAT, false);
+        mmTiling.SetBType(mt::TPosition::GM, mt::CubeFormat::ND, mt::DataType::DT_FLOAT, false);
+        mmTiling.SetShape(B, mix, kSeg);
+        // HF32 mad type, pairing with the kernel's SetHF32(true, 0) — the
+        // v6-proven configuration (see the arbitration note in
+        // op_kernel/hc_pre_matmul.cpp: the "SetHF32(true) diverges" platform
+        // note traces to the merge-round hand-written Mmad probes, not to
+        // MatmulImpl; KEEP_FLOAT false,0 was measured 30% slower this round)
+        mmTiling.SetMadType(mt::MatrixMadType::HF32);
+        TORCH_CHECK(mmTiling.GetTiling(mmHeader.cubeTiling) == 0, "MatmulApiTiling failed");
+        // mandatory overwrite (ascendc-api-matmul-tiling.md checklist): M/N/Ka/Kb
+        mmHeader.cubeTiling.M = static_cast<uint32_t>(B);
+        mmHeader.cubeTiling.N = static_cast<uint32_t>(mix);
+        mmHeader.cubeTiling.Ka = static_cast<uint32_t>(kSeg);
+        mmHeader.cubeTiling.Kb = static_cast<uint32_t>(kSeg);
+        mmHeader.ks = static_cast<int32_t>(ks);
+        mmHeader.kSeg = static_cast<int32_t>(kSeg);
+        mmHeader.m = static_cast<int32_t>(B);
+        mmHeader.n = static_cast<int32_t>(mix);
+        mmHeader.k = static_cast<int32_t>(fanIn);
+        mmHeader.nPad = static_cast<int32_t>((mix + 7) / 8 * 8);
+    }
+
+    at::Tensor cpu = at::empty({static_cast<int64_t>(sizeof(HcPreMatmulTilingHeader))},
+                               at::device(at::kCPU).dtype(at::kByte));
+    std::memcpy(cpu.data_ptr(), &mmHeader, sizeof(mmHeader));
+    return cpu.to(device);
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> RunHcPre(
     const at::Tensor &x, const at::Tensor &hc_fn, const at::Tensor &hc_scale,
     const at::Tensor &hc_base, const at::Tensor &pre_mix, int64_t hc_mult,
-    int64_t hc_sinkhorn_iters, double norm_eps, double hc_eps)
+    int64_t hc_sinkhorn_iters, double norm_eps, double hc_eps, const PreparedTensors *prepared)
 {
     TORCH_CHECK(x.dim() == 3, "x must be [B, hc_mult, D]");
     const int64_t B = x.size(0);
@@ -195,48 +262,12 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> hc_pre(
     // (cube fractal). Use the largest divisor of fanIn that is <= aicCoreNum
     // and a multiple of 64 (target: 20480 -> kSeg 1024, ks 20 — the v6-proven
     // optimal family; K = 20480 >> M*N so split-K is mandatory for core use).
-    int64_t kSeg = fanIn;
-    for (int64_t cand = aicCoreNum; cand >= 1; --cand) {
-        if (fanIn % cand == 0 && (fanIn / cand) % 64 == 0) {
-            kSeg = fanIn / cand;
-            break;
-        }
-    }
+    const int64_t kSeg = SplitKSegment(fanIn, aicCoreNum);
     const int64_t ks = CeilDiv(fanIn, kSeg);
-
-    HcPreMatmulTilingHeader mmHeader{};
-    {
-        namespace mt = matmul_tiling;
-        mt::MatmulApiTiling mmTiling(*platform);
-        mmTiling.SetAType(mt::TPosition::GM, mt::CubeFormat::ND, mt::DataType::DT_FLOAT, false);
-        mmTiling.SetBType(mt::TPosition::GM, mt::CubeFormat::ND, mt::DataType::DT_FLOAT, false);
-        mmTiling.SetShape(B, mix, kSeg);
-        // HF32 mad type, pairing with the kernel's SetHF32(true, 0) — the
-        // v6-proven configuration (see the arbitration note in
-        // op_kernel/hc_pre_matmul.cpp: the "SetHF32(true) diverges" platform
-        // note traces to the merge-round hand-written Mmad probes, not to
-        // MatmulImpl; KEEP_FLOAT false,0 was measured 30% slower this round)
-        mmTiling.SetMadType(mt::MatrixMadType::HF32);
-        TORCH_CHECK(mmTiling.GetTiling(mmHeader.cubeTiling) == 0, "MatmulApiTiling failed");
-        // mandatory overwrite (ascendc-api-matmul-tiling.md checklist): M/N/Ka/Kb
-        mmHeader.cubeTiling.M = static_cast<uint32_t>(B);
-        mmHeader.cubeTiling.N = static_cast<uint32_t>(mix);
-        mmHeader.cubeTiling.Ka = static_cast<uint32_t>(kSeg);
-        mmHeader.cubeTiling.Kb = static_cast<uint32_t>(kSeg);
-        mmHeader.ks = static_cast<int32_t>(ks);
-        mmHeader.kSeg = static_cast<int32_t>(kSeg);
-        mmHeader.m = static_cast<int32_t>(B);
-        mmHeader.n = static_cast<int32_t>(mix);
-        mmHeader.k = static_cast<int32_t>(fanIn);
-        mmHeader.nPad = static_cast<int32_t>((mix + 7) / 8 * 8);
-    }
-
     at::Tensor partial = at::empty({ks, B, mix}, outOpt);
-
-    at::Tensor mmTilingCpu = at::empty({static_cast<int64_t>(sizeof(HcPreMatmulTilingHeader))},
-                                       at::device(at::kCPU).dtype(at::kByte));
-    std::memcpy(mmTilingCpu.data_ptr(), &mmHeader, sizeof(mmHeader));
-    at::Tensor mmTilingNpu = mmTilingCpu.to(at::kPrivateUse1);  // blocking copy
+    at::Tensor mmTilingNpu = prepared == nullptr
+        ? MakeMatmulTiling(*platform, B, mix, fanIn, kSeg, x.device())
+        : prepared->tiling;
 
     // ---------------- K1 tiling ----------------
     // Whole-row grid-stride schedule (one core owns whole rows so the per-row
@@ -310,7 +341,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> hc_pre(
     // D-fix debug hook: dump the K1 GM-side intermediates for the precision
     // investigation. Enabled ONLY via HC_PRE_DUMP_DIR; production path is
     // untouched (no extra sync cost when the env var is absent).
-    if (const char *dumpDir = std::getenv("HC_PRE_DUMP_DIR")) {
+    const char *dumpDir = prepared == nullptr ? std::getenv("HC_PRE_DUMP_DIR") : nullptr;
+    if (dumpDir != nullptr) {
         auto dumpF32 = [&](const char *name, const at::Tensor &t) {
             at::Tensor cpu = t.to(at::kCPU).contiguous();
             std::string path = std::string(dumpDir) + "/" + name + ".f32";
@@ -331,17 +363,73 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> hc_pre(
     float hcEpsL = hcEpsF;
 
     if (stages.find('2') != std::string::npos) {
-        at::Tensor hcFnT = GetHcFnT(hc_fn);
+        at::Tensor hcFnT = prepared == nullptr ? GetHcFnT(hc_fn) : prepared->weight;
         EXEC_KERNEL_CMD(hc_pre_matmul, k2BlockDim, xF32Ws, hcFnT, partial, mmTilingNpu);
     }
     if (stages.find('3') != std::string::npos) {
-        at::Tensor mask8 = GetMask8(x.device());
+        at::Tensor mask8 = prepared == nullptr ? GetMask8(x.device()) : prepared->mask;
         EXEC_KERNEL_CMD(hc_pre_epilogue, k3BlockDim, partial, mixesWs, invRms, hc_scale, hc_base,
                         pre, post, combFrag, mask8, bsL, ksL, mixL, k3RowsL, itersL, hcEpsL,
                         k3RedL, k3OpL);
     }
 
     return {y, post, combFrag, pre};
+}
+
+}  // namespace
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> hc_pre(
+    const at::Tensor &x, const at::Tensor &hc_fn, const at::Tensor &hc_scale,
+    const at::Tensor &hc_base, const at::Tensor &pre_mix, int64_t hc_mult,
+    int64_t hc_sinkhorn_iters, double norm_eps, double hc_eps)
+{
+    return RunHcPre(x, hc_fn, hc_scale, hc_base, pre_mix, hc_mult,
+                    hc_sinkhorn_iters, norm_eps, hc_eps, nullptr);
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor> hc_pre_prepare(
+    const at::Tensor &x, const at::Tensor &hc_fn)
+{
+    TORCH_CHECK(x.dim() == 3 && x.size(1) > 0 && x.size(2) > 0 && x.size(0) > 0,
+                "expected nonempty x [B, hc_mult, D]");
+    const int64_t fanIn = x.size(1) * x.size(2);
+    TORCH_CHECK(hc_fn.dim() == 2 && hc_fn.size(1) == fanIn && hc_fn.is_contiguous() &&
+                    hc_fn.device() == x.device() && hc_fn.scalar_type() == at::kFloat &&
+                    x.scalar_type() == at::kBFloat16,
+                "HC_Pre preparation requires BF16 x and matching contiguous FP32 weights");
+    auto *platform = platform_ascendc::PlatformAscendCManager::GetInstance();
+    TORCH_CHECK(platform != nullptr && platform->GetCoreNumAic() > 0, "failed to query AIC cores");
+    const int64_t kSeg = SplitKSegment(fanIn, platform->GetCoreNumAic());
+    TORCH_CHECK(x.size(0) % x.size(1) == 0 && x.size(2) % kSeg == 0,
+                "shape outside frozen HC_Pre path");
+    auto tiling = MakeMatmulTiling(*platform, x.size(0), hc_fn.size(0), fanIn, kSeg, x.device());
+    auto weight = PrepareHcFnT(hc_fn);
+    auto mask = MakeMask8(x.device());
+    return {tiling, weight, mask};
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> hc_pre_run_prepared(
+    const at::Tensor &x, const at::Tensor &hc_fn, const at::Tensor &hc_scale,
+    const at::Tensor &hc_base, const at::Tensor &pre_mix, int64_t hc_mult,
+    int64_t hc_sinkhorn_iters, double norm_eps, double hc_eps, const at::Tensor &tiling,
+    const at::Tensor &weight, const at::Tensor &mask, int64_t prepared_b)
+{
+    TORCH_CHECK(x.dim() == 3 && x.size(0) == prepared_b && hc_fn.dim() == 2 &&
+                    x.size(1) == hc_mult && hc_mult == 4 && hc_fn.size(0) == 24 &&
+                    hc_fn.size(1) == x.size(1) * x.size(2),
+                "prepared HC_Pre shape does not match x and hc_fn");
+    for (const at::Tensor *t : {&tiling, &weight, &mask, &hc_fn, &hc_scale, &hc_base, &pre_mix}) {
+        TORCH_CHECK(t->device() == x.device() && t->is_contiguous(), "invalid prepared tensor layout or device");
+    }
+    TORCH_CHECK(tiling.scalar_type() == at::kByte && tiling.dim() == 1 &&
+                    tiling.numel() == sizeof(HcPreMatmulTilingHeader) &&
+                    weight.scalar_type() == at::kFloat && weight.dim() == 2 &&
+                    weight.size(0) == hc_fn.size(1) && weight.size(1) == hc_fn.size(0) &&
+                    mask.scalar_type() == at::kFloat && mask.dim() == 1 && mask.numel() == 8,
+                "invalid HC_Pre prepared tensors");
+    const PreparedTensors prepared{tiling, weight, mask};
+    return RunHcPre(x, hc_fn, hc_scale, hc_base, pre_mix, hc_mult,
+                    hc_sinkhorn_iters, norm_eps, hc_eps, &prepared);
 }
 
 }  // namespace ascend_kernel
